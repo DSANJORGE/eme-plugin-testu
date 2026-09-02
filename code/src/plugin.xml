@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans projectname="testu" depends="entermedia">
+
+	<!-- Can point to a custom implementation of the AdaptiveTutorialContinueSkill stored in plugins/code/org/testu/AdaptiveTutorialContinueSkill.java -->
+	<bean id="adaptiveTutorialContinueSkill" class="org.entermediadb.ai.skills.AdaptiveTutorialContinueSkill" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
+</beans>
