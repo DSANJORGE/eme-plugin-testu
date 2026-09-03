@@ -1,0 +1,21 @@
+#* TestU override of /mediadb/views/agentresponses/chat_tutor_welcome.html:
+   the welcome comes from the site's tutor persona (table tutorpersona,
+   picked by the catalog setting `tutorpersona`), so each client
+   organisation greets the student with its own tutor. *#
+#set($personaid = $mediaarchive.getCatalogSettingValue("tutorpersona"))
+#if($personaid)
+  #set($persona = $mediaarchive.getData("tutorpersona", $personaid))
+#end
+#if($persona)
+**$persona.name** 👋
+
+$persona.greeting
+
+[[You're about to begin your **#text($tutorial)** tutorial. Take your time, read each question carefully, give your best answers with proper level of confidence, and ask follow up question if you get them wrong or want to learn more.]]
+#else
+**[[Welcome!]]** 👋
+
+[[You're about to begin your **#text($tutorial)** tutorial. Take your time, read each question carefully, give your best answers with proper level of confidence, and ask follow up question if you get them wrong or want to learn more.]]
+
+[[Good luck, and enjoy the learning experience!]]
+#end

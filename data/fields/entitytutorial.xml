@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Local dev: TopicModule links tutorials to topics through this field, but the
+     stock entitytutorial field set does not define it. Merged with the plugin fields. -->
+<properties>
+  <property id="entitytopic" index="true" stored="true" editable="true" type="list" listid="entitytopic">
+    <name>
+      <language id="en">Topic</language>
+      <language id="es">Tema</language>
+    </name>
+  </property>
+</properties>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- TestU: the tutor each client organisation talks to. One record per
+     organisation; the catalog setting `tutorpersona` names the active one
+     for this site. Managed in the eMe admin like any other table. -->
+<properties>
+  <property id="id" editable="true" stored="true" index="true">
+    <name>
+      <language id="en">ID</language>
+      <language id="es">ID</language>
+    </name>
+  </property>
+  <property id="name" editable="true" stored="true" index="true">
+    <name>
+      <language id="en">Tutor name</language>
+      <language id="es">Nombre del tutor</language>
+    </name>
+  </property>
+  <property id="organization" editable="true" stored="true" index="true">
+    <name>
+      <language id="en">Organisation</language>
+      <language id="es">Organización</language>
+    </name>
+  </property>
+  <property id="tutorlanguage" editable="true" stored="true" index="true">
+    <name>
+      <language id="en">Language (en/es)</language>
+      <language id="es">Idioma (en/es)</language>
+    </name>
+  </property>
+  <property id="avatar" editable="true" stored="true" index="true">
+    <name>
+      <language id="en">Avatar image URL</language>
+      <language id="es">URL de la imagen del avatar</language>
+    </name>
+  </property>
+  <property id="greeting" editable="true" stored="true" index="true" viewtype="textarea" rendertype="textarea" multilanguage="false">
+    <name>
+      <language id="en">Welcome message (shown to the student)</language>
+      <language id="es">Mensaje de bienvenida (lo ve el alumno)</language>
+    </name>
+  </property>
+  <property id="personality" editable="true" stored="true" index="true" viewtype="textarea" rendertype="textarea" multilanguage="false">
+    <name>
+      <language id="en">Personality (system prompt for the LLM)</language>
+      <language id="es">Personalidad (instrucciones de sistema para el LLM)</language>
+    </name>
+  </property>
+</properties>
