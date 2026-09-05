@@ -1,0 +1,65 @@
+## Site override of /mediadb/services/module/entitytutorial/tutorial.json:
+## the stock template stops at option_d; the Minsur 2026 bank has five
+## alternatives per question, so emit option_e/option_f when present.
+{
+  "response": {
+    "status": "ok",
+    "userid": "$user.id"
+  },
+  "tutorial": {
+    "id": #jesc($tutorial.id),
+    "entitytopicid": #jesc($tutorial.entitytopic),
+    "title": "#text($tutorial)",
+    "progress": {
+      "beginnerprogress": #jesc($progress.beginnerprogress),
+      "competentprogress": #jesc($progress.competentprogress),
+      "expertprogress": #jesc($progress.expertprogress),
+      "efficiency": #jesc($progress.efficiency),
+      "answersforgotten": #jesc($progress.answersforgotten),
+      "lastreviewed": #jesc($progress.lastreviewed)
+    }
+  },
+  "sections": [
+    #foreach($section in $sections)
+      #if($foreach.count > 1),#end
+      {
+        "id": #jesc($section.id),
+        "title": "#text($section)",
+        "contents": [
+          #set($componentcontents = $mediaarchive.query("componentcontent").exact("componentsectionid", $section.getId()).sort("ordering").search())
+          #foreach($componentcontent in $componentcontents)
+            #if($foreach.count > 1),#end
+            {
+              "id": #jesc($componentcontent.id),
+              "content": #jesc($!componentcontent.content),
+              "contenttype": "$!componentcontent.componenttype",
+              "contentrole": "$!componentcontent.contentrole"
+              #if($componentcontent.assetid)
+                ,"assetthumbnail": "$siteroot$mediaarchive.asLinkToPreview($componentcontent.assetid, 'image200x200')"
+                ,"asseturl": "$siteroot$mediaarchive.asLinkToPreview($componentcontent.assetid, 'image3000x3000')"
+              #end
+              #if($componentcontent.questionid)
+                #set($question = $mediaarchive.getData("entityquestion", $componentcontent.questionid))
+                ,"question": {
+                  "id": #jesc($question.id),
+                  "question": #jesc($question.question),
+                  "options": {
+                    "option_a": #jesc($question.option_a),
+                    "option_b": #jesc($question.option_b),
+                    "option_c": #jesc($question.option_c),
+                    "option_d": #jesc($question.option_d)
+                    #if($question.option_e),"option_e": #jesc($question.option_e)#end
+                    #if($question.option_f),"option_f": #jesc($question.option_f)#end
+                  },
+                  "correctoption": "$question.correctoption",
+                  "rationale": #jesc($question.rationale),
+                  "cognitivelevel": "$!question.mcqcognitivelevel"
+                }
+              #end
+            }
+          #end
+        ]
+      }
+    #end
+  ]
+}
