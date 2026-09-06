@@ -19,7 +19,7 @@ void fail(int code, String msg) { context.getResponse().setStatus(code); reply([
 Map snapshot(Data d, List fields) { d == null ? null : fields.collectEntries { [(it): d.get(it)] } }
 
 MediaArchive archive = context.getPageValue("mediaarchive")
-String userid = context.getRequestParameter("userid"); String team = context.getRequestParameter("team") ?: ""
+String userid = (context.getRequestParameter("userid") ?: "").trim().toLowerCase(); String team = context.getRequestParameter("team") ?: ""
 def users = archive.getSearcher("user")
 Data u = users.searchById(userid)
 if (u == null) { fail(404, "no user"); return }

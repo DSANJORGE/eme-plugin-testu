@@ -19,7 +19,7 @@ void fail(int code, String msg) { context.getResponse().setStatus(code); reply([
 Map snapshot(Data d, List fields) { d == null ? null : fields.collectEntries { [(it): d.get(it)] } }
 
 MediaArchive archive = context.getPageValue("mediaarchive")
-String userid = context.getRequestParameter("userid"); String role = context.getRequestParameter("role")
+String userid = (context.getRequestParameter("userid") ?: "").trim().toLowerCase(); String role = context.getRequestParameter("role")
 if (!(role in ["users", "manager", "training", "orgadmin"])) { fail(400, "invalid role"); return }
 if (archive.getSearcher("user").searchById(userid) == null) { fail(404, "no user"); return }
 def profiles = archive.getSearcher("userprofile")
