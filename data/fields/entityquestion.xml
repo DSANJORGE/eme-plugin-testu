@@ -13,4 +13,5 @@
   <property id="sourcepage" index="true" stored="true" editable="true" type="number">
     <name><language id="en">Source page</language><language id="es">Página fuente</language></name>
   </property>
+  <property id="skill" index="true" stored="true" editable="true" type="list" listid="skill"><name><language id="en">Skill</language><language id="es">Skill</language></name></property>
 </properties>

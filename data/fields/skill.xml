@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Contenidos / V2: first-class skill (1EdTech CASE-lite). Defined now, populated after the pilot. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="true" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="name" index="true" stored="true" editable="true" keyword="true"><name><language id="en">Name</language><language id="es">Nombre</language></name></property>
+  <property id="family" index="true" stored="true" editable="true" keyword="true"><name><language id="en">Family</language><language id="es">Familia</language></name></property>
+  <property id="level" index="true" stored="true" editable="true" type="number" datatype="number"><name><language id="en">Level</language><language id="es">Nivel</language></name></property>
+  <property id="identifier" index="true" stored="true" editable="true"><name><language id="en">CASE identifier</language></name></property>
+  <property id="humancodingscheme" index="true" stored="true" editable="true"><name><language id="en">CASE human coding scheme</language></name></property>
+  <property id="fullstatement" index="true" stored="true" editable="true" viewtype="textarea"><name><language id="en">CASE full statement</language></name></property>
+  <property id="relations" index="false" stored="true" editable="true" viewtype="textarea"><name><language id="en">Relations (JSON: type to ids)</language></name></property>
+</properties>

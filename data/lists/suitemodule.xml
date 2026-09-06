@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suitemodules>
+  <suitemodule id="personas" surfaces="web" enabled="true" ordering="10"><name><![CDATA[Personas]]></name></suitemodule>
+  <suitemodule id="analytics" surfaces="web" enabled="true" ordering="20"><name><![CDATA[Analytics]]></name></suitemodule>
+  <suitemodule id="training" surfaces="app" enabled="true" ordering="30"><name><![CDATA[Training]]></name></suitemodule>
+  <suitemodule id="agentes" surfaces="web" enabled="false" ordering="40"><name><![CDATA[Agentes]]></name></suitemodule>
+</suitemodules>

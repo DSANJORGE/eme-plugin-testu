@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
 <!-- Local dev: on a fresh install the system index maps user.email dynamically
      (plain analyzed string, no .sort subfield), so the email lookup behind
      sendusercode/token never finds anyone. Declaring the field not_analyzed makes
      the lookup use a plain match query, which works with that mapping. Merged
      with the stock user fields. -->
+<!-- TestU Personas: team is the only extension of user. Ids are slugs [a-z0-9]+. -->
 <properties>
   <property id="email" index="true" stored="true" keyword="true" editable="true" indextype="not_analyzed">Email</property>
+  <property id="team" index="true" stored="true" editable="true" type="list" listid="team" indextype="not_analyzed">Team</property>
 </properties>
