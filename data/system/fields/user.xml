@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Local dev: on a fresh install the system index maps user.email dynamically
+     (plain analyzed string, no .sort subfield), so the email lookup behind
+     sendusercode/token never finds anyone. Declaring the field not_analyzed makes
+     the lookup use a plain match query, which works with that mapping. Merged
+     with the stock user fields. -->
+<properties>
+  <property id="email" index="true" stored="true" keyword="true" editable="true" indextype="not_analyzed">Email</property>
+</properties>

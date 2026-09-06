@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Local dev: lets an entityasset (reference document) hang off a tutorial so the
+     tutor RAG (AssistantManager.findDocIdsForEntity via the entitytutorialentityasset
+     view) can find it. Merged with the plugin fields. -->
+<properties>
+  <property id="entitytutorial" index="true" stored="true" editable="true" type="list" viewtype="entity" listid="entitytutorial">
+    <name>
+      <language id="en">Tutorial</language>
+      <language id="es">Tutorial</language>
+    </name>
+  </property>
+  <property id="chapters" index="true" stored="true" editable="true" type="text">
+    <name><language id="en">Chapters / index (one per line: "m:ss Title" video, "p. N Title" PDF)</language><language id="es">Capítulos / índice (uno por línea: "m:ss Título" video, "p. N Título" PDF)</language></name>
+  </property>
+  <property id="credit" index="true" stored="true" editable="true" type="string">
+    <name><language id="en">Credit / attribution</language><language id="es">Crédito / atribución</language></name>
+  </property>
+</properties>

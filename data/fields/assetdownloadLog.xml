@@ -1,0 +1,11 @@
+
+<properties>
+  <property id="id" index="true" deleted="false" editable="true" stored="true">New
+    <name>
+      <language id="de"><![CDATA[Ich würde]]></language>
+      <language id="en"><![CDATA[ID]]></language>
+      <language id="es"><![CDATA[identificación]]></language>
+      <language id="fr"><![CDATA[ID]]></language>
+    </name>
+  </property>
+</properties>

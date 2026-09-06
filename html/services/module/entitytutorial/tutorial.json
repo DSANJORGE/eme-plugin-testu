@@ -54,6 +54,11 @@
                   "correctoption": "$question.correctoption",
                   "rationale": #jesc($question.rationale),
                   "cognitivelevel": "$!question.mcqcognitivelevel"
+                  #if($question.sourcequote)
+                    ,"sourcequote": #jesc($question.sourcequote)
+                    ,"sourcecite": #jesc($!question.sourcecite)
+                    ,"sourcepage": #jesc($!question.sourcepage)
+                  #end
                 }
               #end
             }
