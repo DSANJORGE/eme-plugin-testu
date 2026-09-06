@@ -1,0 +1,8 @@
+<page>
+  <property name="eventname">TestU: compute mastery</property>
+  <property name="eventdescription">Recomputes tutormastery (user x section) from tutoranswer with the learner app's formula</property>
+  <property name="enabled">true</property>
+  <property name="period">15m</property>
+  <property name="delay">2m</property>
+  <path-action name="Script.run"><script>/${catalogid}/events/scripts/testu/computemastery.groovy</script></path-action>
+</page>
