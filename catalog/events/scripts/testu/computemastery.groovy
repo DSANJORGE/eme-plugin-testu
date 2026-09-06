@@ -24,6 +24,8 @@ HitTracker answers = archive.query("tutoranswer").all().search()
 answers.enableBulkOperations()
 List rows = []
 for (Data a in answers) rows << a
+// Sort ties (equal/null datecreated) fall back to backend order; add a secondary
+// tiebreaker (e.g. id) only if that becomes observable in practice.
 rows.sort { it.getDate("datecreated") ?: new Date(0) }
 
 Map groups = [:]
@@ -65,4 +67,13 @@ for (Map g in groups.values()) {
   tosave << row
 }
 if (tosave) searcher.saveAllData(tosave, null)
-log.info("testu computemastery: " + tosave.size() + " rows from " + rows.size() + " answers")
+
+// ponytail: full diff every run against groups.keySet() -- derived data, so a wrong
+// delete (e.g. mid-recompute race) just self-heals on the next run.
+HitTracker existing = searcher.query().all().search()
+existing.enableBulkOperations()
+List todelete = []
+for (Data row in existing) { if (!groups.containsKey(row.getId())) todelete << row }
+if (todelete) searcher.deleteAll(todelete, null)
+
+log.info("testu computemastery: " + tosave.size() + " rows from " + rows.size() + " answers, " + todelete.size() + " stale rows pruned")
