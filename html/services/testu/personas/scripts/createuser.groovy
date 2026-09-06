@@ -33,6 +33,8 @@ u.setValue("email", email)
 u.setValue("firstName", context.getRequestParameter("firstName") ?: "")
 u.setValue("lastName", context.getRequestParameter("lastName") ?: "")
 u.setValue("enabled", "true")
+// Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
+u.setValue("password", UUID.randomUUID().toString())
 if (team) u.setValue("team", team)
 users.saveData(u, context.getUser())
 def profiles = archive.getSearcher("userprofile")

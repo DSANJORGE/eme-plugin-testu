@@ -3,6 +3,9 @@ import org.openedit.Data
 import org.openedit.profile.UserProfile
 MediaArchive archive = context.getPageValue("mediaarchive")
 UserProfile profile = context.getUserProfile()
+// "all" is granted on any manage/operate permission of either domain -- fine under the four-role model
+// (orgadmin/training/manager/users), where personas_* and analytics_* always travel together per role;
+// a future split-permission role (e.g. analytics-only operate without personas) would need a per-domain check.
 boolean all = profile != null && (profile.hasPermission("personas_manage") || profile.hasPermission("personas_operate") || profile.hasPermission("analytics_manage") || profile.hasPermission("analytics_operate"))
 Map teams = [:]
 for (Data t in archive.query("team").all().search()) teams[t.getId()] = t

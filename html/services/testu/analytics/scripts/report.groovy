@@ -24,7 +24,7 @@ for (Data r in mh) {
   if (teamFilter && team != teamFilter) continue
   if (topicFilter && r.get("entitytopic") != topicFilter) continue
   Date la = r.getDate("lastactivity")
-  if (la && la > week) { active << u.getId(); answers7d += 0 }
+  if (la && la > week) { active << u.getId() }
   String lvl = r.get("level"); if (lvl in levels.keySet()) levels[lvl]++
   rows << [user: u.getId(), name: ((u.get("firstName") ?: "") + " " + (u.get("lastName") ?: "")).trim() ?: u.getId(), team: team,
            entitytopic: r.get("entitytopic"), topic: topics[r.get("entitytopic")], componentsection: r.get("componentsection"), section: sections[r.get("componentsection")],

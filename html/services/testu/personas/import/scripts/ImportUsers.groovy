@@ -23,6 +23,8 @@ class UsersImporter extends BaseImporter {
     super.addProperties(inRow, inData)
     inData.setValue("email", String.valueOf(inData.get("email") ?: inData.getId()).trim().toLowerCase())
     inData.setValue("enabled", "true")
+    // Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
+    inData.setValue("password", UUID.randomUUID().toString())
     count++
   }
 }
