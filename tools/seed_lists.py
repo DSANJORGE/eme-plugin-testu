@@ -48,6 +48,9 @@ for path in files:
         fields.update({child.tag: (child.text or "") for child in row})
         url = f"{BASE}/services/module/{searchtype}/create.json?id={quote(rowid)}"
         status, body = post(url, json.dumps(fields).encode(), "application/json")
+        if status == 404:  # no services/module/<type>/ route (plain picklists like masterylevel/suitesurface)
+            print(f"{searchtype}/{rowid} skip (no module route)")
+            continue
         print(f"{searchtype}/{rowid} {status}")
         if status // 100 != 2:
             failed = True
