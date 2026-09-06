@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ponytail: generic CRUD via mediadb/services/module/default fallback; admin/eMe UI only, no app-facing endpoint here.
+     Group "administrators" OR'd in like plugins/mediadb/html/services/module/asset/_site.xconf, since the "administrator"
+     settingsgroup (what the bootstrap admin account actually has) predates our permissions and lacks personas_manage. -->
+<page>
+  <property name="fallbackdirectory">/mediadb/services/module/default</property>
+  <property name="module">settingsgroup</property>
+  <property name="searchtype">settingsgroup</property>
+  <permission name="view">
+    <or>
+      <group id="administrators"/>
+      <userprofile property="personas_manage" equals="true"/>
+    </or>
+  </permission>
+</page>
