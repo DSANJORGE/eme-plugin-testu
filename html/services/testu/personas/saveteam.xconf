@@ -1,0 +1,4 @@
+<page>
+  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/saveteam.groovy</script></path-action>
+  <permission name="view"><userprofile property="personas_operate" equals="true"/></permission>
+</page>

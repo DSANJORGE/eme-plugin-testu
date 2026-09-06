@@ -1,0 +1,4 @@
+<page>
+  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/setrole.groovy</script></path-action>
+  <permission name="view"><userprofile property="personas_manage" equals="true"/></permission>
+</page>

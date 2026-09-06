@@ -1,0 +1,6 @@
+<page>
+  <path-action bean="jsonUtil" name="PageValue.loadPageVariable" allowduplicates="true"/>
+  <property name="alternative_extension">json</property>
+  <generator name="velocityGenerator" mimetypes="text/html"/>
+  <generator name="velocityGenerator" mimetypes="text/json"/>
+</page>
