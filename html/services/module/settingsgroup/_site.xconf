@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- ponytail: generic CRUD via mediadb/services/module/default fallback; admin/eMe UI only, no app-facing endpoint here.
      Permission pattern from plugins/mediadb/html/services/settings/modules/_site.xconf, "administrators"
-     group-bypass idiom from plugins/community/html/default/views/settings/users/_site.xconf, since the "administrator"
-     settingsgroup (what the bootstrap admin account actually has) predates our permissions and lacks personas_manage. -->
+     group-bypass idiom from plugins/community/html/default/views/settings/users/_site.xconf, since the bootstrap
+     admin account has no settingsgroup (only the "administrators" group) and would otherwise fail the profile check. -->
 <page>
   <property name="fallbackdirectory">/mediadb/services/module/default</property>
   <property name="module">settingsgroup</property>
