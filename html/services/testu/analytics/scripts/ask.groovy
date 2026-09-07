@@ -22,12 +22,16 @@ String pct(Number x) { x == null ? "—" : Math.round(x * 100) + " %" }
 
 MediaArchive archive = context.getPageValue("mediaarchive")
 Map a = context.getPageValue("analytics"); if (a == null) return
-String period = context.getRequestParameter("period") ?: "30d"
+String period = context.getRequestParameter("period") ?: ""
 String topic = context.getRequestParameter("entitytopic") ?: ""
 String team = context.getRequestParameter("team") ?: ""
+// A citation links back to the window aggregate.groovy actually used: from/to with the inclusive end,
+// exactly as overview.json echoes it. `period` is only a console shorthand -- pass it through when the
+// caller sent one, never default it, or every fact claims "30d" while the data came from from/to.
+Map base = [from: a.day(a.from), to: a.day(a.to - 1)] + (period ? [period: period] : [:]) + [entitytopic: topic, team: team]
 // ponytail: f and add are closures, not script methods -- a script method runs in its own scope and
-// cannot see the typed script locals (period, topic, team, facts) it needs. Same rule as aggregate.groovy.
-def f = { String view, Map extra = [:] -> [period: period, entitytopic: topic, team: team] + extra }
+// cannot see the typed script locals (base, facts) it needs. Same rule as aggregate.groovy.
+def f = { String view, Map extra = [:] -> base + extra }
 
 // ---- Fact sheet: every number the model may use, each with the view it comes from.
 List facts = []; int i = 0
@@ -75,6 +79,6 @@ List cited = ((out.citations ?: []) as List).collect { it.toString() }.findAll {
 String answer = (out.answer ?: "").toString()
 // Markers the model left in the text but forgot to list still count; unknown ids are stripped from the text.
 (answer =~ /\[(f\d+)\]/).each { m, id -> if (byId.containsKey(id) && !(id in cited)) cited << id }
-answer = answer.replaceAll(/\[(f\d+)\]/) { m, id -> byId.containsKey(id) ? "[" + id + "]" : "" }
+answer = answer.replaceAll(/ ?\[(f\d+)\]/) { m, id -> byId.containsKey(id) ? m : "" }   // the space goes with the marker, so stripping one leaves no orphaned gap before the punctuation
 audit(archive, "analytics.ask", "analytics", context.getRequestParameter("screen") ?: "", [question: question], [citations: cited, ok: true])
 reply([ok: true, answer: answer, citations: cited.collect { byId[it] }, followups: ((out.followups ?: []) as List).take(3), model: "thinking"])

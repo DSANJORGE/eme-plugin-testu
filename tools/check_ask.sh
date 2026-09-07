@@ -5,7 +5,7 @@ B=${EME_BASE:-http://localhost:8080/site/mediadb}; J=$(mktemp); trap 'rm -f "$J"
 curl -sf -c "$J" -o /dev/null "$B/services/authentication/login.json" -H 'Content-Type: application/json' -d '{"id":"admin","password":"admin"}'
 curl -sf -b "$J" -X POST "$B/services/testu/analytics/ask.json" -d debug=facts -d screen=overview > /tmp/facts.json
 curl -sf -b "$J" "$B/services/testu/analytics/overview.json" > /tmp/overview.json
-python3 -c "import json;f=json.load(open('/tmp/facts.json'))['facts'];assert len(f)>=10 and all(k in f[0] for k in ('id','label','value','view'));assert '\"query\"' not in json.dumps(f);print('ok: facts',len(f))"
+python3 -c "import json;f=json.load(open('/tmp/facts.json'))['facts'];assert len(f)>=10 and all(k in f[0] for k in ('id','label','value','view'));assert all(x['filters'].keys()>={'from','to'} and 'period' not in x['filters'] for x in f);assert '\"query\"' not in json.dumps(f);print('ok: facts',len(f),'window',f[0]['filters']['from'],f[0]['filters']['to'])"
 code=$(curl -s -o /tmp/ask1.json -w '%{http_code}' -b "$J" -X POST "$B/services/testu/analytics/ask.json" --data-urlencode 'question=¿Cuántas personas activas hay esta semana?' -d screen=overview)
 if [ "$code" = 503 ]; then echo "SKIP llm: ask returned 503 (llamat down); facts and shapes verified"; exit 0; fi
 curl -s -o /tmp/ask2.json -b "$J" -X POST "$B/services/testu/analytics/ask.json" --data-urlencode 'question=¿Cuánto cobra Luis al mes?' -d screen=overview
