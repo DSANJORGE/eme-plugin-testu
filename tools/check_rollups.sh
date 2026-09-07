@@ -2,7 +2,10 @@
 # Analytics v1: calibration counters, tutordaily and tutorquestion rollups.
 # Triggers the catalog event through recompute.json and asserts the result against Elasticsearch.
 set -eu
-B=${EME_BASE:-http://localhost:8080/site/mediadb}; ES=${ES:-http://localhost:9200/site_catalog}; J=$(mktemp); trap 'rm -f "$J"' EXIT
+B=${EME_BASE:-http://localhost:8080/site/mediadb}; ES=${ES:-http://localhost:9200/site_catalog}; J=$(mktemp)
+# The injected rating event must go even when an assertion aborts the script under `set -eu`:
+# its id is fixed, so a survivor would re-attach a rating and fail the negative block on the next run.
+trap 'rm -f "$J"; curl -s -X DELETE "$ES/usageevent/chk-rating-pos?refresh=true" -o /dev/null || true' EXIT
 curl -sf -c "$J" -o /dev/null "$B/services/authentication/login.json" -H 'Content-Type: application/json' -d '{"id":"admin","password":"admin"}'
 # The endpoint returns immediately; the event runs async and its last write is tutordaily,
 # so wait for a tutordaily row stamped after the trigger rather than guessing a sleep
@@ -112,5 +115,4 @@ hits = json.load(urllib.request.urlopen(r))["hits"]["hits"]
 assert hits, f"tutorquestion {qid} vanished"
 assert hits[0]["_source"].get("rating") == "helpful", ("rating did not attach", hits[0]["_source"])
 PY
-curl -sf -X DELETE "$ES/usageevent/chk-rating-pos?refresh=true" -o /dev/null
 echo "ok: rating join attaches helpful on same user + channel within 10 min"
