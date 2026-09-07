@@ -15,6 +15,8 @@ for (Data s in archive.query("componentsection").exact("playbackentitymoduleid",
 Date week = new Date() - 7
 Set active = [] as Set; int answers7d = 0; Map levels = [beginner: 0, competent: 0, expert: 0]
 List rows = []
+// closure, not a method: a script method cannot see the script's own locals
+def n = { Data d, String f -> (d.get(f) as Integer) ?: 0 }
 def mh = archive.query("tutormastery").all().search(); mh.enableBulkOperations()
 for (Data r in mh) {
   Data u = users[r.get("user")]
@@ -29,7 +31,9 @@ for (Data r in mh) {
   rows << [user: u.getId(), name: ((u.get("firstName") ?: "") + " " + (u.get("lastName") ?: "")).trim() ?: u.getId(), team: team,
            entitytopic: r.get("entitytopic"), topic: topics[r.get("entitytopic")], componentsection: r.get("componentsection"), section: sections[r.get("componentsection")],
            questions: r.get("questions") as Integer, answered: r.get("answered") as Integer, mastered: r.get("mastered") as Integer,
-           attempts: r.get("attempts") as Integer, correct: r.get("correct") as Integer, level: lvl, lastactivity: la?.format("yyyy-MM-dd'T'HH:mm:ssXXX")]
+           attempts: r.get("attempts") as Integer, correct: r.get("correct") as Integer, level: lvl, lastactivity: la?.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+           certaincorrect: n(r, "certaincorrect"), certainwrong: n(r, "certainwrong"), unsurecorrect: n(r, "unsurecorrect"), unsurewrong: n(r, "unsurewrong"),
+           computedat: r.getDate("computedat")?.format("yyyy-MM-dd'T'HH:mm:ssXXX")]
 }
 // answers in the last 7 days come from tutoranswer directly (tutormastery only keeps totals)
 def ah = archive.query("tutoranswer").after("datecreated", week).search(); ah.enableBulkOperations()
