@@ -35,30 +35,33 @@ def f = { String view, Map extra = [:] -> base + extra }
 
 // ---- Fact sheet: every number the model may use, each with the view it comes from.
 List facts = []; int i = 0
-def add = { String label, Object value, String view, Map filters = [:] -> facts << [id: "f" + (++i), label: label, value: value, view: view, filters: f(view, filters)] }
-add("Personas en el alcance", a.cohort.total, "overview"); add("Personas que han respondido alguna vez", a.cohort.activated, "overview")
-add("Personas activas en los últimos 7 días", a.cohort.active7d, "overview"); add("Personas activas en los últimos 30 días", a.cohort.active30d, "overview")
-add("Activas 7 días en el periodo anterior", a.previous.active7d, "overview"); add("Respuestas en el periodo", a.series.sum { it.answers }, "overview"); add("Respuestas en el periodo anterior", a.previous.answers, "overview")
-add("Minutos en la app en el periodo", a.series.sum { it.minutes }, "overview"); add("Conceptos erróneos (respuestas seguras y erróneas) en el periodo", a.series.sum { it.certainwrong }, "overview")
-add("Personas por nivel (Sin empezar / Principiante / Competente / Experto)", a.levels, "overview")
-add("Calibración de confianza: consolidado, frágil, lagunas conocidas, concepto erróneo", a.calibration, "overview")
-a.topicStats.each { t -> add("Tema «${t.name}»: personas por nivel", t.levels, "overview", [entitytopic: t.id]); if (t.weakest) add("Tema «${t.name}»: subtema más débil", "${t.weakest.name} (Principiante en ${t.weakest.beginners} personas)", "mastery", [entitytopic: t.id]) }
-a.sectionStats.sort(false) { -it.beginners }.take(15).each { s -> add("Subtema «${s.name}» (${s.topic}): personas por nivel, preguntas al tutor, conceptos erróneos", [levels: s.levels, questions: s.questions, misconceptions: s.misconceptions], "mastery", [entitytopic: s.topicId]) }
-a.gaps.eachWithIndex { g, k -> add("Brecha ${k + 1}: «${g.name}» (${g.topic})", "Principiante en ${g.beginners} de ${g.people}; ${g.questions} preguntas al tutor, ${g.unanswered} sin respuesta; ${g.misconceptions} conceptos erróneos", "overview") }
-a.teamStats.each { t -> add("Equipo «${t.name ?: 'Sin equipo'}»: personas, han empezado, activas 7 días, niveles, tema más débil", [members: t.members, activated: t.activated, active7d: t.active7d, levels: t.levels, weakest: t.weakest], "team", [team: t.id]) }
-if (a.median) add("Mediana de la organización: cuota de activas 7 días y de expertos (anónima)", [active: pct(a.median.activeShare), expert: pct(a.median.expertShare)], "overview")
-a.inactive.take(20).each { p -> add("Sin actividad: ${p.name} (${a.allteams[p.team]?.getName() ?: 'sin equipo'})", p.lastactivity ? "última actividad ${p.lastactivity.take(10)}" : "nunca ha respondido", "person", [user: p.user]) }
+// `focus` names the console element to pulse when this fact is cited. Ids are opaque (f1..fN), so the
+// console can never match on one: the vocabulary is stat / topic / weakest / grid / gap / team /
+// inactive / iris, and the target screen wraps exactly those elements in a Pulse.
+def add = { String label, Object value, String view, Map filters = [:], String focus = "" -> facts << [id: "f" + (++i), label: label, value: value, view: view, filters: f(view, filters), focus: focus] }
+add("Personas en el alcance", a.cohort.total, "overview", [:], "stat"); add("Personas que han respondido alguna vez", a.cohort.activated, "overview", [:], "stat")
+add("Personas activas en los últimos 7 días", a.cohort.active7d, "overview", [:], "stat"); add("Personas activas en los últimos 30 días", a.cohort.active30d, "overview", [:], "stat")
+add("Activas 7 días en el periodo anterior", a.previous.active7d, "overview", [:], "stat"); add("Respuestas en el periodo", a.series.sum { it.answers }, "overview", [:], "stat"); add("Respuestas en el periodo anterior", a.previous.answers, "overview", [:], "stat")
+add("Minutos en la app en el periodo", a.series.sum { it.minutes }, "overview", [:], "stat"); add("Conceptos erróneos (respuestas seguras y erróneas) en el periodo", a.series.sum { it.certainwrong }, "overview", [:], "stat")
+add("Personas por nivel (Sin empezar / Principiante / Competente / Experto)", a.levels, "overview", [:], "stat")
+add("Calibración de confianza: consolidado, frágil, lagunas conocidas, concepto erróneo", a.calibration, "overview", [:], "stat")
+a.topicStats.each { t -> add("Tema «${t.name}»: personas por nivel", t.levels, "overview", [entitytopic: t.id], "topic"); if (t.weakest) add("Tema «${t.name}»: subtema más débil", "${t.weakest.name} (Principiante en ${t.weakest.beginners} personas)", "mastery", [entitytopic: t.id], "weakest") }
+a.sectionStats.sort(false) { -it.beginners }.take(15).each { s -> add("Subtema «${s.name}» (${s.topic}): personas por nivel, preguntas al tutor, conceptos erróneos", [levels: s.levels, questions: s.questions, misconceptions: s.misconceptions], "mastery", [entitytopic: s.topicId], "grid") }
+a.gaps.eachWithIndex { g, k -> add("Brecha ${k + 1}: «${g.name}» (${g.topic})", "Principiante en ${g.beginners} de ${g.people}; ${g.questions} preguntas al tutor, ${g.unanswered} sin respuesta; ${g.misconceptions} conceptos erróneos", "overview", [:], "gap") }
+a.teamStats.each { t -> add("Equipo «${t.name ?: 'Sin equipo'}»: personas, han empezado, activas 7 días, niveles, tema más débil", [members: t.members, activated: t.activated, active7d: t.active7d, levels: t.levels, weakest: t.weakest], "team", [team: t.id], "team") }
+if (a.median) add("Mediana de la organización: cuota de activas 7 días y de expertos (anónima)", [active: pct(a.median.activeShare), expert: pct(a.median.expertShare)], "overview", [:], "stat")
+a.inactive.take(20).each { p -> add("Sin actividad: ${p.name} (${a.allteams[p.team]?.getName() ?: 'sin equipo'})", p.lastactivity ? "última actividad ${p.lastactivity.take(10)}" : "nunca ha respondido", "person", [user: p.user], "inactive") }
 a.users.values().collect { u -> [u: u, p: a.perUser[u.getId()]] }.findAll { it.p && (it.p.attempts >= 10 && a.levelByUser[it.u.getId()] == "beginner" || it.p.attempts > 0 && it.p.cw / (double) it.p.attempts >= 0.3) }.take(15).each { x ->
-  add("En riesgo: ${a.nameOf(x.u)}", "nivel ${a.levelByUser[x.u.getId()] ?: 'sin empezar'}, ${x.p.cw} conceptos erróneos en ${x.p.attempts} intentos", "person", [user: x.u.getId()]) }
-add("Preguntas al tutor en el periodo: total, personas, con fuente, valoradas, útiles", [questions: a.iris.questions, people: a.iris.people, cited: pct(a.iris.citedShare), rated: pct(a.iris.ratedShare), helpful: pct(a.iris.helpfulShare)], "activity")
-a.iris.themes.each { t -> add("Preguntas al tutor de tipo «${t.theme}»", t.count, "activity") }
-a.iris.sections.take(10).each { s -> add("Preguntas al tutor sobre «${s.name}»", s.questions, "activity") }
-a.iris.labels.take(20).each { l -> add("Sobre qué preguntan (etiqueta): «${l.label}»", l.count, "activity") }
+  add("En riesgo: ${a.nameOf(x.u)}", "nivel ${a.levelByUser[x.u.getId()] ?: 'sin empezar'}, ${x.p.cw} conceptos erróneos en ${x.p.attempts} intentos", "person", [user: x.u.getId()], "inactive") }
+add("Preguntas al tutor en el periodo: total, personas, con fuente, valoradas, útiles", [questions: a.iris.questions, people: a.iris.people, cited: pct(a.iris.citedShare), rated: pct(a.iris.ratedShare), helpful: pct(a.iris.helpfulShare)], "activity", [:], "iris")
+a.iris.themes.each { t -> add("Preguntas al tutor de tipo «${t.theme}»", t.count, "activity", [:], "iris") }
+a.iris.sections.take(10).each { s -> add("Preguntas al tutor sobre «${s.name}»", s.questions, "activity", [:], "iris") }
+a.iris.labels.take(20).each { l -> add("Sobre qué preguntan (etiqueta): «${l.label}»", l.count, "activity", [:], "iris") }
 String sel = (context.getRequestParameter("user") ?: "").toLowerCase()
 if (sel && a.users[sel]) { Data u = a.users[sel]; def p = a.perUser[sel]
-  add("Persona seleccionada: ${a.nameOf(u)}", [team: a.allteams[u.get("team")]?.getName(), level: a.levelByUser[sel], answered: p?.answered ?: 0, mastered: p?.mastered ?: 0, misconceptions: p?.cw ?: 0, lastactivity: p?.last?.format("yyyy-MM-dd")], "person", [user: sel])
-  a.perUserTopic[sel]?.each { tid, pt -> add("${a.nameOf(u)} en «${a.topics[tid]}»", "${a.levelOf(pt.mastered, pt.answered) ?: 'sin empezar'}, ${pt.mastered} de ${pt.answered} dominadas", "person", [user: sel, entitytopic: tid]) }
-  List qs = a.tq.findAll { it.get("user") == sel }; add("${a.nameOf(u)}: preguntas al tutor en el periodo", qs.size(), "person", [user: sel]) }
+  add("Persona seleccionada: ${a.nameOf(u)}", [team: a.allteams[u.get("team")]?.getName(), level: a.levelByUser[sel], answered: p?.answered ?: 0, mastered: p?.mastered ?: 0, misconceptions: p?.cw ?: 0, lastactivity: p?.last?.format("yyyy-MM-dd")], "person", [user: sel], "stat")
+  a.perUserTopic[sel]?.each { tid, pt -> add("${a.nameOf(u)} en «${a.topics[tid]}»", "${a.levelOf(pt.mastered, pt.answered) ?: 'sin empezar'}, ${pt.mastered} de ${pt.answered} dominadas", "person", [user: sel, entitytopic: tid], "topic") }
+  List qs = a.tq.findAll { it.get("user") == sel }; add("${a.nameOf(u)}: preguntas al tutor en el periodo", qs.size(), "person", [user: sel], "iris") }
 if (context.getRequestParameter("debug") == "facts") { reply([ok: true, facts: facts]); return }
 
 // ---- LLM
