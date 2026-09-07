@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Core: append-only audit trail written by services/testu/personas/*. Never edited, never deleted. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
+  <property id="actor" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Actor</language><language id="es">Quién</language></name></property>
+  <property id="action" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Action</language><language id="es">Acción</language></name></property>
+  <property id="targettype" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Target type</language><language id="es">Tipo</language></name></property>
+  <property id="targetid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Target id</language><language id="es">Id</language></name></property>
+  <property id="before" index="false" stored="true" editable="false" viewtype="textarea"><name><language id="en">Before</language><language id="es">Antes</language></name></property>
+  <property id="after" index="false" stored="true" editable="false" viewtype="textarea"><name><language id="en">After</language><language id="es">Después</language></name></property>
+</properties>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<masterylevels>
+  <masterylevel id="beginner"><name><![CDATA[Principiante]]></name></masterylevel>
+  <masterylevel id="competent"><name><![CDATA[Competente]]></name></masterylevel>
+  <masterylevel id="expert"><name><![CDATA[Experto]]></name></masterylevel>
+</masterylevels>

@@ -1,0 +1,4 @@
+<page>
+  <path-action name="PathEventModule.runSharedEvent" runpath="/${catalogid}/events/testu/computemastery.html"/>
+  <permission name="view"><userprofile property="analytics_operate" equals="true"/></permission>
+</page>

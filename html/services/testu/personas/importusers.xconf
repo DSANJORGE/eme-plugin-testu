@@ -1,0 +1,12 @@
+<page>
+  <path-action name="Page.uploadFile"/>
+  <property name="path">/WEB-INF/temp/importing/testu/users.csv</property>
+  <property name="importpath">/WEB-INF/temp/importing/testu/users.csv</property>
+  <property name="module">user</property>
+  <property name="searchtype">user</property>
+  <property name="dataroot">/${applicationid}/services/testu/personas</property>
+  <property name="scriptname">ImportUsers.groovy</property>
+  <path-action name="DataImportModule.importDataWithScript"/>
+  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/importdone.groovy</script></path-action>
+  <permission name="view"><userprofile property="personas_operate" equals="true"/></permission>
+</page>

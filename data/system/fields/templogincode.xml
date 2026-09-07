@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Local dev: same fix as user.xml — on a fresh install this table's mapping is
+     created dynamically (put mapping fails on a [date] conflict with
+     userauthenticationLog), so analyzed lookups go to a missing .sort subfield.
+     Declaring these two not_analyzed makes TempSecurityKeyAuthenticator's
+     exact() terms plain term queries, which match the dynamic mapping. -->
+<properties>
+  <property id="email" index="true" stored="true" keyword="true" editable="true" indextype="not_analyzed">Email</property>
+  <property id="securitycode" index="true" stored="true" keyword="true" editable="true" indextype="not_analyzed">Security Code</property>
+</properties>

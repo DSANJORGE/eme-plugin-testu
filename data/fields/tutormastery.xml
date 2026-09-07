@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Analytics: one row per user x tutorial section, recomputed by events/testu/computemastery.
+     Same formula as the learner app (testu_live.dart _tally): answered = distinct questions,
+     mastered = those whose latest attempt is correct. id = <user>_<componentsection>. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="entitytutorial" index="true" stored="true" editable="false" type="list" listid="entitytutorial"><name><language id="en">Tutorial</language><language id="es">Tutorial</language></name></property>
+  <property id="componentsection" index="true" stored="true" editable="false" type="list" listid="componentsection"><name><language id="en">Section</language><language id="es">Subtema</language></name></property>
+  <property id="questions" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Questions</language><language id="es">Preguntas</language></name></property>
+  <property id="answered" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Answered</language><language id="es">Respondidas</language></name></property>
+  <property id="mastered" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Mastered</language><language id="es">Dominadas</language></name></property>
+  <property id="attempts" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Attempts</language><language id="es">Intentos</language></name></property>
+  <property id="correct" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Correct</language><language id="es">Correctas</language></name></property>
+  <property id="level" index="true" stored="true" editable="false" type="list" listid="masterylevel"><name><language id="en">Level</language><language id="es">Nivel</language></name></property>
+  <property id="lastactivity" index="true" stored="true" editable="false" type="date"><name><language id="en">Last activity</language><language id="es">Última actividad</language></name></property>
+  <property id="computedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Computed at</language><language id="es">Calculado</language></name></property>
+</properties>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<properties> 
+  <property id="id" index="true" deleted="false" editable="true" stored="true">New 
+    <name> 
+      <language id="de"><![CDATA[Ich würde]]></language>  
+      <language id="en"><![CDATA[ID]]></language>  
+      <language id="es"><![CDATA[identificación]]></language>  
+      <language id="fr"><![CDATA[ID]]></language> 
+    </name> 
+  </property>  
+  <!-- TestU local patch: topic / subtopic of the attempt, for progress per section. -->  
+  <property id="entitytutorial" listid="entitytutorial" index="true" editable="true" stored="true" datatype="list">Tutorial 
+    <name> 
+      <language id="en"><![CDATA[Tutorial]]></language> 
+    </name> 
+  </property>  
+  <property id="componentsection" listid="componentsection" index="true" editable="true" stored="true" datatype="list">Section 
+    <name>
+      <language id="en"><![CDATA[Section]]></language>
+    </name>
+  </property> 
+</properties>

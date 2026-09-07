@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<permissions>
+  <permission id="personas_manage" permissiontype="application" name="Personas: administrar" ordering="900"/>
+  <permission id="personas_operate" permissiontype="application" name="Personas: operar" ordering="901"/>
+  <permission id="personas_view" permissiontype="application" name="Personas: ver" ordering="902"/>
+  <permission id="analytics_manage" permissiontype="application" name="Analytics: administrar" ordering="910"/>
+  <permission id="analytics_operate" permissiontype="application" name="Analytics: operar" ordering="911"/>
+  <permission id="analytics_view" permissiontype="application" name="Analytics: ver" ordering="912"/>
+  <permission id="training_manage" permissiontype="application" name="Training: administrar" ordering="920"/>
+  <permission id="training_operate" permissiontype="application" name="Training: operar" ordering="921"/>
+  <permission id="training_view" permissiontype="application" name="Training: ver" ordering="922"/>
+</permissions>

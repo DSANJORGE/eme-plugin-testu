@@ -1,0 +1,5 @@
+<page>
+  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/scope.groovy</script></path-action>
+  <path-action name="Script.run" allowduplicates="true"><script>/${applicationid}/services/testu/personas/scripts/users.groovy</script></path-action>
+  <permission name="view"><userprofile property="personas_view" equals="true"/></permission>
+</page>

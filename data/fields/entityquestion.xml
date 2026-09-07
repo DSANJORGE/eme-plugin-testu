@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Local dev: pre-authored source reference per question (quote + document
+     title + page) so the app's "Abrir fuente" opens the tutorial's reference
+     document at the right page. Merged with the plugin fields. -->
+<properties>
+  <property id="sourcequote" index="true" stored="true" editable="true" type="text">
+    <name><language id="en">Source quote</language><language id="es">Cita de la fuente</language></name>
+  </property>
+  <property id="sourcecite" index="true" stored="true" editable="true" type="string">
+    <name><language id="en">Source document</language><language id="es">Documento fuente</language></name>
+  </property>
+  <property id="sourcepage" index="true" stored="true" editable="true" type="number">
+    <name><language id="en">Source page</language><language id="es">Página fuente</language></name>
+  </property>
+  <property id="skill" index="true" stored="true" editable="true" type="list" listid="skill"><name><language id="en">Skill</language><language id="es">Skill</language></name></property>
+</properties>

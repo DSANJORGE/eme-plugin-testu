@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GenAI Labs suite: which modules and surfaces this installation (= one client) has. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="true" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="name" index="true" stored="true" editable="true" keyword="true"><name><language id="en">Name</language><language id="es">Nombre</language></name></property>
+  <property id="surfaces" index="true" stored="true" editable="true" type="list" listid="suitesurface" viewtype="multiselect"><name><language id="en">Surfaces</language><language id="es">Superficies</language></name></property>
+  <property id="enabled" index="true" stored="true" editable="true" type="boolean"><name><language id="en">Enabled</language><language id="es">Activo</language></name></property>
+  <property id="ordering" index="true" stored="true" editable="true" type="number" datatype="number"><name><language id="en">Order</language><language id="es">Orden</language></name></property>
+</properties>
