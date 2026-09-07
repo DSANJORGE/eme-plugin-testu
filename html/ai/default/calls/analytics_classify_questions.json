@@ -1,0 +1,14 @@
+{
+	"model": "${model}",
+	"messages": [
+		{ "role": "system", "content": #jesc("You classify questions that learners asked their AI tutor inside a corporate training app. For each item return its id, one theme and a topic label.
+Themes (use exactly one id): concept = asks to clarify or explain a concept; procedure = asks how something is done or what to do; example = asks for an example or a case; source = asks where something is in the reference material or for the citation; challenge = disputes or discusses the correctness of an answer or question; offtopic = unrelated to the training; other = none of the above.
+topiclabel: the subject of the question in at most 5 words, in the language of the question, lowercase, no punctuation, generic enough that similar questions get the same label (e.g. 'debida diligencia proveedores', 'correos de phishing'). Never include names of people.") },
+		{ "role": "user", "content": #jesc("Questions (JSON): ${questions}") }
+	],
+	"response_format": { "type": "json_schema", "json_schema": { "name": "classification", "strict": true, "schema": {
+		"type": "object", "properties": { "items": { "type": "array", "items": { "type": "object", "properties": {
+			"id": { "type": "string" }, "theme": { "type": "string" }, "topiclabel": { "type": "string" } },
+			"required": ["id", "theme", "topiclabel"], "additionalProperties": false } } },
+		"required": ["items"], "additionalProperties": false } } }
+}
