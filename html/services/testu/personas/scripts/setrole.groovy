@@ -27,5 +27,8 @@ Data p = profiles.searchById(userid) ?: profiles.createNewData()
 String before = p.get("settingsgroup")
 p.setId(userid); p.setValue("userid", userid); p.setValue("settingsgroup", role)
 profiles.saveData(p, context.getUser())
+// eMe keeps loaded profiles in CacheManager("userprofile"); without this the old role
+// survives until Tomcat restarts (UserProfileManager.setRoleOnUser does the same).
+archive.getUserProfileManager().clearProfile(archive.getCatalogId(), userid)
 audit(archive, "user.role", "user", userid, [role: before], [role: role])
 reply([ok: true])
