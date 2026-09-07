@@ -50,8 +50,15 @@ List dailyAll = allDaily.findAll { users.containsKey(it.get("user")) }
 Set activatedIds = dailyAll.findAll { n(it, "answers") > 0 }.collect { it.get("user") } as Set
 List daily = dailyAll.findAll { Date d = it.getDate("day"); d >= from && d < to }
 List prevDaily = dailyAll.findAll { Date d = it.getDate("day"); d >= prevFrom && d < prevTo }
-Map series = [:]; for (Date d = from; d < to; d = d + 1) series[day(d)] = [day: day(d), people: 0, answers: 0, minutes: 0, sessions: 0, certainwrong: 0, questions: 0]
-for (Data r in daily) { def s = series[day(r.getDate("day"))]; if (s == null) continue; if (n(r, "answers") > 0) s.people++; ["answers", "minutes", "sessions", "certainwrong", "questions"].each { s[it] += n(r, it) } }
+// Dense daily series over an arbitrary window -- the period and, for the chart's ghost line, the
+// window before it. Same builder for both, so the two can never drift into different shapes.
+def seriesOf = { Date a, Date b, List rowsIn ->
+  Map s = [:]; for (Date d = a; d < b; d = d + 1) s[day(d)] = [day: day(d), people: 0, answers: 0, minutes: 0, sessions: 0, certainwrong: 0, questions: 0]
+  for (Data r in rowsIn) { def e = s[day(r.getDate("day"))]; if (e == null) continue; if (n(r, "answers") > 0) e.people++; ["answers", "minutes", "sessions", "certainwrong", "questions"].each { e[it] += n(r, it) } }
+  s.values() as List
+}
+List series = seriesOf(from, to, daily)
+List prevSeries = seriesOf(prevFrom, prevTo, prevDaily)
 def activeSince = { List rowsIn, int daysBack -> Date since = to - daysBack; rowsIn.findAll { Date d = it.getDate("day"); d >= since && d < to && n(it, "answers") > 0 }.collect { it.get("user") } as Set }
 Map cohort = [total: users.size(), activated: activatedIds.size(), active7d: activeSince(dailyAll, 7).size(), active30d: activeSince(dailyAll, 30).size()]
 def sums = { List rowsIn -> [answers: rowsIn.sum { n(it, "answers") } ?: 0, minutes: rowsIn.sum { n(it, "minutes") } ?: 0, certainwrong: rowsIn.sum { n(it, "certainwrong") } ?: 0, questions: rowsIn.sum { n(it, "questions") } ?: 0] }
@@ -110,5 +117,5 @@ def irisAgg = { List qs ->
    labels: labels.collect { k, v -> [label: k, count: v.size()] }.sort { -it.count }.take(30)]
 }
 context.putPageValue("analytics", [from: from, to: to, users: users, allteams: allteams, topics: topics, sections: sections, mastery: mastery, perUser: perUser, perUserTopic: perUserTopic, levelByUser: levelByUser,
-  dailyAll: dailyAll, daily: daily, series: series.values() as List, cohort: cohort, previous: previous, levels: levelsOf(levelByUser.values()), topicStats: topicStats, sectionStats: sectionStats, gaps: gaps,
+  dailyAll: dailyAll, daily: daily, series: series, previousSeries: prevSeries, cohort: cohort, previous: previous, levels: levelsOf(levelByUser.values()), topicStats: topicStats, sectionStats: sectionStats, gaps: gaps,
   teamStats: teamStats, calibration: calibration, median: median, inactive: inactive, tq: tq, iris: irisAgg(tq), nameOf: nameOf, levelOf: levelOf, levelsOf: levelsOf, day: day, n: n])
