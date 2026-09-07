@@ -7,7 +7,7 @@ B=${EME_BASE:-http://localhost:8080/site/mediadb}; J=$(mktemp); M=$(mktemp)
 TEAM=; TEAMNAME=; TEAMPARENT=; TEAMLOC=; TEAMCC=; TEAMMGR=
 saveteam() { curl -sf -b "$J" -X POST "$B/services/testu/personas/saveteam.json" -d id="$TEAM" -d name="$TEAMNAME" -d parent="$TEAMPARENT" -d location="$TEAMLOC" -d costcenter="$TEAMCC" -d manager="$1" >/dev/null; }
 cleanup() { if [ -n "$TEAM" ]; then saveteam "$TEAMMGR" || echo "WARN: could not restore team $TEAM"; fi; rm -f "$J" "$M"; }
-trap cleanup EXIT
+trap 'rc=$?; cleanup; [ "$rc" -eq 0 ] || echo "FAIL (exit $rc): a request failed -- is the local admin in orgadmin (Task 0 of the plan) and Tomcat up?" >&2; exit $rc' EXIT
 login() { curl -sf -c "$1" -o /dev/null "$B/services/authentication/login.json" -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"password\":\"$3\"}"; }
 login "$J" admin admin
 for e in overview activity; do curl -sf -b "$J" "$B/services/testu/analytics/$e.json?from=2026-08-08&to=2026-09-06" > "/tmp/$e.json"; done
