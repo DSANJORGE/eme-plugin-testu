@@ -55,10 +55,23 @@ def form(url, **fields):
     return call(url, body, "application/x-www-form-urlencoded")
 
 
+def must(what, result):
+    """Every write and every parsed read goes through here: a swallowed 4xx would let the run finish and
+    print a summary that lies, with ES rows already written against team assignments the server rejected."""
+    status, body = result
+    if status // 100 != 2:
+        sys.exit(f"{what} failed: HTTP {status} {body[:300]!r}")
+    return body
+
+
 def login():
-    status, body = form(f"{BASE}/services/authentication/login.json", id=USER, password=PASSWORD)
-    if status // 100 != 2 or json.loads(body)["response"]["status"] != "ok":
-        sys.exit(f"login failed: {status} {body!r}")
+    body = must("login", form(f"{BASE}/services/authentication/login.json", id=USER, password=PASSWORD))
+    if json.loads(body)["response"]["status"] != "ok":
+        sys.exit(f"login failed: {body!r}")
+
+
+def read_users():
+    return json.loads(must("users.json", call(f"{BASE}/services/testu/personas/users.json")))["users"]
 
 
 def es_search(entity, body):
@@ -233,10 +246,9 @@ def wipe():
         es_bulk(deletes)
     # personas has no delete for users, only disableuser.json; a disabled user is dropped by
     # aggregate.groovy's isLearner(), so it leaves the cohort exactly as a deletion would.
-    status, raw = call(f"{BASE}/services/testu/personas/users.json")
-    users = [u["id"] for u in json.loads(raw)["users"] if u["id"].startswith("demo.") and u["enabled"]]
+    users = [u["id"] for u in read_users() if u["id"].startswith("demo.") and u["enabled"]]
     for uid in users:
-        form(f"{BASE}/services/testu/personas/disableuser.json", userid=uid)
+        must(f"disableuser {uid}", form(f"{BASE}/services/testu/personas/disableuser.json", userid=uid))
     print(f"wipe users: {len(users)} disabled (personas offers no delete endpoint)")
     print("wipe teams: left in place (no delete endpoint; empty demo teams are inert)")
     if not NO_RECOMPUTE:
@@ -245,31 +257,35 @@ def wipe():
 
 # ---------------------------------------------------------------- seed
 def ensure_people():
-    status, raw = call(f"{BASE}/services/testu/personas/users.json")
-    existing = {u["id"]: u for u in json.loads(raw)["users"]}
+    existing = {u["id"]: u for u in read_users()}
     for t in TEAMS:   # teams first: createuser rejects an unknown team
-        form(f"{BASE}/services/testu/personas/saveteam.json", manager="", **t)
+        must(f"saveteam {t['id']}", form(f"{BASE}/services/testu/personas/saveteam.json", manager="", **t))
     created = reenabled = 0
     for n in range(1, 25):
         uid, (first, last) = email(n), NAMES[n - 1]
         team, role = TEAM_OF[n - 1], ("manager" if n == MANAGER_N else "users")
         if uid not in existing:
-            st, body = form(f"{BASE}/services/testu/personas/createuser.json",
-                            email=uid, firstName=first, lastName=last, role=role, team=team)
-            if st // 100 != 2:
-                sys.exit(f"createuser {uid} failed: {st} {body!r}")
+            must(f"createuser {uid} (team {team}, role {role})",
+                 form(f"{BASE}/services/testu/personas/createuser.json",
+                      email=uid, firstName=first, lastName=last, role=role, team=team))
             created += 1
             continue
         if not existing[uid]["enabled"]:   # a previous --wipe disabled it; bring it back
-            form(f"{BASE}/services/authentication/usersave.json", username=uid, field="enabled", enabledvalue="true")
+            must(f"usersave enabled {uid}",
+                 form(f"{BASE}/services/authentication/usersave.json", username=uid,
+                      field="enabled", enabledvalue="true"))
             reenabled += 1
-        form(f"{BASE}/services/testu/personas/setteam.json", userid=uid, team=team)
-        form(f"{BASE}/services/testu/personas/setrole.json", userid=uid, role=role)
+        must(f"setteam {uid} -> {team}",
+             form(f"{BASE}/services/testu/personas/setteam.json", userid=uid, team=team))
+        must(f"setrole {uid} -> {role}",
+             form(f"{BASE}/services/testu/personas/setrole.json", userid=uid, role=role))
     for t in TEAMS:   # re-save with the manager, now that the user exists
-        form(f"{BASE}/services/testu/personas/saveteam.json",
-             manager=(email(MANAGER_N) if t["id"] == MANAGED_TEAM else ""), **t)
-    form(f"{BASE}/services/authentication/usersave.json", username=email(MANAGER_N),
-         field="password", passwordvalue=MANAGER_PASSWORD)
+        must(f"saveteam {t['id']} (manager)",
+             form(f"{BASE}/services/testu/personas/saveteam.json",
+                  manager=(email(MANAGER_N) if t["id"] == MANAGED_TEAM else ""), **t))
+    must(f"usersave password {email(MANAGER_N)}",
+         form(f"{BASE}/services/authentication/usersave.json", username=email(MANAGER_N),
+              field="password", passwordvalue=MANAGER_PASSWORD))
     print(f"people: 3 teams, 24 users ({created} created, {reenabled} re-enabled), "
           f"manager {email(MANAGER_N)} / {MANAGER_PASSWORD} of {MANAGED_TEAM}")
 
@@ -309,6 +325,11 @@ def build_rows(tutorial, qs, cluster):
     # If the cyber course is not loaded, `cyber` is empty and everybody just does DDHH.
     ddhh = sorted(s for s, t in tutorial.items() if t != "ciberseguridad-1" and s in qs)
     cyber = sorted(s for s, t in tutorial.items() if t == "ciberseguridad-1" and s in qs)
+    if not ddhh:
+        # Fallback, not an exit: with only the cyber course loaded everyone studies that instead, so
+        # usersections[n] is never empty and the random.choice() in the IRIS loop cannot raise IndexError.
+        ddhh, cyber = cyber, []
+        print("note: DDHH course not loaded; the whole cohort studies the available tutorial instead")
     lines, active, usersections = [], {}, {}
     counters = {"ans": 0, "ev": 0}
     now = iso(datetime.datetime.now())
@@ -404,9 +425,7 @@ def build_rows(tutorial, qs, cluster):
 
 # ---------------------------------------------------------------- recompute + report
 def recompute_and_report(seeding=True):
-    status, raw = call(f"{BASE}/services/testu/analytics/recompute.json", b"")
-    if status // 100 != 2:
-        sys.exit(f"recompute failed: {status} {raw!r}")
+    must("recompute", call(f"{BASE}/services/testu/analytics/recompute.json", b""))
     deadline, o = time.time() + 300, {}
     while time.time() < deadline:
         time.sleep(6)
