@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Analytics v1: one row per question a learner asked the tutor in the app, derived from chatterbox by events/testu/computemastery.
+     `query` is stored for classification only and is never returned by services/testu/analytics/*. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
+  <property id="channel" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
+  <property id="entitytutorial" index="true" stored="true" editable="false" type="list" listid="entitytutorial"><name><language id="en">Tutorial</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="componentsection" index="true" stored="true" editable="false" type="list" listid="componentsection"><name><language id="en">Section</language><language id="es">Subtema</language></name></property>
+  <property id="entityquestion" index="true" stored="true" editable="false" type="list" listid="entityquestion"><name><language id="en">Question</language><language id="es">Pregunta</language></name></property>
+  <property id="query" index="false" stored="true" editable="false" type="textarea"><name><language id="en">Learner's words</language><language id="es">Texto del colaborador</language></name></property>
+  <property id="answered" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Answered</language><language id="es">Respondida</language></name></property>
+  <property id="cited" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Cited</language><language id="es">Con fuente</language></name></property>
+  <property id="rating" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Rating</language><language id="es">Valoración</language></name></property>
+  <property id="theme" index="true" stored="true" editable="false" type="list" listid="tutorquestiontheme"><name><language id="en">Theme</language><language id="es">Tipo de pregunta</language></name></property>
+  <property id="topiclabel" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Topic label</language><language id="es">Etiqueta</language></name></property>
+  <property id="classifiedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Classified at</language><language id="es">Clasificada</language></name></property>
+</properties>

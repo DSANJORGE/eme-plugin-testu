@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<usageeventtypes>
+  <usageeventtype id="open"><name><![CDATA[Apertura]]></name></usageeventtype>
+  <usageeventtype id="resume"><name><![CDATA[Vuelve a la app]]></name></usageeventtype>
+  <usageeventtype id="pause"><name><![CDATA[Sale de la app]]></name></usageeventtype>
+  <usageeventtype id="iris_rate"><name><![CDATA[Valora una respuesta del tutor]]></name></usageeventtype>
+</usageeventtypes>

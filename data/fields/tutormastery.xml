@@ -14,6 +14,10 @@
   <property id="attempts" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Attempts</language><language id="es">Intentos</language></name></property>
   <property id="correct" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Correct</language><language id="es">Correctas</language></name></property>
   <property id="level" index="true" stored="true" editable="false" type="list" listid="masterylevel"><name><language id="en">Level</language><language id="es">Nivel</language></name></property>
+  <property id="certaincorrect" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Correct · certain</language><language id="es">Correctas · seguro</language></name></property>
+  <property id="certainwrong" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Wrong · certain</language><language id="es">Incorrectas · seguro</language></name></property>
+  <property id="unsurecorrect" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Correct · unsure</language><language id="es">Correctas · inseguro</language></name></property>
+  <property id="unsurewrong" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Wrong · unsure</language><language id="es">Incorrectas · inseguro</language></name></property>
   <property id="lastactivity" index="true" stored="true" editable="false" type="date"><name><language id="en">Last activity</language><language id="es">Última actividad</language></name></property>
   <property id="computedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Computed at</language><language id="es">Calculado</language></name></property>
 </properties>
