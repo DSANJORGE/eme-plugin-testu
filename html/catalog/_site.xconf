@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Make sure /site/catalog/_site.xconf correctly falls back to /testu/catalog-->
+<page>
+  <property name="fallbackdirectory">/finder/catalog</property>
+  <property name="catalogid">site/catalog</property>
+</page>
