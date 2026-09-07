@@ -103,7 +103,10 @@ if (orgUsers.size() >= 5) {
   Set orgActive = [] as Set; for (Data r in allDaily) { Date d = r.getDate("day"); if (orgUsers.containsKey(r.get("user")) && d >= to - 7 && d < to && n(r, "answers") > 0) orgActive << r.get("user") }
   median = [activeShare: orgActive.size() / (double) orgUsers.size(), expertShare: orgUsers.keySet().count { u -> orgPer[u] && levelOf(orgPer[u].m, orgPer[u].a) == "expert" } / (double) orgUsers.size()]
 }
-List inactive = users.values().findAll { u -> Date l = perUser[u.getId()]?.last; l == null || l < now - 7 }.collect { u -> [user: u.getId(), name: nameOf(u), team: u.get("team"), lastactivity: perUser[u.getId()]?.last?.format("yyyy-MM-dd'T'HH:mm:ssXXX")] }.sort { it.lastactivity ?: "" }
+// Not `now`: clearTime() above mutated it to midnight when the caller sent no `to`, so the cutoff
+// would silently be midnight-7d for one caller and wall-clock-7d for another.
+Date inactiveCutoff = new Date() - 7
+List inactive = users.values().findAll { u -> Date l = perUser[u.getId()]?.last; l == null || l < inactiveCutoff }.collect { u -> [user: u.getId(), name: nameOf(u), team: u.get("team"), lastactivity: perUser[u.getId()]?.last?.format("yyyy-MM-dd'T'HH:mm:ssXXX")] }.sort { it.lastactivity ?: "" }
 // Tutor usage aggregates (never the text).
 def irisAgg = { List qs ->
   int rated = qs.count { it.get("rating") }
@@ -116,6 +119,6 @@ def irisAgg = { List qs ->
    sections: qs.groupBy { it.get("componentsection") }.collect { k, v -> [section: k, name: sections[k], questions: v.size(), helpfulShare: v.count { it.get("rating") } ? v.count { it.get("rating") == "helpful" } / (double) v.count { it.get("rating") } : null] }.sort { -it.questions },
    labels: labels.collect { k, v -> [label: k, count: v.size()] }.sort { -it.count }.take(30)]
 }
-context.putPageValue("analytics", [from: from, to: to, users: users, allteams: allteams, topics: topics, sections: sections, mastery: mastery, perUser: perUser, perUserTopic: perUserTopic, levelByUser: levelByUser,
+context.putPageValue("analytics", [from: from, to: to, topicFilter: topicFilter, users: users, allteams: allteams, topics: topics, sections: sections, mastery: mastery, perUser: perUser, perUserTopic: perUserTopic, perSection: perSection, levelByUser: levelByUser,
   dailyAll: dailyAll, daily: daily, series: series, previousSeries: prevSeries, cohort: cohort, previous: previous, levels: levelsOf(levelByUser.values()), topicStats: topicStats, sectionStats: sectionStats, gaps: gaps,
   teamStats: teamStats, calibration: calibration, median: median, inactive: inactive, tq: tq, iris: irisAgg(tq), nameOf: nameOf, levelOf: levelOf, levelsOf: levelsOf, day: day, n: n])

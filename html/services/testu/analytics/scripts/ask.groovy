@@ -63,7 +63,12 @@ if (sel && a.users[sel]) { Data u = a.users[sel]; def p = a.perUser[sel]
   add("Persona seleccionada: ${a.nameOf(u)}", [team: a.allteams[u.get("team")]?.getName(), level: a.levelByUser[sel], answered: p?.answered ?: 0, mastered: p?.mastered ?: 0, misconceptions: p?.cw ?: 0, lastactivity: p?.last?.format("yyyy-MM-dd")], "person", [user: sel], "stat")
   a.perUserTopic[sel]?.each { tid, pt -> add("${a.nameOf(u)} en «${a.topics[tid]}»", "${a.levelOf(pt.mastered, pt.answered) ?: 'sin empezar'}, ${pt.mastered} de ${pt.answered} dominadas", "person", [user: sel, entitytopic: tid], "topic") }
   List qs = a.tq.findAll { it.get("user") == sel }; add("${a.nameOf(u)}: preguntas al tutor en el periodo", qs.size(), "person", [user: sel], "iris") }
-if (context.getRequestParameter("debug") == "facts") { reply([ok: true, facts: facts]); return }
+// The raw fact sheet is the whole scoped model in one response, well past what a viewer sees on any
+// screen. Same verb the recompute endpoint gates on; normal questions stay on analytics_view.
+if (context.getRequestParameter("debug") == "facts") {
+  if (context.getUserProfile()?.hasPermission("analytics_operate") != true) { fail(403, "operate"); return }
+  reply([ok: true, facts: facts]); return
+}
 
 // ---- LLM
 String question = (context.getRequestParameter("question") ?: "").trim().take(500)

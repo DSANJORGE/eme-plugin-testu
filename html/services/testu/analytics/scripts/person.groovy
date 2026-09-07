@@ -16,7 +16,7 @@ List mine = a.daily.findAll { it.get("user") == uid }
 Map series = [:]; for (Date d = a.from; d < a.to; d = d + 1) series[a.day(d)] = [day: a.day(d), answers: 0, correct: 0, minutes: 0, sessions: 0, questions: 0]
 for (Data r in mine) { def s = series[a.day(r.getDate("day"))]; if (s) ["answers", "correct", "minutes", "sessions", "questions"].each { s[it] += a.n(r, it) } }
 List qs = a.tq.findAll { it.get("user") == uid }; int rated = qs.count { it.get("rating") }
-context.putPageValue("json", JsonOutput.toJson([ok: true, user: [id: uid, name: a.nameOf(u), team: u.get("team"), role: (archive.getSearcher("userprofile").searchById(uid)?.get("settingsgroup") ?: "users"), enabled: u.get("enabled") != "false", lastlogin: u.get("lastlogin")],
+context.putPageValue("json", JsonOutput.toJson([ok: true, user: [id: uid, name: a.nameOf(u), team: u.get("team"), role: (archive.getSearcher("userprofile").searchById(uid)?.get("settingsgroup") ?: "users"), enabled: u.get("enabled") != "false", lastlogin: u.get("lastlogin"), creationdate: u.get("creationdate")],
   rows: rows, series: series.values() as List, calibration: [cc: pu.cc, cu: pu.uc, ic: pu.uw, iu: pu.cw], topics: topics,
   usage: [sessions: mine.sum { a.n(it, "sessions") } ?: 0, minutes: mine.sum { a.n(it, "minutes") } ?: 0, activeDays: mine.count { a.n(it, "answers") > 0 }],
   iris: [questions: qs.size(), sections: qs.groupBy { it.get("componentsection") }.collect { k, v -> [section: k, name: a.sections[k], questions: v.size()] }, helpfulShare: rated ? qs.count { it.get("rating") == "helpful" } / (double) rated : null]]))

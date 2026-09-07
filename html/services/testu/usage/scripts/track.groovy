@@ -25,12 +25,14 @@ List events = parsed
 if (events.size() > 200) { fail(400, "too many events"); return }
 def searcher = archive.getSearcher("usageevent")
 List tosave = []
+Set seen = [] as Set
 for (def e in events) {
   if (!(e instanceof Map)) continue   // unknown shapes are skipped, never fail the whole batch
   String type = e.type?.toString(); if (!(type in TYPES)) continue
   Date at = null
   try { at = Date.parse("yyyy-MM-dd'T'HH:mm:ssX", e.at?.toString()?.replaceAll(/\.\d+/, "")) } catch (Exception ex) { continue }
   String id = md5(userid + "|" + e.sessionid + "|" + type + "|" + e.at)
+  if (!seen.add(id)) continue   // two byte-identical events in one batch share the md5 id: one row, one count
   if (searcher.searchById(id) != null) continue   // idempotent: a retried batch never double-counts
   Data d = searcher.createNewData(); d.setId(id)
   d.setValue("user", userid); d.setValue("datecreated", at); d.setValue("type", type)
