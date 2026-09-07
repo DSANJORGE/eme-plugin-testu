@@ -45,12 +45,15 @@ Map levelByUser = users.keySet().collectEntries { u -> [(u): perUser[u] ? levelO
 // tracker's scroll is consumed by the first iteration, so the org-wide median reads this list too.
 List allDaily = []; def dh = archive.query("tutordaily").all().search(); dh.enableBulkOperations(); for (Data r in dh) allDaily << r
 List dailyAll = allDaily.findAll { users.containsKey(it.get("user")) }
+// Cohort/funnel deliberately ignore the topic filter: activated must stay a superset of
+// active30d >= active7d, and those come from tutordaily, which has no topic.
+Set activatedIds = dailyAll.findAll { n(it, "answers") > 0 }.collect { it.get("user") } as Set
 List daily = dailyAll.findAll { Date d = it.getDate("day"); d >= from && d < to }
 List prevDaily = dailyAll.findAll { Date d = it.getDate("day"); d >= prevFrom && d < prevTo }
 Map series = [:]; for (Date d = from; d < to; d = d + 1) series[day(d)] = [day: day(d), people: 0, answers: 0, minutes: 0, sessions: 0, certainwrong: 0, questions: 0]
 for (Data r in daily) { def s = series[day(r.getDate("day"))]; if (s == null) continue; if (n(r, "answers") > 0) s.people++; ["answers", "minutes", "sessions", "certainwrong", "questions"].each { s[it] += n(r, it) } }
-def activeSince = { List rowsIn, int daysBack -> Date since = to - daysBack; rowsIn.findAll { it.getDate("day") >= since && n(it, "answers") > 0 }.collect { it.get("user") } as Set }
-Map cohort = [total: users.size(), activated: users.keySet().count { perUser[it]?.answered > 0 }, active7d: activeSince(dailyAll, 7).size(), active30d: activeSince(dailyAll, 30).size()]
+def activeSince = { List rowsIn, int daysBack -> Date since = to - daysBack; rowsIn.findAll { Date d = it.getDate("day"); d >= since && d < to && n(it, "answers") > 0 }.collect { it.get("user") } as Set }
+Map cohort = [total: users.size(), activated: activatedIds.size(), active7d: activeSince(dailyAll, 7).size(), active30d: activeSince(dailyAll, 30).size()]
 def sums = { List rowsIn -> [answers: rowsIn.sum { n(it, "answers") } ?: 0, minutes: rowsIn.sum { n(it, "minutes") } ?: 0, certainwrong: rowsIn.sum { n(it, "certainwrong") } ?: 0, questions: rowsIn.sum { n(it, "questions") } ?: 0] }
 Map previous = sums(prevDaily) + [active7d: (prevDaily.findAll { it.getDate("day") >= prevTo - 7 && n(it, "answers") > 0 }.collect { it.get("user") } as Set).size()]
 
@@ -60,7 +63,8 @@ List topicStats = topics.collect { tid, tname ->
   def lv = users.keySet().collect { u -> def pt = perUserTopic[u]?.get(tid); pt ? levelOf(pt.mastered, pt.answered) : null }
   def secs = perSection.findAll { k, v -> v.topic == tid }
   def weakest = secs.max { e -> e.value.levels.count { it == "beginner" } }   // one param: a two-param max closure is a Comparator
-  [id: tid, name: tname, people: lv.count { it != null }, levels: levelsOf(lv), weakest: weakest ? [section: weakest.key, name: sections[weakest.key], beginners: weakest.value.levels.count { it == "beginner" }] : null]
+  int wb = weakest ? weakest.value.levels.count { it == "beginner" } : 0   // max() picks the first on a tie -- 0 beginners is no signal, not a weakest section
+  [id: tid, name: tname, people: lv.count { it != null }, levels: levelsOf(lv), weakest: wb > 0 ? [section: weakest.key, name: sections[weakest.key], beginners: wb] : null]
 }.findAll { it != null }
 // Tutor questions in scope + period.
 List tqAll = []; def qh = archive.query("tutorquestion").all().search(); qh.enableBulkOperations(); for (Data r in qh) { if (users.containsKey(r.get("user")) && (!topicFilter || r.get("entitytopic") == topicFilter)) tqAll << r }
@@ -79,8 +83,8 @@ Set active7dIds = activeSince(dailyAll, 7)
 List teamStats = byTeam.collect { tid, members ->
   Set ids = members.collect { it.getId() } as Set
   def lv = ids.collect { levelByUser[it] }
-  def weakest = topicStats.max { t -> ids.count { u -> def pt = perUserTopic[u]?.get(t.id); pt && levelOf(pt.mastered, pt.answered) == "beginner" } }
-  [id: tid, name: tid ? (allteams[tid]?.getName() ?: tid) : "", members: ids.size(), activated: ids.count { perUser[it]?.answered > 0 }, active7d: (active7dIds.intersect(ids)).size(), levels: levelsOf(lv), weakest: weakest?.name]
+  def weakest = topicStats.collect { t -> [name: t.name, beginners: ids.count { u -> def pt = perUserTopic[u]?.get(t.id); pt && levelOf(pt.mastered, pt.answered) == "beginner" }] }.max { it.beginners }
+  [id: tid, name: tid ? (allteams[tid]?.getName() ?: tid) : "", members: ids.size(), activated: ids.count { it in activatedIds }, active7d: (active7dIds.intersect(ids)).size(), levels: levelsOf(lv), weakest: weakest?.beginners > 0 ? weakest.name : null]
 }.sort { it.name }
 // Calibration (in scope + topic filter, all attempts).
 Map calibration = [cc: perUser.values().sum { it.cc } ?: 0, cu: perUser.values().sum { it.uc } ?: 0, ic: perUser.values().sum { it.uw } ?: 0, iu: perUser.values().sum { it.cw } ?: 0]
@@ -89,15 +93,17 @@ Map orgUsers = allUsers.findAll { k, u -> isLearner(u) }
 Map median = null
 if (orgUsers.size() >= 5) {
   Map orgPer = [:]; for (Data r in allMastery) { if (orgUsers.containsKey(r.get("user"))) { def p = orgPer.get(r.get("user"), [m: 0, a: 0]); p.m += n(r, "mastered"); p.a += n(r, "answered") } }
-  Set orgActive = [] as Set; for (Data r in allDaily) { if (orgUsers.containsKey(r.get("user")) && r.getDate("day") >= to - 7 && n(r, "answers") > 0) orgActive << r.get("user") }
+  Set orgActive = [] as Set; for (Data r in allDaily) { Date d = r.getDate("day"); if (orgUsers.containsKey(r.get("user")) && d >= to - 7 && d < to && n(r, "answers") > 0) orgActive << r.get("user") }
   median = [activeShare: orgActive.size() / (double) orgUsers.size(), expertShare: orgUsers.keySet().count { u -> orgPer[u] && levelOf(orgPer[u].m, orgPer[u].a) == "expert" } / (double) orgUsers.size()]
 }
 List inactive = users.values().findAll { u -> Date l = perUser[u.getId()]?.last; l == null || l < now - 7 }.collect { u -> [user: u.getId(), name: nameOf(u), team: u.get("team"), lastactivity: perUser[u.getId()]?.last?.format("yyyy-MM-dd'T'HH:mm:ssXXX")] }.sort { it.lastactivity ?: "" }
 // Tutor usage aggregates (never the text).
 def irisAgg = { List qs ->
   int rated = qs.count { it.get("rating") }
-  Map labels = qs.findAll { it.get("topiclabel") }.groupBy { it.get("topiclabel") }.findAll { k, v -> v.size() >= 3 }
-  [questions: qs.size(), people: (qs.collect { it.get("user") } as Set).size(), citedShare: qs ? qs.count { it.get("cited") == "true" } / (double) qs.size() : null, ratedShare: qs ? rated / (double) qs.size() : null,
+  int people = (qs.collect { it.get("user") } as Set).size()
+  // Free text: >= 3 repeats is not anonymity. Below the same k as the median gate, publish nothing.
+  Map labels = people >= 5 ? qs.findAll { it.get("topiclabel") }.groupBy { it.get("topiclabel") }.findAll { k, v -> v.size() >= 3 } : [:]
+  [questions: qs.size(), people: people, citedShare: qs ? qs.count { it.get("cited") == "true" } / (double) qs.size() : null, ratedShare: qs ? rated / (double) qs.size() : null,
    helpfulShare: rated ? qs.count { it.get("rating") == "helpful" } / (double) rated : null,
    themes: qs.groupBy { it.get("theme") ?: "unclassified" }.collect { k, v -> [theme: k, count: v.size()] }.sort { -it.count },
    sections: qs.groupBy { it.get("componentsection") }.collect { k, v -> [section: k, name: sections[k], questions: v.size(), helpfulShare: v.count { it.get("rating") } ? v.count { it.get("rating") == "helpful" } / (double) v.count { it.get("rating") } : null] }.sort { -it.questions },
