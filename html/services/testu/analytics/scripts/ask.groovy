@@ -37,7 +37,8 @@ def f = { String view, Map extra = [:] -> base + extra }
 List facts = []; int i = 0
 // `focus` names the console element to pulse when this fact is cited. Ids are opaque (f1..fN), so the
 // console can never match on one: the vocabulary is stat / topic / weakest / grid / gap / team /
-// inactive / iris, and the target screen wraps exactly those elements in a Pulse.
+// inactive / iris, and the target screen wraps exactly those elements in a Pulse. A team fact opens
+// the team page, where what it describes is the stat row -- hence "stat", not "team".
 def add = { String label, Object value, String view, Map filters = [:], String focus = "" -> facts << [id: "f" + (++i), label: label, value: value, view: view, filters: f(view, filters), focus: focus] }
 add("Personas en el alcance", a.cohort.total, "overview", [:], "stat"); add("Personas que han respondido alguna vez", a.cohort.activated, "overview", [:], "stat")
 add("Personas activas en los últimos 7 días", a.cohort.active7d, "overview", [:], "stat"); add("Personas activas en los últimos 30 días", a.cohort.active30d, "overview", [:], "stat")
@@ -48,7 +49,7 @@ add("Calibración de confianza: consolidado, frágil, lagunas conocidas, concept
 a.topicStats.each { t -> add("Tema «${t.name}»: personas por nivel", t.levels, "overview", [entitytopic: t.id], "topic"); if (t.weakest) add("Tema «${t.name}»: subtema más débil", "${t.weakest.name} (Principiante en ${t.weakest.beginners} personas)", "mastery", [entitytopic: t.id], "weakest") }
 a.sectionStats.sort(false) { -it.beginners }.take(15).each { s -> add("Subtema «${s.name}» (${s.topic}): personas por nivel, preguntas al tutor, conceptos erróneos", [levels: s.levels, questions: s.questions, misconceptions: s.misconceptions], "mastery", [entitytopic: s.topicId], "grid") }
 a.gaps.eachWithIndex { g, k -> add("Brecha ${k + 1}: «${g.name}» (${g.topic})", "Principiante en ${g.beginners} de ${g.people}; ${g.questions} preguntas al tutor, ${g.unanswered} sin respuesta; ${g.misconceptions} conceptos erróneos", "overview", [:], "gap") }
-a.teamStats.each { t -> add("Equipo «${t.name ?: 'Sin equipo'}»: personas, han empezado, activas 7 días, niveles, tema más débil", [members: t.members, activated: t.activated, active7d: t.active7d, levels: t.levels, weakest: t.weakest], "team", [team: t.id], "team") }
+a.teamStats.each { t -> add("Equipo «${t.name ?: 'Sin equipo'}»: personas, han empezado, activas 7 días, niveles, tema más débil", [members: t.members, activated: t.activated, active7d: t.active7d, levels: t.levels, weakest: t.weakest], "team", [team: t.id], "stat") }
 if (a.median) add("Mediana de la organización: cuota de activas 7 días y de expertos (anónima)", [active: pct(a.median.activeShare), expert: pct(a.median.expertShare)], "overview", [:], "stat")
 a.inactive.take(20).each { p -> add("Sin actividad: ${p.name} (${a.allteams[p.team]?.getName() ?: 'sin equipo'})", p.lastactivity ? "última actividad ${p.lastactivity.take(10)}" : "nunca ha respondido", "person", [user: p.user], "inactive") }
 a.users.values().collect { u -> [u: u, p: a.perUser[u.getId()]] }.findAll { it.p && (it.p.attempts >= 10 && a.levelByUser[it.u.getId()] == "beginner" || it.p.attempts > 0 && it.p.cw / (double) it.p.attempts >= 0.3) }.take(15).each { x ->
@@ -82,6 +83,9 @@ List cited = ((out.citations ?: []) as List).collect { it.toString() }.findAll {
 String answer = (out.answer ?: "").toString()
 // Markers the model left in the text but forgot to list still count; unknown ids are stripped from the text.
 (answer =~ /\[(f\d+)\]/).each { m, id -> if (byId.containsKey(id) && !(id in cited)) cited << id }
+// The panel numbers the chips in list order, so the list has to follow the markers: an id the model
+// listed out of order, or appended above, would otherwise read [2] [1] in the answer.
+cited = cited.sort(false) { String id -> int k = answer.indexOf("[" + id + "]"); k < 0 ? Integer.MAX_VALUE : k }
 answer = answer.replaceAll(/ ?\[(f\d+)\]/) { m, id -> byId.containsKey(id) ? m : "" }   // the space goes with the marker, so stripping one leaves no orphaned gap before the punctuation
 audit(archive, "analytics.ask", "analytics", context.getRequestParameter("screen") ?: "", [question: question], [citations: cited, ok: true])
 reply([ok: true, answer: answer, citations: cited.collect { byId[it] }, followups: ((out.followups ?: []) as List).take(3), model: "thinking"])
