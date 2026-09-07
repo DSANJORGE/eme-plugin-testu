@@ -97,3 +97,20 @@ assert hits, f"tutorquestion {qid} vanished"
 assert not hits[0]["_source"].get("rating"), ("admin rating attached to a diego question", hits[0]["_source"])
 print("ok: rating join requires the same user")
 PY
+
+# Positive path: the same learner, the same channel, inside the 10-minute window. track.json cannot
+# produce this (it always stamps the session user), so the usageevent goes straight into the index.
+curl -sf -X PUT "$ES/usageevent/chk-rating-pos?refresh=true" -H 'Content-Type: application/json' -o /dev/null \
+  -d "{\"id\":\"chk-rating-pos\",\"user\":\"diego\",\"type\":\"iris_rate\",\"rating\":\"helpful\",\"channel\":\"$CH\",\"datecreated\":\"${AT%Z}.000Z\",\"sessionid\":\"chk-pos\",\"seconds\":0}"
+recompute
+python3 - "$ES" "$QID" <<'PY'
+import sys, json, urllib.request
+ES, qid = sys.argv[1], sys.argv[2]
+r = urllib.request.Request(f"{ES}/_search?size=1", headers={"Content-Type": "application/json"},
+    data=json.dumps({"query": {"bool": {"must": [{"term": {"_type": "tutorquestion"}}, {"term": {"_id": qid}}]}}}).encode())
+hits = json.load(urllib.request.urlopen(r))["hits"]["hits"]
+assert hits, f"tutorquestion {qid} vanished"
+assert hits[0]["_source"].get("rating") == "helpful", ("rating did not attach", hits[0]["_source"])
+PY
+curl -sf -X DELETE "$ES/usageevent/chk-rating-pos?refresh=true" -o /dev/null
+echo "ok: rating join attaches helpful on same user + channel within 10 min"

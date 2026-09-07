@@ -139,7 +139,7 @@ for (Data m in asks) {
   row.setValue("cited", (text =~ /\[[^\]\n]+,\s*(p\.\s*\d+|\d+:\d\d)\]\s*(\[\[hl[^\]]*\]\])?\s*$/).find())
   Date rat = reply?.getDate("date") ?: at
   def r = (ratings[m.get("channel")] ?: []).find { it.user == user && it.at >= rat && it.at.time - rat.time <= 10 * 60 * 1000L }
-  if (r) row.setValue("rating", r.rating)
+  row.setValue("rating", r?.rating)   // unconditional: a full rebuild must not leave a stale rating behind
   dayFor(user, at).questions++
   qsave << row
 }
