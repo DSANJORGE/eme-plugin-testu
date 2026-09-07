@@ -14,6 +14,6 @@ for (Data u in hits) {
   if (scope != null && !(u.get("team") in scope)) continue
   out << [id: u.getId(), email: u.get("email"), firstName: u.get("firstName"), lastName: u.get("lastName"), team: u.get("team"),
           role: roles[u.getId()] ?: "users", enabled: !"false".equals(String.valueOf(u.get("enabled"))),
-          lastactivity: last[u.getId()]?.format("yyyy-MM-dd'T'HH:mm:ss")]
+          lastactivity: last[u.getId()]?.format("yyyy-MM-dd'T'HH:mm:ssXXX")]
 }
 context.putPageValue("json", JsonOutput.toJson([users: out]))

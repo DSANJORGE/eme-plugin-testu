@@ -4,7 +4,7 @@ import org.openedit.Data
 MediaArchive archive = context.getPageValue("mediaarchive")
 Set scope = context.getPageValue("scopeteams")
 String topicFilter = context.getRequestParameter("entitytopic"); String teamFilter = context.getRequestParameter("team")
-if (scope != null && teamFilter && !(teamFilter in scope)) { context.getResponse().setStatus(403); context.putPageValue("json", '{"ok":false,"error":"out of scope"}'); return }
+if (scope != null && teamFilter && !(teamFilter in scope)) { context.getResponse().setStatus(400); context.putPageValue("json", '{"ok":false,"error":"out of scope"}'); return }
 Map users = [:]
 def uh = archive.query("user").all().search(); uh.enableBulkOperations()
 for (Data u in uh) users[u.getId()] = u
@@ -29,7 +29,7 @@ for (Data r in mh) {
   rows << [user: u.getId(), name: ((u.get("firstName") ?: "") + " " + (u.get("lastName") ?: "")).trim() ?: u.getId(), team: team,
            entitytopic: r.get("entitytopic"), topic: topics[r.get("entitytopic")], componentsection: r.get("componentsection"), section: sections[r.get("componentsection")],
            questions: r.get("questions") as Integer, answered: r.get("answered") as Integer, mastered: r.get("mastered") as Integer,
-           attempts: r.get("attempts") as Integer, correct: r.get("correct") as Integer, level: lvl, lastactivity: la?.format("yyyy-MM-dd'T'HH:mm:ss")]
+           attempts: r.get("attempts") as Integer, correct: r.get("correct") as Integer, level: lvl, lastactivity: la?.format("yyyy-MM-dd'T'HH:mm:ssXXX")]
 }
 // answers in the last 7 days come from tutoranswer directly (tutormastery only keeps totals)
 def ah = archive.query("tutoranswer").after("datecreated", week).search(); ah.enableBulkOperations()

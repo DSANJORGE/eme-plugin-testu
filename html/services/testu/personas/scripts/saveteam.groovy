@@ -24,6 +24,8 @@ if (!(id ==~ /[a-z0-9]+/)) { fail(400, "id must be [a-z0-9]+"); return }
 String parent = context.getRequestParameter("parent") ?: ""
 if (parent == id) { fail(400, "a team cannot be its own parent"); return }
 if (parent && archive.getCachedData("team", parent) == null) { fail(400, "unknown parent"); return }
+String manager = context.getRequestParameter("manager") ?: ""
+if (manager && archive.getSearcher("user").searchById(manager) == null) { fail(400, "unknown manager"); return }
 def teams = archive.getSearcher("team")
 Data t = teams.searchById(id)
 List fields = ["name", "parent", "manager", "location", "costcenter"]

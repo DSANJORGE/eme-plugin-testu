@@ -24,6 +24,8 @@ if (userid == context.getUser().getId()) { fail(400, "cannot disable yourself");
 def users = archive.getSearcher("user")
 Data u = users.searchById(userid)
 if (u == null) { fail(404, "no user"); return }
+String targetrole = archive.getSearcher("userprofile").searchById(userid)?.get("settingsgroup")
+if (targetrole in ["orgadmin", "training"] && !context.getUserProfile().hasPermission("personas_manage")) { fail(403, "role requires personas_manage"); return }
 u.setValue("enabled", "false")
 users.saveData(u, context.getUser())
 audit(archive, "user.disable", "user", userid, [enabled: true], [enabled: false])

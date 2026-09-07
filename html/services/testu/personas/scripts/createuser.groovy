@@ -24,6 +24,7 @@ String team = context.getRequestParameter("team") ?: ""
 String role = context.getRequestParameter("role") ?: "users"
 if (!(email ==~ /[^@\s]+@[^@\s]+\.[^@\s]+/)) { fail(400, "invalid email"); return }
 if (!(role in ["users", "manager", "training", "orgadmin"])) { fail(400, "invalid role"); return }
+if (role in ["training", "orgadmin"] && !context.getUserProfile().hasPermission("personas_manage")) { fail(403, "role requires personas_manage"); return }
 if (team && archive.getCachedData("team", team) == null) { fail(400, "unknown team"); return }
 def users = archive.getSearcher("user")
 if (users.searchById(email) != null || archive.getUserManager().getUserByEmail(email) != null) { fail(400, "user exists"); return }

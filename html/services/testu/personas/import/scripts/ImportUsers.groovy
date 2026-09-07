@@ -20,8 +20,13 @@ class UsersImporter extends BaseImporter {
       names[i] = h
       if (!(h in ALLOWED)) throw new IllegalArgumentException("unexpected column " + h)
     }
+    if (getSearcher().searchById(inData.getId()) != null) throw new IllegalArgumentException("user exists: " + inData.getId())
+    String email = String.valueOf(inRow.get("email") ?: inData.getId()).trim().toLowerCase()
+    if (!(email ==~ /[^@\s]+@[^@\s]+\.[^@\s]+/)) throw new IllegalArgumentException("invalid email: " + email)
+    String team = inRow.get("team")
+    if (team && getMediaArchive().getCachedData("team", team) == null) throw new IllegalArgumentException("unknown team: " + team)
     super.addProperties(inRow, inData)
-    inData.setValue("email", String.valueOf(inData.get("email") ?: inData.getId()).trim().toLowerCase())
+    inData.setValue("email", email)
     inData.setValue("enabled", "true")
     // Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
     inData.setValue("password", UUID.randomUUID().toString())
