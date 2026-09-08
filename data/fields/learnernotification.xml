@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Part D (2026-09-07): one row per notification for one recipient. Written inline by
+     services/testu/social/scripts/{comment,react}.groovy, read by notifications.groovy,
+     flipped by markread.groovy. `entitytopic` is resolved server-side because the app's
+     session screen opens by topic, not by tutorial.
+     `text` must stay index="true": BaseElasticSearcher.updateIndex skips any field with
+     index="false" entirely (it is never written, not just unsearchable), same bug as
+     questionflag.note and tutorquestion.query, see part-c defects-report.md. `user` and
+     `read` are the only fields Task 2 queries with exact(); `user` is type="list" and
+     `read` is datatype="boolean", so eMe's isAnalyzed() is already false for both and
+     neither needs indextype="not_analyzed". `type` is a plugin-list field like
+     questionflag.reason (not an entity reference like `user`), so it needs
+     indextype="not_analyzed" before any exact("type", ...), same reasoning as
+     questionflag.status, see defects-report.md. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Recipient</language><language id="es">Destinatario</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
+  <property id="type" index="true" stored="true" editable="false" type="list" listid="learnernotificationtype" indextype="not_analyzed"><name><language id="en">Type</language><language id="es">Tipo</language></name></property>
+  <property id="actor" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Actor</language><language id="es">Autor</language></name></property>
+  <property id="actorname" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Actor name</language><language id="es">Nombre del autor</language></name></property>
+  <property id="text" index="true" stored="true" editable="false" type="textarea"><name><language id="en">Text</language><language id="es">Texto</language></name></property>
+  <property id="channel" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
+  <property id="messageid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Message</language><language id="es">Mensaje</language></name></property>
+  <property id="entitytutorial" index="true" stored="true" editable="false" type="list" listid="entitytutorial"><name><language id="en">Tutorial</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="entityquestion" index="true" stored="true" editable="false" type="list" listid="entityquestion"><name><language id="en">Question</language><language id="es">Pregunta</language></name></property>
+  <property id="read" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Read</language><language id="es">Leída</language></name></property>
+</properties>

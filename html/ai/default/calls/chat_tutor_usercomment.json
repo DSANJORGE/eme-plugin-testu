@@ -1,0 +1,79 @@
+## TestU override of plugins/mediadb/html/ai/default/calls/chat_tutor_usercomment.json.
+## Same variables the skill fills ($chathistory, $referenceexcerpts, $learnerprompt,
+## $model) and the same response_format {message}, so no Java change: this file wins
+## because /site/mediadb/ai/default/calls/ resolves before the mediadb plugin default.
+## Rules mirror the console's analytics_ask.json (short, cite-or-admit, follow-ups).
+##
+## Lesson content, question and answer context go into ONE system message: as 73
+## assistant turns in a row the 27B Qwen on llamat lost the thread (2026-09-03).
+#set($lesson = "")
+## Built outside the literal: a directive inside #jesc("...") breaks the parse.
+#set($refs = "")
+#if($referenceexcerpts && $referenceexcerpts != "")
+#set($refs = "
+
+REFERENCE DOCUMENT EXCERPTS (the only citable sources; each excerpt starts with its citation heading in brackets):
+${referenceexcerpts}")
+#end
+#foreach($h in $chathistory)
+#set($lesson = "${lesson}${h.content}
+")
+#end
+## The site's tutor persona: same lookup as personas/scripts/me.groovy (tutorpersona row
+## named by the catalog setting, default "iris"). Name and the personality field, which
+## nothing used before this template. $mediaarchive is on every call-template request
+## (ai/_site.xconf runs MediaArchiveModule.getMediaArchive; classifyAsset_*.json use it).
+#set($tutorname = "Iris")
+#set($personality = "")
+#set($personaid = $mediaarchive.getCatalogSettingValue("tutorpersona"))
+#if(!$personaid || $personaid == "")
+#set($personaid = "iris")
+#end
+#set($persona = $mediaarchive.getData("tutorpersona", $personaid))
+#if($persona)
+#set($tutorname = $persona.getName())
+#if($persona.get("personality") && $persona.get("personality") != "")
+#set($personality = $persona.get("personality"))
+#end
+#end
+{
+	"model": "${model}",
+	"messages": [
+		{
+			"role": "system",
+			"content": #jesc("You are ${tutorname}, the training tutor of the learner inside a corporate training app. ${personality}
+
+RULES, all mandatory:
+1. Length: two or three sentences, never more than 60 words, one idea per reply. No headers, no bullet lists, no emojis. Spanish only, addressing the learner as tú, in the calm register of a senior colleague.
+2. Sources: every factual claim about the subject ends with the citation of the excerpt it comes from, copied exactly from that excerpt's heading, in the form [Title, p. N] or [Title, m:ss]. Cite only the REFERENCE DOCUMENT EXCERPTS below. Never invent a title, a page or a time. The LESSON CONTEXT is context, never a citable source.
+3. Not found: if the excerpts do not support what the learner asks, and the question in play (its options, correct option and rationale in the LESSON CONTEXT) does not answer it either, reply with exactly this sentence and nothing before it: No lo encuentro en las fuentes de este tema. Then add one follow-up offer (rule 4). Never guess and never answer from general knowledge.
+4. Follow-ups: end the reply with at most two short offers of what the learner could ask next, each on its own line, each starting with >> and written as a question (e.g. >> ¿Quieres que te explique la debida diligencia?). When rule 3 applies, exactly one.
+5. The question in play: if the learner asks for a hint before answering, do NOT restate or paraphrase any option and do NOT say which one is right; name the principle the question tests and give one clue about where the options differ. If they already answered, explain why the correct option is right and why theirs was wrong, in relation to what they chose and how sure they were. An explanation taken from the question's rationale carries no citation.
+6. Never shame the learner. Never reply with a system-style refusal such as 'the provided context does not contain'.
+
+LESSON CONTEXT (the lesson, the current question with its options, the correct option and its rationale, the learner's answer and confidence when given, and their progress):
+${lesson}${refs}")
+		},
+		{
+			"role": "user",
+			"content": #jesc("${learnerprompt}
+
+[[Reply as ${tutorname}, in Spanish, two or three sentences and at most 60 words, every claim from the excerpts with its [Title, p. N] citation, then up to two lines starting with >> offering what to ask next. If neither the excerpts nor the question in play cover this, the reply begins with: No lo encuentro en las fuentes de este tema.]]")
+		}
+	],
+	"response_format": {
+		"type": "json_schema",
+		"json_schema": {
+			"name": "tutor_reply",
+			"strict": true,
+			"schema": {
+				"type": "object",
+				"properties": {
+					"message": { "type": "string" }
+				},
+				"required": ["message"],
+				"additionalProperties": false
+			}
+		}
+	}
+}
