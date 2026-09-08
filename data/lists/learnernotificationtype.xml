@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<learnernotificationtypes>
+  <learnernotificationtype id="reply"><name><![CDATA[Respuesta a tu comentario]]></name></learnernotificationtype>
+  <learnernotificationtype id="mention"><name><![CDATA[Mención]]></name></learnernotificationtype>
+  <learnernotificationtype id="reaction"><name><![CDATA[Reacción a tu comentario]]></name></learnernotificationtype>
+  <learnernotificationtype id="tutorreply"><name><![CDATA[Respuesta del tutor]]></name></learnernotificationtype>
+</learnernotificationtypes>

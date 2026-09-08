@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Analytics v1: append-only events posted by the collaborator app (services/testu/usage/track). user comes from the session, never the body. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
+  <property id="type" index="true" stored="true" editable="false" type="list" listid="usageeventtype"><name><language id="en">Type</language><language id="es">Tipo</language></name></property>
+  <property id="sessionid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Session</language><language id="es">Sesión</language></name></property>
+  <property id="seconds" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Seconds</language><language id="es">Segundos</language></name></property>
+  <property id="channel" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
+  <property id="componentsection" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Section</language><language id="es">Subtema</language></name></property>
+  <property id="entityquestion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Question</language><language id="es">Pregunta</language></name></property>
+  <property id="rating" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Rating</language><language id="es">Valoración</language></name></property>
+  <property id="platform" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Platform</language><language id="es">Plataforma</language></name></property>
+  <property id="appversion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">App version</language><language id="es">Versión</language></name></property>
+</properties>

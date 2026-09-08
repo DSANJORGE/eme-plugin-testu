@@ -1,0 +1,4 @@
+<page>
+  <path-action name="Script.run"><script>/${applicationid}/services/testu/social/scripts/notifications.groovy</script></path-action>
+  <permission name="view"><user/></permission>
+</page>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tutorquestionthemes>
+  <tutorquestiontheme id="concept"><name><![CDATA[Aclarar un concepto]]></name></tutorquestiontheme>
+  <tutorquestiontheme id="procedure"><name><![CDATA[Cómo se hace]]></name></tutorquestiontheme>
+  <tutorquestiontheme id="example"><name><![CDATA[Pedir un ejemplo]]></name></tutorquestiontheme>
+  <tutorquestiontheme id="source"><name><![CDATA[Dónde está en la fuente]]></name></tutorquestiontheme>
+  <tutorquestiontheme id="challenge"><name><![CDATA[Discutir la respuesta]]></name></tutorquestiontheme>
+  <tutorquestiontheme id="offtopic"><name><![CDATA[Fuera del tema]]></name></tutorquestiontheme>
+  <tutorquestiontheme id="other"><name><![CDATA[Otro]]></name></tutorquestiontheme>
+</tutorquestionthemes>

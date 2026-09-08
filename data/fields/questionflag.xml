@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Pilot readiness C2: one row per question a learner reported from the app (services/testu/social/flag).
+     user comes from the session, never the body. status is open until a later console task resolves it.
+     status needs indextype="not_analyzed" (as chatterbox does for channel/functionname) or eMe's exact()
+     queries status.exact, a sub-field a not_analyzed mapping does not have. index="false" is not "stored but
+     unsearchable": BaseElasticSearcher.updateIndex skips !isIndex() fields entirely, so note must stay index="true".
+     reason is type="list" (so eMe's isAnalyzed() treats it as not-analyzed and exact() emits a plain term), but
+     its ES mapping in this index is an analyzed string -- it only matches today because every reason id is one
+     lowercase token. Never exact() it on a mixed-case/multi-word value without adding indextype="not_analyzed"
+     here AND reindexing the type; see defects-report.md. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
+  <property id="entitytutorial" index="true" stored="true" editable="false" type="list" listid="entitytutorial"><name><language id="en">Tutorial</language></name></property>
+  <property id="entityquestion" index="true" stored="true" editable="false" type="list" listid="entityquestion"><name><language id="en">Question</language><language id="es">Pregunta</language></name></property>
+  <property id="reason" index="true" stored="true" editable="false" type="list" listid="questionflagreason"><name><language id="en">Reason</language><language id="es">Motivo</language></name></property>
+  <property id="note" index="true" stored="true" editable="false" type="textarea"><name><language id="en">Note</language><language id="es">Nota</language></name></property>
+  <property id="status" index="true" stored="true" editable="true" keyword="true" indextype="not_analyzed"><name><language id="en">Status</language><language id="es">Estado</language></name></property>
+</properties>

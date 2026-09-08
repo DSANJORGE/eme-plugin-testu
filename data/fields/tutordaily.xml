@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Analytics v1: one row per user x calendar day, written by events/testu/computemastery. id = <user>_<yyyyMMdd>. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="day" index="true" stored="true" editable="false" type="date"><name><language id="en">Day</language><language id="es">Día</language></name></property>
+  <property id="answers" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Answers</language><language id="es">Respuestas</language></name></property>
+  <property id="correct" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Correct</language><language id="es">Correctas</language></name></property>
+  <property id="certainwrong" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Misconceptions</language><language id="es">Conceptos erróneos</language></name></property>
+  <property id="sessions" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Sessions</language><language id="es">Sesiones</language></name></property>
+  <property id="minutes" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Minutes</language><language id="es">Minutos</language></name></property>
+  <property id="questions" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Questions to the tutor</language><language id="es">Preguntas al tutor</language></name></property>
+  <property id="helpful" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Helpful ratings</language><language id="es">Valoraciones útiles</language></name></property>
+  <property id="nothelpful" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Not helpful ratings</language><language id="es">Valoraciones no útiles</language></name></property>
+  <property id="firstactivity" index="true" stored="true" editable="false" type="date"><name><language id="en">First activity</language><language id="es">Primera actividad</language></name></property>
+  <property id="lastactivity" index="true" stored="true" editable="false" type="date"><name><language id="en">Last activity</language><language id="es">Última actividad</language></name></property>
+  <property id="computedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Computed at</language><language id="es">Calculado</language></name></property>
+</properties>
