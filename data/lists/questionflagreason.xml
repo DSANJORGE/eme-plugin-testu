@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<questionflagreasons>
+  <questionflagreason id="wrong"><name><![CDATA[Incorrecta]]></name></questionflagreason>
+  <questionflagreason id="unclear"><name><![CDATA[Confusa o mal redactada]]></name></questionflagreason>
+  <questionflagreason id="outdated"><name><![CDATA[Desactualizada]]></name></questionflagreason>
+  <questionflagreason id="other"><name><![CDATA[Otro]]></name></questionflagreason>
+</questionflagreasons>
