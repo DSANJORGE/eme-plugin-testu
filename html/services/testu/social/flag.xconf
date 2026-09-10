@@ -1,4 +1,4 @@
 <page>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/social/scripts/flag.groovy</script></path-action>
+  <path-action name="TestUSocialModule.flagQuestion"/>
   <permission name="view"><user/></permission>
 </page>

@@ -1,4 +1,4 @@
 <page>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/social/scripts/mentionables.groovy</script></path-action>
+  <path-action name="TestUSocialModule.loadMentionables"/>
   <permission name="view"><user/></permission>
 </page>
