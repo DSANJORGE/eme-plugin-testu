@@ -139,14 +139,16 @@ public class TestUSocialModule extends TestUBaseModule
 		for (String uid : mentions)
 		{
 			User u = (um != null) ? um.getUser(uid) : null;
-			if (u == null) continue;
+			if (u == null)
+				continue;
 			Data p = (Data) profileSearcher.searchById(uid);
 			String role = (p != null && p.get("settingsgroup") != null) ? p.get("settingsgroup") : "users";
 			boolean teammate = !myteam.isEmpty() && myteam.equals(u.get("team"));
 			if (teammate || STAFF_ROLES.contains(role))
 			{
 				filteredMentions.add(uid);
-				if (filteredMentions.size() >= 20) break;
+				if (filteredMentions.size() >= 20)
+					break;
 			}
 		}
 		mentions = filteredMentions;
@@ -564,7 +566,8 @@ public class TestUSocialModule extends TestUBaseModule
 		java.util.function.Function<String, User> userOf = uid -> userCache.computeIfAbsent(uid, k -> (um != null) ? um.getUser(k) : null);
 		java.util.function.Function<String, String> nameOf = uid -> {
 			User u = userOf.apply(uid);
-			if (u == null) return uid;
+			if (u == null)
+				return uid;
 			String fn = u.get("firstName");
 			String ln = u.get("lastName");
 			String n = ((fn != null ? fn : "") + " " + (ln != null ? ln : "")).trim();
@@ -585,7 +588,8 @@ public class TestUSocialModule extends TestUBaseModule
 				return;
 			}
 			HitTracker rows = archive.query("chatterbox").exact("channel", channel).exact("functionname", "testu_social").sort("dateUp").search();
-			if (rows != null) rows.enableBulkOperations();
+			if (rows != null)
+				rows.enableBulkOperations();
 			List<String> ids = new ArrayList<>();
 			if (rows != null)
 			{
@@ -666,7 +670,8 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
 		java.util.function.Predicate<String> inScope = uid -> {
-			if (scope == null) return true;
+			if (scope == null)
+				return true;
 			User u = userOf.apply(uid);
 			return u != null && scope.contains(u.get("team"));
 		};
@@ -676,7 +681,8 @@ public class TestUSocialModule extends TestUBaseModule
 				return (entityId != null) ? entityId : "";
 			}
 			Data d = archive.getData(moduleId, entityId);
-			if (d == null) return entityId;
+			if (d == null)
+				return entityId;
 			if ("entityquestion".equals(moduleId))
 			{
 				String q = d.get("question");
@@ -686,16 +692,19 @@ public class TestUSocialModule extends TestUBaseModule
 		};
 
 		HitTracker all = archive.query("chatterbox").exact("functionname", "testu_social").sort("dateDown").search();
-		if (all != null) all.enableBulkOperations();
+		if (all != null)
+			all.enableBulkOperations();
 		JSONArray recent = new JSONArray();
 		if (all != null)
 		{
 			for (Object o : all)
 			{
-				if (recent.size() >= 50) break;
+				if (recent.size() >= 50)
+					break;
 				Data m = (Data) o;
 				String uid = m.get("user");
-				if (!inScope.test(uid)) continue;
+				if (!inScope.test(uid))
+					continue;
 				JSONObject c = new JSONObject();
 				c.put("id", m.getId());
 				c.put("userId", uid);
@@ -714,16 +723,19 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 
 		HitTracker fl = archive.query("questionflag").exact("status", "open").sort("datecreatedDown").search();
-		if (fl != null) fl.enableBulkOperations();
+		if (fl != null)
+			fl.enableBulkOperations();
 		JSONArray flags = new JSONArray();
 		if (fl != null)
 		{
 			for (Object o : fl)
 			{
-				if (flags.size() >= 50) break;
+				if (flags.size() >= 50)
+					break;
 				Data f = (Data) o;
 				String uid = f.get("user");
-				if (!inScope.test(uid)) continue;
+				if (!inScope.test(uid))
+					continue;
 				JSONObject flagObj = new JSONObject();
 				flagObj.put("id", f.getId());
 				flagObj.put("entityquestion", f.get("entityquestion"));
@@ -788,19 +800,23 @@ public class TestUSocialModule extends TestUBaseModule
 			String fn = a.get("firstName");
 			String ln = a.get("lastName");
 			StringBuilder nameBuilder = new StringBuilder();
-			if (fn != null && !fn.isEmpty()) nameBuilder.append(fn);
+			if (fn != null && !fn.isEmpty())
+				nameBuilder.append(fn);
 			if (ln != null && !ln.isEmpty())
 			{
-				if (nameBuilder.length() > 0) nameBuilder.append(" ");
+				if (nameBuilder.length() > 0)
+					nameBuilder.append(" ");
 				nameBuilder.append(ln);
 			}
-			if (nameBuilder.length() > 0) actorName = nameBuilder.toString();
+			if (nameBuilder.length() > 0)
+				actorName = nameBuilder.toString();
 		}
 		n.setValue("actorname", actorName != null ? actorName : actor);
 
 		String text = (msg.get("message") != null) ? msg.get("message").toString() : "";
 		text = text.replaceAll("<[^>]*>", "").replaceAll("\\s+", " ").trim();
-		if (text.length() > 120) text = text.substring(0, 120);
+		if (text.length() > 120)
+			text = text.substring(0, 120);
 		n.setValue("text", text);
 
 		n.setValue("channel", channel);
@@ -821,7 +837,7 @@ public class TestUSocialModule extends TestUBaseModule
 		s.saveData(n, null);
 	}
 
-	private String md5(String s)
+	public String md5(String s)
 	{
 		try
 		{
