@@ -1,6 +1,6 @@
 <page>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/scope.groovy</script></path-action>
-  <path-action name="Script.run" allowduplicates="true"><script>/${applicationid}/services/testu/analytics/scripts/aggregate.groovy</script></path-action>
-  <path-action name="Script.run" allowduplicates="true"><script>/${applicationid}/services/testu/analytics/scripts/ask.groovy</script></path-action>
+  <path-action name="TestUTeamModule.loadScope"/>
+  <path-action name="TestUAnalyticsModule.loadAnalytics" allowduplicates="true"/>
+  <path-action name="TestUAnalyticsModule.askAnalytics" allowduplicates="true"/>
   <permission name="view"><userprofile property="analytics_view" equals="true"/></permission>
 </page>

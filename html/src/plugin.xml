@@ -15,4 +15,14 @@
 			<ref bean="moduleManager" />
 		</property>
 	</bean>
+	<bean id="TestUUsageModule" class="tech.genailabs.tutor.TestUUsageModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
+	<bean id="TestUAnalyticsModule" class="tech.genailabs.tutor.TestUAnalyticsModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
 </beans>

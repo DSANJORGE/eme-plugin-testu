@@ -130,4 +130,23 @@ public class TestUBaseModule extends BaseMediaModule
 		}
 		return JSONValue.toJSONString(obj);
 	}
+
+	protected String md5(String s)
+	{
+		try
+		{
+			java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+			byte[] digest = md.digest(s.getBytes("UTF-8"));
+			StringBuilder sb = new StringBuilder();
+			for (byte b : digest)
+			{
+				sb.append(String.format("%02x", b));
+			}
+			return sb.toString();
+		}
+		catch (Exception e)
+		{
+			throw new org.openedit.OpenEditException(e);
+		}
+	}
 }

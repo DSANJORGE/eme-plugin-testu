@@ -1,4 +1,4 @@
 <page>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/usage/scripts/track.groovy</script></path-action>
+  <path-action name="TestUUsageModule.trackUsage"/>
   <permission name="view"><user/></permission>
 </page>
