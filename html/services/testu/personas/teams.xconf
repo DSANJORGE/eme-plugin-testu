@@ -1,5 +1,5 @@
 <page>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/scope.groovy</script></path-action>
-  <path-action name="Script.run" allowduplicates="true"><script>/${applicationid}/services/testu/personas/scripts/teams.groovy</script></path-action>
+  <path-action name="TestUTeamModule.loadScope"/>
+  <path-action name="TestUTeamModule.loadTeams" allowduplicates="true"/>
   <permission name="view"><userprofile property="personas_view" equals="true"/></permission>
 </page>

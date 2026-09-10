@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans projectname="testu" depends="finder">
+	<bean id="TestUUserModule" class="tech.genailabs.tutor.TestUUserModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
+	<bean id="TestUTeamModule" class="tech.genailabs.tutor.TestUTeamModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
+</beans>

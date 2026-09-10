@@ -7,6 +7,6 @@
   <property name="dataroot">/${applicationid}/services/testu/personas</property>
   <property name="scriptname">ImportUsers.groovy</property>
   <path-action name="DataImportModule.importDataWithScript"/>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/importdone.groovy</script></path-action>
+  <path-action name="TestUUserModule.importDone"/>
   <permission name="view"><userprofile property="personas_operate" equals="true"/></permission>
 </page>

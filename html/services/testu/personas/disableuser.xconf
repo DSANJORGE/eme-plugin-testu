@@ -1,4 +1,4 @@
 <page>
-  <path-action name="Script.run"><script>/${applicationid}/services/testu/personas/scripts/disableuser.groovy</script></path-action>
+  <path-action name="TestUUserModule.disableUser"/>
   <permission name="view"><userprofile property="personas_operate" equals="true"/></permission>
 </page>
