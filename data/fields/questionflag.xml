@@ -5,7 +5,7 @@
      queries status.exact, a sub-field a not_analyzed mapping does not have. index="false" is not "stored but
      unsearchable": BaseElasticSearcher.updateIndex skips !isIndex() fields entirely, so note must stay index="true".
      reason is type="list" (so eMe's isAnalyzed() treats it as not-analyzed and exact() emits a plain term), but
-     its ES mapping in this index is an analyzed string -- it only matches today because every reason id is one
+     its ES mapping in this index is an analyzed string - it only matches today because every reason id is one
      lowercase token. Never exact() it on a mixed-case/multi-word value without adding indextype="not_analyzed"
      here AND reindexing the type; see defects-report.md. -->
 <properties beanname="dataSearcher">

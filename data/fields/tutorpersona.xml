@@ -16,7 +16,7 @@
       <language id="es">Nombre del tutor</language>
     </name>
   </property>
-  <property id="organization" editable="true" stored="true" index="true">
+  <property id="organization" index="true" stored="true" editable="true" viewtype="list" filter="true" listid="creditorg" datatype="list" type="list">
     <name>
       <language id="en">Organisation</language>
       <language id="es">Organización</language>

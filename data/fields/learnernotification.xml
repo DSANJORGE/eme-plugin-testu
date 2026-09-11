@@ -20,7 +20,7 @@
   <property id="actor" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Actor</language><language id="es">Autor</language></name></property>
   <property id="actorname" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Actor name</language><language id="es">Nombre del autor</language></name></property>
   <property id="text" index="true" stored="true" editable="false" type="textarea"><name><language id="en">Text</language><language id="es">Texto</language></name></property>
-  <property id="channel" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
+  <property id="channel" type="list" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
   <property id="messageid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Message</language><language id="es">Mensaje</language></name></property>
   <property id="entitytutorial" index="true" stored="true" editable="false" type="list" listid="entitytutorial"><name><language id="en">Tutorial</language></name></property>
   <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>

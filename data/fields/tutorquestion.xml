@@ -7,7 +7,7 @@
   <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
   <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
   <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
-  <property id="channel" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
+  <property id="channel" type="list" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Channel</language><language id="es">Canal</language></name></property>
   <property id="entitytutorial" index="true" stored="true" editable="false" type="list" listid="entitytutorial"><name><language id="en">Tutorial</language></name></property>
   <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
   <property id="componentsection" index="true" stored="true" editable="false" type="list" listid="componentsection"><name><language id="en">Section</language><language id="es">Subtema</language></name></property>
