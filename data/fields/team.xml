@@ -6,7 +6,7 @@
   <property id="name" index="true" stored="true" editable="true" keyword="true"><name><language id="en">Name</language><language id="es">Nombre</language></name></property>
   <property id="parent" index="true" stored="true" editable="true" type="list" listid="team"><name><language id="en">Parent team</language><language id="es">Equipo padre</language></name></property>
   <property id="manager" index="true" stored="true" editable="true" type="list" listid="user"><name><language id="en">Manager</language><language id="es">Manager</language></name></property>
-  <property id="location" index="true" stored="true" editable="true"><name><language id="en">Location</language><language id="es">Ubicación</language></name></property>
+  <property id="location" type="list" index="true" stored="true" editable="true"><name><language id="en">Location</language><language id="es">Ubicación</language></name></property>
   <property id="costcenter" index="true" stored="true" editable="true"><name><language id="en">Cost center</language><language id="es">Centro de costo</language></name></property>
   <property id="enabled" index="true" stored="true" editable="true" type="boolean"><name><language id="en">Enabled</language><language id="es">Activo</language></name></property>
 </properties>
