@@ -762,24 +762,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		reply(inReq, resp);
 	}
 
-	public void loadActivity(WebPageRequest inReq)
-	{
-		Map<String, Object> a = (Map<String, Object>) inReq.getPageValue("analytics");
-		if (a == null)
-		{
-			loadAnalytics(inReq);
-			a = (Map<String, Object>) inReq.getPageValue("analytics");
-			if (a == null)
-				return;
-		}
-
-		MediaArchive archive = getMediaArchive(inReq);
-		Date from = (Date) a.get("from");
-		Date to = (Date) a.get("to");
-		Map<String, Data> users = (Map<String, Data>) a.get("users");
-		String topicFilter = (String) a.get("topicFilter");
-		Map<String, Map<String, Object>> perSection = (Map<String, Map<String, Object>>) a.get("perSection");
-
 	/** Share of people in scope at Competent or above that the forecast aims for. */
 	// ponytail: product default; becomes an org setting (like masterylevel thresholds) when a client asks for another.
 	static final double FORECAST_TARGET = 0.8;
@@ -1096,6 +1078,24 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("social", social);
 		reply(inReq, resp);
 	}
+
+	public void loadActivity(WebPageRequest inReq)
+	{
+		Map<String, Object> a = (Map<String, Object>) inReq.getPageValue("analytics");
+		if (a == null)
+		{
+			loadAnalytics(inReq);
+			a = (Map<String, Object>) inReq.getPageValue("analytics");
+			if (a == null)
+				return;
+		}
+
+		MediaArchive archive = getMediaArchive(inReq);
+		Date from = (Date) a.get("from");
+		Date to = (Date) a.get("to");
+		Map<String, Data> users = (Map<String, Data>) a.get("users");
+		String topicFilter = (String) a.get("topicFilter");
+		Map<String, Map<String, Object>> perSection = (Map<String, Map<String, Object>>) a.get("perSection");
 
 		Map<String, Integer> hours = new HashMap<>();
 		HitTracker ah = archive.query("tutoranswer").after("datecreated", from).search();
