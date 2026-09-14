@@ -1,9 +1,21 @@
 package tech.genailabs.tutor;
 
+import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.security.KeyFactory;
 import java.security.MessageDigest;
+import java.security.PrivateKey;
+import java.security.Signature;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
@@ -25,6 +37,7 @@ import org.openedit.WebPageRequest;
 import org.openedit.data.Searcher;
 import org.openedit.hittracker.HitTracker;
 import org.openedit.profile.UserProfile;
+import org.openedit.users.Group;
 import org.openedit.users.User;
 import org.openedit.users.UserManager;
 import org.openedit.util.DateStorageUtil;
@@ -131,8 +144,8 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 
 		UserManager um = archive.getUserManager();
-		String myteam = who.get("team");
-		myteam = (myteam != null) ? myteam : "";
+		// Same scope loadMentionables offers: anyone who has this thread's topic, plus staff.
+		Data topic = topicOfChannel(archive, channel);
 
 		List<String> filteredMentions = new ArrayList<>();
 		Searcher profileSearcher = archive.getSearcher("userprofile");
@@ -143,8 +156,7 @@ public class TestUSocialModule extends TestUBaseModule
 				continue;
 			Data p = (Data) profileSearcher.searchById(uid);
 			String role = (p != null && p.get("settingsgroup") != null) ? p.get("settingsgroup") : "users";
-			boolean teammate = !myteam.isEmpty() && myteam.equals(u.get("team"));
-			if (teammate || STAFF_ROLES.contains(role))
+			if (canSeeTopic(archive, topic, uid, role) || STAFF_ROLES.contains(role))
 			{
 				filteredMentions.add(uid);
 				if (filteredMentions.size() >= 20)
@@ -250,6 +262,54 @@ public class TestUSocialModule extends TestUBaseModule
 		reply(inReq, resp);
 	}
 
+	/** Upserts one FCM device token for the signed-in learner; `remove=true` drops it (sign-out).
+	 *  Row id = md5(token): a phone that changes account moves its token to the new user, never duplicates. */
+	public void deviceToken(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		User user = inReq.getUser();
+		String userid = (user != null) ? user.getId() : null;
+		if (userid == null || userid.isEmpty())
+		{
+			fail(inReq, 401, "not signed in");
+			return;
+		}
+		String token = inReq.getRequestParameter("token");
+		token = token == null ? "" : token.trim();
+		if (token.isEmpty() || token.length() > 512)
+		{
+			fail(inReq, 400, "bad token");
+			return;
+		}
+		Searcher s = archive.getSearcher("devicetoken");
+		Data d = (Data) s.searchById(md5(token));
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		if ("true".equals(inReq.getRequestParameter("remove")))
+		{
+			if (d != null)
+			{
+				s.delete(d, user);
+			}
+			resp.put("removed", d != null);
+			reply(inReq, resp);
+			return;
+		}
+		if (d == null)
+		{
+			d = s.createNewData();
+			d.setId(md5(token));
+		}
+		String platform = inReq.getRequestParameter("platform");
+		platform = platform == null ? "" : platform;
+		d.setValue("user", userid);
+		d.setValue("token", token);
+		d.setValue("platform", platform.length() > 20 ? platform.substring(0, 20) : platform);
+		d.setValue("datecreated", new Date());
+		s.saveData(d, null);
+		reply(inReq, resp);
+	}
+
 	public void markRead(WebPageRequest inReq)
 	{
 		MediaArchive archive = getMediaArchive(inReq);
@@ -344,8 +404,10 @@ public class TestUSocialModule extends TestUBaseModule
 			return;
 		}
 
-		String myteam = who.get("team");
-		myteam = (myteam != null) ? myteam : "";
+		// The composer sends its thread channel; people who have that topic (entitytopic security, the same
+		// filter the app's topic list goes through) plus staff. No/unknown channel = staff only.
+		String channel = inReq.getRequestParameter("channel");
+		Data topic = (channel != null && CHANNEL_PATTERN.matcher(channel.trim()).matches()) ? topicOfChannel(archive, channel.trim()) : null;
 
 		Map<String, String> roles = new HashMap<>();
 		HitTracker profiles = archive.query("userprofile").all().search();
@@ -377,8 +439,7 @@ public class TestUSocialModule extends TestUBaseModule
 				{
 					role = "users";
 				}
-				boolean teammate = !myteam.isEmpty() && myteam.equals(u.get("team"));
-				if (!teammate && !STAFF_ROLES.contains(role))
+				if (!canSeeTopic(archive, topic, id, role) && !STAFF_ROLES.contains(role))
 				{
 					continue;
 				}
@@ -778,17 +839,7 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 		String channel = msg.get("channel") != null ? msg.get("channel").toString() : "";
 		String qid = channel.startsWith("q-") ? channel.substring(2) : "";
-		String tid = channel.startsWith("t-") ? channel.substring(2) : "";
-		if (!qid.isEmpty())
-		{
-			Data cc = (Data) archive.query("componentcontent").exact("questionid", qid).searchOne();
-			if (cc != null)
-			{
-				String csId = cc.get("componentsectionid");
-				Data cs = (csId != null) ? archive.getData("componentsection", csId) : null;
-				tid = (cs != null && cs.get("playbackentityid") != null) ? cs.get("playbackentityid") : "";
-			}
-		}
+		String tid = tutorialOfChannel(archive, channel);
 		Data a = (Data) archive.getSearcher("user").searchById(actor);
 		n.setValue("user", recipient);
 		n.setValue("actor", actor);
@@ -838,6 +889,184 @@ public class TestUSocialModule extends TestUBaseModule
 		n.setValue("entitytopic", topic);
 		s.saveData(n, null);
 		notifyUser(recipient, "notifications", null);
+		push(archive, n);
+	}
+
+	/** Tutorial behind a channel: "t-<tutorial>" directly; "q-<question>" via componentcontent -> componentsection.playbackentityid
+	 *  (componentsection stores its tutorial there, not in entityid: same as computemastery/report/aggregate). "" when unknown. */
+	static String tutorialOfChannel(MediaArchive archive, String channel)
+	{
+		if (channel.startsWith("t-"))
+			return channel.substring(2);
+		if (!channel.startsWith("q-"))
+			return "";
+		Data cc = (Data) archive.query("componentcontent").exact("questionid", channel.substring(2)).searchOne();
+		String csId = (cc != null) ? cc.get("componentsectionid") : null;
+		Data cs = (csId != null) ? archive.getData("componentsection", csId) : null;
+		String tid = (cs != null) ? cs.get("playbackentityid") : null;
+		return (tid != null) ? tid : "";
+	}
+
+	static Data topicOfChannel(MediaArchive archive, String channel)
+	{
+		String tid = tutorialOfChannel(archive, channel);
+		Data tut = tid.isEmpty() ? null : archive.getData("entitytutorial", tid);
+		String topicid = (tut != null) ? tut.get("entitytopic") : null;
+		return (topicid != null && !topicid.isEmpty()) ? archive.getData("entitytopic", topicid) : null;
+	}
+
+	/** Who has a topic: the rule BaseSearchSecurity.attachStandardSecurity applies when the app lists entitytopic
+	 *  (TestULearningModule.visibleTopics / topics.json): securityenabled off = everyone; else owner, viewusers,
+	 *  viewroles (userprofile.settingsgroup) or viewgroups (user groups); administrator always. null topic = nobody. */
+	static boolean canSeeTopic(MediaArchive archive, Data topic, String uid, String role)
+	{
+		if (topic == null)
+			return false;
+		if ("administrator".equals(role) || !"true".equals(String.valueOf(topic.get("securityenabled"))))
+			return true;
+		if (uid.equals(topic.get("owner")) || has(topic, "viewusers", uid) || has(topic, "viewroles", role))
+			return true;
+		Collection viewgroups = topic.getValues("viewgroups");
+		if (viewgroups == null || viewgroups.isEmpty())
+			return false;
+		// ponytail: one user load per candidate, only for group-secured topics; pilot rosters are tens of users.
+		User u = archive.getUserManager().getUser(uid);
+		if (u != null)
+			for (Group g : u.getGroups())
+				if (viewgroups.contains(g.getId()))
+					return true;
+		return false;
+	}
+
+	private static boolean has(Data d, String field, String value)
+	{
+		Collection v = d.getValues(field);
+		return v != null && v.contains(value);
+	}
+
+	/** Mobile push (FCM HTTP v1) for the learnernotification row just saved. Off until the catalog setting or
+	 *  -Dtestu.fcm.serviceaccount names the Firebase service-account JSON. Fire-and-forget on a thread with
+	 *  5 s timeouts: a push failure never fails the comment. The data payload is the row itself, so the app
+	 *  routes a tap with the bell's table. FCM 404 (UNREGISTERED) deletes the token row.
+	 *  ponytail: a fresh OAuth token per push; cache it in archive.getCacheManager() if volume ever matters. */
+	public void push(final MediaArchive archive, Data n)
+	{
+		String path = archive.getCatalogSettingValue("testu.fcm.serviceaccount");
+		if (path == null || path.isEmpty())
+			path = System.getProperty("testu.fcm.serviceaccount");
+		if (path == null || path.isEmpty())
+			return;
+		String recipient = n.get("user");
+		HitTracker hits = archive.query("devicetoken").exact("user", recipient == null ? "" : recipient).search();
+		final List<Data> tokens = new ArrayList<>();
+		if (hits != null)
+		{
+			for (Object hit : hits)
+			{
+				tokens.add((Data) hit);
+			}
+		}
+		if (tokens.isEmpty())
+			return;
+		final JSONObject data = new JSONObject();
+		for (String k : new String[] { "type", "channel", "messageid", "entitytopic", "entityquestion", "entitytutorial", "actorname", "text" })
+		{
+			String v = n.get(k);
+			data.put(k, v == null ? "" : v);
+		}
+		data.put("id", n.getId());
+		final String saPath = path;
+		final Searcher ds = archive.getSearcher("devicetoken");
+		new Thread(new Runnable()
+		{
+			public void run()
+			{
+				try
+				{
+					JSONObject sa = (JSONObject) JSONValue.parse(new String(Files.readAllBytes(new File(saPath).toPath()), StandardCharsets.UTF_8));
+					String bearer = fcmBearer(sa);
+					for (Data t : tokens)
+					{
+						JSONObject notification = new JSONObject();
+						notification.put("title", data.get("actorname"));
+						notification.put("body", data.get("text"));
+						JSONObject aps = new JSONObject();
+						aps.put("sound", "default");
+						JSONObject apnsPayload = new JSONObject();
+						apnsPayload.put("aps", aps);
+						JSONObject apns = new JSONObject();
+						apns.put("payload", apnsPayload);
+						JSONObject message = new JSONObject();
+						message.put("token", t.get("token"));
+						message.put("notification", notification);
+						message.put("data", data);
+						message.put("apns", apns);
+						JSONObject body = new JSONObject();
+						body.put("message", message);
+						String[] r = httpPost("https://fcm.googleapis.com/v1/projects/" + sa.get("project_id") + "/messages:send", "application/json; charset=UTF-8", body.toJSONString(), bearer);
+						int code = Integer.parseInt(r[0]);
+						if (code == 404)
+							ds.delete(t, null); // UNREGISTERED: the app was removed or the token rotated
+						else if (code >= 400)
+							System.err.println("testu push " + code + " " + (r[1].length() > 300 ? r[1].substring(0, 300) : r[1]));
+					}
+				}
+				catch (Exception e)
+				{
+					System.err.println("testu push failed: " + e);
+				}
+			}
+		}, "testu-push").start();
+	}
+
+	/** OAuth2 access token for the service account: RS256 JWT (java.security) traded at the token endpoint. */
+	static String fcmBearer(JSONObject sa) throws Exception
+	{
+		Base64.Encoder b64 = Base64.getUrlEncoder().withoutPadding();
+		long now = System.currentTimeMillis() / 1000;
+		JSONObject header = new JSONObject();
+		header.put("alg", "RS256");
+		header.put("typ", "JWT");
+		JSONObject claims = new JSONObject();
+		claims.put("iss", sa.get("client_email"));
+		claims.put("scope", "https://www.googleapis.com/auth/firebase.messaging");
+		claims.put("aud", "https://oauth2.googleapis.com/token");
+		claims.put("iat", now);
+		claims.put("exp", now + 3600);
+		String unsigned = b64.encodeToString(header.toJSONString().getBytes(StandardCharsets.UTF_8)) + "." + b64.encodeToString(claims.toJSONString().getBytes(StandardCharsets.UTF_8));
+		String pem = String.valueOf(sa.get("private_key")).replaceAll("-----[A-Z ]+-----", "");
+		PrivateKey key = KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(Base64.getMimeDecoder().decode(pem)));
+		Signature sig = Signature.getInstance("SHA256withRSA");
+		sig.initSign(key);
+		sig.update(unsigned.getBytes(StandardCharsets.UTF_8));
+		String jwt = unsigned + "." + b64.encodeToString(sig.sign());
+		String[] r = httpPost("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" + jwt, null);
+		JSONObject tok = (JSONObject) JSONValue.parse(r[1]);
+		Object access = tok == null ? null : tok.get("access_token");
+		if (access == null)
+			throw new OpenEditException("no access_token: " + r[0] + " " + r[1]);
+		return access.toString();
+	}
+
+	/** POST with 5 s timeouts; returns {status, body}. */
+	static String[] httpPost(String url, String contentType, String body, String bearer) throws Exception
+	{
+		HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+		c.setConnectTimeout(5000);
+		c.setReadTimeout(5000);
+		c.setDoOutput(true);
+		c.setRequestMethod("POST");
+		c.setRequestProperty("Content-Type", contentType);
+		if (bearer != null)
+			c.setRequestProperty("Authorization", "Bearer " + bearer);
+		try (OutputStream out = c.getOutputStream())
+		{
+			out.write(body.getBytes(StandardCharsets.UTF_8));
+		}
+		int code = c.getResponseCode();
+		InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
+		String text = in == null ? "" : new String(in.readAllBytes(), StandardCharsets.UTF_8);
+		return new String[] { String.valueOf(code), text };
 	}
 
 	public String md5(String s)
