@@ -271,6 +271,7 @@ public class TestULearningModule extends TestUBaseModule
 		LearningEngine.Attempt attempt = LearningEngine.attemptOf(answer);
 		attempt.at = now;
 		engine.recordUnlocks(r.content.topics.get(r.question.topicid), LearningEngine.withAttempt(r.learner, attempt));
+		notifyUser(user.getId(), "progress", null);
 		reply(inReq, answerReply(answer, false, r.question));
 	}
 
