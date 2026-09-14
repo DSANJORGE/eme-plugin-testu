@@ -1,0 +1,7 @@
+{
+	"response": {
+		"status": "ok",
+		"userid": "$user.id"
+	},
+	"success": true
+}

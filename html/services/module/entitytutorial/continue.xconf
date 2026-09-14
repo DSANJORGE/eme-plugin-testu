@@ -1,0 +1,5 @@
+<page>
+	<!-- ponytail: alias for start.xconf (mediadb renamed continue -> start); the
+	     app and minsur.genailabs.tech still use continue.json. Drop once both move. -->
+	<page-action name="AgentModule.sendWelcomeIfNeeded" />
+</page>
