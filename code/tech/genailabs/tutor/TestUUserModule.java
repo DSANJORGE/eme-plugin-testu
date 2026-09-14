@@ -1,7 +1,12 @@
 package tech.genailabs.tutor;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
@@ -14,6 +19,7 @@ import org.entermediadb.asset.MediaArchive;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.openedit.Data;
+import org.openedit.OpenEditException;
 import org.openedit.WebPageRequest;
 import org.openedit.data.Searcher;
 import org.openedit.hittracker.HitTracker;
@@ -94,6 +100,9 @@ public class TestUUserModule extends TestUBaseModule
 			userObj.put("email", u.get("email"));
 			userObj.put("firstName", u.get("firstName"));
 			userObj.put("lastName", u.get("lastName"));
+			String avatar = avatarVersion(avatarFile(archive, u.getId()));
+			userObj.put("avatarversion", avatar);
+			userObj.put("avatarurl", avatar == null ? null : "services/testu/personas/avatar.json?v=" + avatar);
 		}
 
 		String role = "manager";
@@ -108,8 +117,113 @@ public class TestUUserModule extends TestUBaseModule
 		json.put("permissions", perms);
 		json.put("modules", modules);
 		json.put("persona", personaObj);
+		JSONObject terms = new JSONObject(); // {required, id}: the apps gate on it; same rule as terms.json
+		terms.put("required", Boolean.FALSE);
+		terms.put("id", null);
+		if (u != null)
+		{
+			JSONObject state = TestUTermsModule.state(archive, u.getId());
+			JSONObject current = (JSONObject) state.get("current");
+			terms.put("required", state.get("required"));
+			terms.put("id", current == null ? null : current.get("id"));
+		}
+		json.put("terms", terms);
 
 		reply(inReq, json);
+	}
+
+	/**
+	 * The signed-in learner's photo, shared by all their devices. GET: {ok, version, data} (data = the data URL; both null
+	 * when there is none). POST data=data:image/(png|jpeg|webp);base64,...: stores it; POST clear=true: removes it. Every
+	 * change pushes {type: avatar, version} to the learner's devices. The version is the content hash, so me.json's avatarurl
+	 * changes exactly when the photo does.
+	 */
+	public void avatar(WebPageRequest inReq)
+	{
+		User user = inReq.getUser();
+		if (user == null || user.getId() == null)
+		{
+			fail(inReq, 401, "not signed in");
+			return;
+		}
+		File file = avatarFile(getMediaArchive(inReq), user.getId());
+		boolean post = inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
+		try
+		{
+			if (post && "true".equals(inReq.getRequestParameter("clear")))
+			{
+				Files.deleteIfExists(file.toPath());
+			}
+			else if (post)
+			{
+				String data = inReq.getRequestParameter("data");
+				int comma = data == null ? -1 : data.indexOf(',');
+				if (comma < 0 || !AVATAR_PREFIX.matcher(data.substring(0, comma + 1)).matches())
+				{
+					fail(inReq, 400, "bad_data");
+					return;
+				}
+				if (data.length() > AVATAR_MAX_CHARS)
+				{
+					fail(inReq, 413, "too_large");
+					return;
+				}
+				try
+				{
+					Base64.getDecoder().decode(data.substring(comma + 1));
+				}
+				catch (IllegalArgumentException e)
+				{
+					fail(inReq, 400, "bad_data");
+					return;
+				}
+				file.getParentFile().mkdirs();
+				Files.writeString(file.toPath(), data, StandardCharsets.US_ASCII);
+			}
+			String version = avatarVersion(file);
+			JSONObject json = new JSONObject();
+			json.put("ok", Boolean.TRUE);
+			json.put("version", version);
+			if (post)
+			{
+				Map<String, Object> extra = new HashMap<>();
+				extra.put("version", version);
+				notifyUser(user.getId(), "avatar", extra);
+			}
+			else
+			{
+				json.put("data", version == null ? null : Files.readString(file.toPath(), StandardCharsets.US_ASCII));
+			}
+			reply(inReq, json);
+		}
+		catch (IOException e)
+		{
+			throw new OpenEditException(e);
+		}
+	}
+
+	// ~1 MB of data URL: the apps send a 512px photo (about 100 KB); Tomcat's form limit is 2 MB.
+	private static final int AVATAR_MAX_CHARS = 1_000_000;
+	private static final Pattern AVATAR_PREFIX = Pattern.compile("^data:image/(png|jpeg|webp);base64,$");
+
+	/** Under originals/ (user data, not served, not in git), named by a hash so no id reaches the filesystem. */
+	protected File avatarFile(MediaArchive inArchive, String inUserId)
+	{
+		String path = "/WEB-INF/data/" + inArchive.getCatalogId() + "/originals/testu/avatars/" + md5(inUserId) + ".txt";
+		return new File(inArchive.getPageManager().getRepository().getStub(path).getAbsolutePath());
+	}
+
+	/** Content hash of the stored photo, or null when there is none. */
+	protected String avatarVersion(File inFile)
+	{
+		try
+		{
+			return inFile.isFile() ? md5(Files.readString(inFile.toPath(), StandardCharsets.US_ASCII)).substring(0, 12) : null;
+		}
+		catch (IOException e)
+		{
+			return null;
+		}
 	}
 
 	public void loadUsers(WebPageRequest inReq)

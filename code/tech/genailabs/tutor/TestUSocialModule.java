@@ -324,6 +324,7 @@ public class TestUSocialModule extends TestUBaseModule
 		if (!rows.isEmpty())
 		{
 			searcher.saveAllData(rows, null);
+			notifyUser(userid, "notifications", null);
 		}
 
 		JSONObject resp = new JSONObject();
@@ -532,6 +533,7 @@ public class TestUSocialModule extends TestUBaseModule
 			if (old != null)
 			{
 				ns.delete(old, inReq.getUser());
+				notifyUser(old.get("user"), "notifications", null);
 			}
 		}
 		else
@@ -835,6 +837,7 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 		n.setValue("entitytopic", topic);
 		s.saveData(n, null);
+		notifyUser(recipient, "notifications", null);
 	}
 
 	public String md5(String s)

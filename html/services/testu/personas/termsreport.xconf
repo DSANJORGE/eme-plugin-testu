@@ -1,0 +1,5 @@
+<page>
+  <path-action name="TestUTeamModule.loadScope"/>
+  <path-action name="TestUTermsModule.report" allowduplicates="true"/>
+  <permission name="view"><userprofile property="personas_view" equals="true"/></permission>
+</page>

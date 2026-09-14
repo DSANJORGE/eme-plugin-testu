@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Analytics: topic band history, one row per user x topic x day the band changed; rebuilt by events/testu/computemastery
+     (LearningEngine.saveMasteryHistory). The band on a day is the latest row on or before it. id = <user>_<topic>_<yyyyMMdd>. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="day" index="true" stored="true" editable="false" type="date"><name><language id="en">Day</language><language id="es">Día</language></name></property>
+  <property id="level" index="true" stored="true" editable="false" type="list" listid="masterylevel"><name><language id="en">Level</language><language id="es">Nivel</language></name></property>
+</properties>

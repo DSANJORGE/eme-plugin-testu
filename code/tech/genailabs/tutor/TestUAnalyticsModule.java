@@ -762,6 +762,323 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		String topicFilter = (String) a.get("topicFilter");
 		Map<String, Map<String, Object>> perSection = (Map<String, Map<String, Object>>) a.get("perSection");
 
+	/** Share of people in scope at Competent or above that the forecast aims for. */
+	// ponytail: product default; becomes an org setting (like masterylevel thresholds) when a client asks for another.
+	static final double FORECAST_TARGET = 0.8;
+
+	/**
+	 * Mastery forecast (admin Previsión): per topic in scope, the daily share of in-scope people at Competent+ (from
+	 * tutormasteryday) and its linear trend to FORECAST_TARGET (see Forecast). Overall = mean of the topic shares.
+	 * Cumulative like Dominio: ignores the period, honours team and topic.
+	 */
+	public void loadForecast(WebPageRequest inReq)
+	{
+		Map<String, Object> a = (Map<String, Object>) inReq.getPageValue("analytics");
+		if (a == null)
+			return;
+		MediaArchive archive = getMediaArchive(inReq);
+		Set<String> users = ((Map<String, Data>) a.get("users")).keySet();
+		String topicFilter = (String) a.get("topicFilter");
+		Map<String, String> topics = new LinkedHashMap<>((Map<String, String>) a.get("topics"));
+		if (topicFilter != null && !topicFilter.isEmpty())
+			topics.keySet().retainAll(Set.of(topicFilter));
+
+		// user|topic -> day(yyyyMMdd) -> band, days ascending
+		SimpleDateFormat key = new SimpleDateFormat("yyyyMMdd");
+		Map<String, java.util.TreeMap<String, String>> bands = new HashMap<>();
+		String first = null;
+		HitTracker hits = archive.query("tutormasteryday").all().search();
+		hits.enableBulkOperations();
+		for (Object o : hits)
+		{
+			Data r = (Data) o;
+			Date day = DateStorageUtil.getStorageUtil().parseFromObject(r.getValue("day"));
+			if (day == null || !users.contains(r.get("user")) || !topics.containsKey(r.get("entitytopic")))
+				continue;
+			String d = key.format(day);
+			bands.computeIfAbsent(r.get("user") + "|" + r.get("entitytopic"), k -> new java.util.TreeMap<>()).put(d, r.get("level"));
+			if (first == null || d.compareTo(first) < 0)
+				first = d;
+		}
+
+		Calendar cal = Calendar.getInstance();
+		String today = key.format(cal.getTime());
+		List<String> days = new ArrayList<>();
+		if (first != null)
+		{
+			for (int i = 0; i < 120 && key.format(cal.getTime()).compareTo(first) >= 0; i++)
+			{
+				days.add(0, key.format(cal.getTime()));
+				cal.add(Calendar.DAY_OF_MONTH, -1);
+			}
+		}
+
+		JSONArray topicOut = new JSONArray();
+		double[] overall = new double[days.size()];
+		for (Map.Entry<String, String> t : topics.entrySet())
+		{
+			List<Double> shares = new ArrayList<>();
+			for (int i = 0; i < days.size(); i++)
+			{
+				int at = 0;
+				for (String u : users)
+				{
+					java.util.TreeMap<String, String> h = bands.get(u + "|" + t.getKey());
+					Map.Entry<String, String> e = h == null ? null : h.floorEntry(days.get(i));
+					if (e != null && ("competent".equals(e.getValue()) || "expert".equals(e.getValue())))
+						at++;
+				}
+				double s = users.isEmpty() ? 0 : at / (double) users.size();
+				shares.add(s);
+				overall[i] += s / topics.size();
+			}
+			JSONObject f = forecastJson(shares, days);
+			f.put("id", t.getKey());
+			f.put("name", t.getValue());
+			topicOut.add(f);
+		}
+		List<Double> overallShares = new ArrayList<>();
+		for (double s : overall)
+			overallShares.add(s);
+
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("today", today.substring(0, 4) + "-" + today.substring(4, 6) + "-" + today.substring(6));
+		resp.put("target", FORECAST_TARGET);
+		resp.put("level", "competent");
+		resp.put("people", users.size());
+		resp.put("overall", forecastJson(overallShares, days));
+		resp.put("topics", topicOut);
+		reply(inReq, resp);
+	}
+
+	/** Forecast.of as JSON: history [[yyyy-MM-dd, share]], projection [[daysAhead, value, low, high]]. */
+	private static JSONObject forecastJson(List<Double> shares, List<String> days)
+	{
+		JSONObject out = new JSONObject();
+		Map<String, Object> f = Forecast.of(shares, FORECAST_TARGET);
+		for (Map.Entry<String, Object> e : f.entrySet())
+		{
+			if (!"projection".equals(e.getKey()))
+				out.put(e.getKey(), e.getValue());
+		}
+		JSONArray history = new JSONArray();
+		for (int i = 0; i < days.size(); i++)
+		{
+			String d = days.get(i);
+			JSONArray p = new JSONArray();
+			p.add(d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6));
+			p.add(shares.get(i));
+			history.add(p);
+		}
+		out.put("history", history);
+		JSONArray projection = new JSONArray();
+		for (double[] p : (List<double[]>) f.getOrDefault("projection", List.of()))
+		{
+			JSONArray row = new JSONArray();
+			row.add((int) p[0]);
+			row.add(p[1]);
+			row.add(p[2]);
+			row.add(p[3]);
+			projection.add(row);
+		}
+		out.put("projection", projection);
+		return out;
+	}
+
+	/** Smallest group a place on the map may show (k-anonymity); smaller places are only counted in hidden. */
+	static final int MAP_MIN_PEOPLE = 5;
+	static final long LIVE_MS = 5 * 60 * 1000L;
+
+	/**
+	 * Engagement (admin Actividad, polled while open): where people use the app, how many are active right now, the
+	 * learning modes they use and their social activity, for the period and people in scope.
+	 * Place = the 0.1 deg cell (~11 km) of each person's latest opt-in approximate location in the period; one place per
+	 * person, and only places with MAP_MIN_PEOPLE or more are returned. Live = any usage event or answer in the last 5 min.
+	 * Modes honour the topic filter; social, platforms and places do not (they are not per topic).
+	 */
+	public void loadEngagement(WebPageRequest inReq)
+	{
+		Map<String, Object> a = (Map<String, Object>) inReq.getPageValue("analytics");
+		if (a == null)
+			return;
+		MediaArchive archive = getMediaArchive(inReq);
+		Date from = (Date) a.get("from");
+		Date to = (Date) a.get("to");
+		Set<String> users = ((Map<String, Data>) a.get("users")).keySet();
+		String topicFilter = (String) a.get("topicFilter");
+		Map<String, Map<String, Object>> perSection = (Map<String, Map<String, Object>>) a.get("perSection");
+		DateStorageUtil dates = DateStorageUtil.getStorageUtil();
+		long liveSince = System.currentTimeMillis() - LIVE_MS;
+
+		Set<String> live = new HashSet<>();
+		Map<String, Date> placeAt = new HashMap<>();
+		Map<String, String> placeOf = new HashMap<>();
+		Map<String, Set<String>> platforms = new HashMap<>();
+		Map<String, Set<String>> sessionsByUser = new HashMap<>();
+		int helpful = 0, nothelpful = 0;
+		HitTracker ue = archive.query("usageevent").after("datecreated", from).search();
+		ue.enableBulkOperations();
+		for (Object o : ue)
+		{
+			Data e = (Data) o;
+			String u = e.get("user");
+			Date d = dates.parseFromObject(e.getValue("datecreated"));
+			if (d == null || !users.contains(u) || !d.before(to))
+				continue;
+			if (d.getTime() >= liveSince)
+				live.add(u);
+			String type = e.get("type");
+			if ("iris_rate".equals(type))
+			{
+				if ("helpful".equals(e.get("rating")))
+					helpful++;
+				else
+					nothelpful++;
+				continue;
+			}
+			if (!"open".equals(type) && !"resume".equals(type))
+				continue;
+			platforms.computeIfAbsent(e.get("platform") == null ? "unknown" : e.get("platform"), k -> new HashSet<>()).add(u);
+			sessionsByUser.computeIfAbsent(u, k -> new HashSet<>()).add(e.get("sessionid"));
+			String lat = e.get("lat"), lon = e.get("lon");
+			if (lat == null || lon == null || lat.isEmpty() || lon.isEmpty())
+				continue;
+			Date prev = placeAt.get(u);
+			if (prev == null || d.after(prev))
+			{
+				placeAt.put(u, d);
+				placeOf.put(u, Math.round(Double.parseDouble(lat) * 10) + "," + Math.round(Double.parseDouble(lon) * 10));
+			}
+		}
+
+		Map<String, Integer> modeAnswers = new HashMap<>();
+		Map<String, Set<String>> modePeople = new HashMap<>();
+		HitTracker ah = archive.query("tutoranswer").after("datecreated", from).search();
+		ah.enableBulkOperations();
+		for (Object o : ah)
+		{
+			Data x = (Data) o;
+			String u = x.get("user");
+			Date d = dates.parseFromObject(x.getValue("datecreated"));
+			if (d == null || !users.contains(u) || !d.before(to))
+				continue;
+			if (d.getTime() >= liveSince)
+				live.add(u);
+			if (!topicFilter.isEmpty() && !perSection.containsKey(x.get("componentsection")))
+				continue;
+			String mode = x.get("mode") == null ? "other" : x.get("mode");
+			modeAnswers.merge(mode, 1, Integer::sum);
+			modePeople.computeIfAbsent(mode, k -> new HashSet<>()).add(u);
+		}
+
+		// cell -> people; a place's sessions and live count come from its people
+		Map<String, List<String>> cells = new HashMap<>();
+		for (Map.Entry<String, String> p : placeOf.entrySet())
+			cells.computeIfAbsent(p.getValue(), k -> new ArrayList<>()).add(p.getKey());
+		JSONArray places = new JSONArray();
+		int hiddenPlaces = 0, hiddenPeople = 0;
+		for (Map.Entry<String, List<String>> c : cells.entrySet())
+		{
+			List<String> people = c.getValue();
+			if (people.size() < MAP_MIN_PEOPLE)
+			{
+				hiddenPlaces++;
+				hiddenPeople += people.size();
+				continue;
+			}
+			String[] ll = c.getKey().split(",");
+			int sessions = 0, now = 0;
+			for (String u : people)
+			{
+				sessions += sessionsByUser.getOrDefault(u, Set.of()).size();
+				if (live.contains(u))
+					now++;
+			}
+			JSONObject pl = new JSONObject();
+			pl.put("lat", Integer.parseInt(ll[0]) / 10.0);
+			pl.put("lon", Integer.parseInt(ll[1]) / 10.0);
+			pl.put("people", people.size());
+			pl.put("sessions", sessions);
+			pl.put("live", now);
+			places.add(pl);
+		}
+		places.sort((x, y) -> Integer.compare((Integer) ((JSONObject) y).get("people"), (Integer) ((JSONObject) x).get("people")));
+
+		JSONArray modes = new JSONArray();
+		for (Map.Entry<String, Integer> m : modeAnswers.entrySet())
+		{
+			JSONObject mo = new JSONObject();
+			mo.put("id", m.getKey());
+			mo.put("answers", m.getValue());
+			mo.put("people", modePeople.get(m.getKey()).size());
+			modes.add(mo);
+		}
+
+		JSONObject platformOut = new JSONObject();
+		for (Map.Entry<String, Set<String>> p : platforms.entrySet())
+			platformOut.put(p.getKey(), p.getValue().size());
+
+		int comments = 0;
+		Set<String> commenters = new HashSet<>();
+		HitTracker ch = archive.query("chatterbox").exact("functionname", "testu_social").after("date", from).search();
+		ch.enableBulkOperations();
+		for (Object o : ch)
+		{
+			Data m = (Data) o;
+			Date d = dates.parseFromObject(m.getValue("date"));
+			if (d != null && d.before(to) && users.contains(m.get("user")))
+			{
+				comments++;
+				commenters.add(m.get("user"));
+			}
+		}
+		JSONObject reactions = new JSONObject();
+		HitTracker rh = archive.query("chatterboxreaction").after("date", from).search();
+		rh.enableBulkOperations();
+		for (Object o : rh)
+		{
+			Data r = (Data) o;
+			Date d = dates.parseFromObject(r.getValue("date"));
+			if (d != null && d.before(to) && users.contains(r.get("user")) && r.get("name") != null)
+				reactions.put(r.get("name"), (Integer) reactions.getOrDefault(r.get("name"), 0) + 1);
+		}
+		int flags = 0;
+		HitTracker fh = archive.query("questionflag").after("datecreated", from).search();
+		fh.enableBulkOperations();
+		for (Object o : fh)
+		{
+			Data f = (Data) o;
+			Date d = dates.parseFromObject(f.getValue("datecreated"));
+			if (d != null && d.before(to) && users.contains(f.get("user")))
+				flags++;
+		}
+
+		JSONObject social = new JSONObject();
+		social.put("comments", comments);
+		social.put("commenters", commenters.size());
+		social.put("reactions", reactions);
+		social.put("flags", flags);
+		social.put("helpful", helpful);
+		social.put("nothelpful", nothelpful);
+
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("people", users.size());
+		resp.put("live", live.size());
+		resp.put("located", placeOf.size());
+		resp.put("minpeople", MAP_MIN_PEOPLE);
+		resp.put("places", places);
+		JSONObject hidden = new JSONObject();
+		hidden.put("places", hiddenPlaces);
+		hidden.put("people", hiddenPeople);
+		resp.put("hidden", hidden);
+		resp.put("modes", modes);
+		resp.put("platforms", platformOut);
+		resp.put("social", social);
+		reply(inReq, resp);
+	}
+
 		Map<String, Integer> hours = new HashMap<>();
 		HitTracker ah = archive.query("tutoranswer").after("datecreated", from).search();
 		if (ah != null)

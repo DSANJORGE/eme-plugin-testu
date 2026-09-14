@@ -1,0 +1,4 @@
+<page>
+  <path-action name="TestUTermsModule.terms"/>
+  <permission name="view"><user/></permission>
+</page>

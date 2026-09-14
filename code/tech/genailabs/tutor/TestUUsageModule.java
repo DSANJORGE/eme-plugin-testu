@@ -123,6 +123,15 @@ public class TestUUsageModule extends TestUBaseModule
 					d.setValue(k, val.toString());
 				}
 			}
+			if ("open".equals(type) || "resume".equals(type))
+			{
+				Double lat = coord(e.get("lat"), 90), lon = coord(e.get("lon"), 180);
+				if (lat != null && lon != null)
+				{
+					d.setValue("lat", lat);
+					d.setValue("lon", lon);
+				}
+			}
 			tosave.add(d);
 		}
 
@@ -135,6 +144,28 @@ public class TestUUsageModule extends TestUBaseModule
 		resp.put("ok", Boolean.TRUE);
 		resp.put("saved", Integer.valueOf(tosave.size()));
 		reply(inReq, resp);
+	}
+
+	/** A coordinate within +-inMax, rounded to 0.01 deg (~1 km) whatever the client sent; null when absent or invalid. */
+	static Double coord(Object inValue, double inMax)
+	{
+		if (inValue == null)
+		{
+			return null;
+		}
+		try
+		{
+			double v = Double.parseDouble(inValue.toString());
+			if (Double.isNaN(v) || Math.abs(v) > inMax)
+			{
+				return null;
+			}
+			return Math.round(v * 100) / 100.0;
+		}
+		catch (NumberFormatException ex)
+		{
+			return null;
+		}
 	}
 
 	private int parseSeconds(Object s)

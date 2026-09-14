@@ -5,6 +5,7 @@ import java.util.Date;
 import java.util.Map;
 import org.entermediadb.asset.MediaArchive;
 import org.entermediadb.asset.modules.BaseMediaModule;
+import org.entermediadb.websocket.usernotify.UserNotifyManager;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
@@ -76,6 +77,34 @@ public class TestUBaseModule extends BaseMediaModule
 		e.setValue("before", before == null ? "" : toJsonString(before));
 		e.setValue("after", after == null ? "" : toJsonString(after));
 		s.saveData(e, actor);
+	}
+
+	/**
+	 * Tells every signed-in device of [inUserId] that its [inType] data changed ({"type": "avatar"|"progress"|"notifications"}
+	 * plus [inExtra]) over EnterMedia's per-user websocket (org.entermediadb.websocket.usernotify.UserNotifyConnection).
+	 * A hint, not the data: clients refetch. Never fails the request that changed the data.
+	 * ponytail: sends inline on the request thread, one JVM only; queue it or relay across nodes if either starts to matter.
+	 */
+	public void notifyUser(String inUserId, String inType, Map<String, Object> inExtra)
+	{
+		if (inUserId == null || inUserId.isEmpty())
+		{
+			return;
+		}
+		try
+		{
+			JSONObject event = new JSONObject();
+			if (inExtra != null)
+			{
+				event.putAll(inExtra);
+			}
+			event.put("type", inType);
+			((UserNotifyManager) getModuleManager().getBean("userNotifyManager")).sentNotifications(inUserId, event);
+		}
+		catch (Exception e)
+		{
+			org.apache.commons.logging.LogFactory.getLog(TestUBaseModule.class).error("notifyUser " + inType + " " + inUserId, e);
+		}
 	}
 
 	public JSONObject snapshot(Data d, String... fields)

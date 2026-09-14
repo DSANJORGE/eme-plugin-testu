@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Append-only Terms and Conditions decisions (accepted | declined), one row per decision, written by
+     services/testu/personas/termsdecide (TestUTermsModule). user comes from the session; filehash is the sha-256 of the PDF
+     the user was shown; ipaddress honours X-Forwarded-For's first hop. Never edited, never deleted. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="termsversion" index="true" stored="true" editable="false" type="list" listid="termsversion"><name><language id="en">Terms version</language><language id="es">Versión de términos</language></name></property>
+  <property id="decision" index="true" stored="true" editable="false" type="list" listid="termsdecision"><name><language id="en">Decision</language><language id="es">Decisión</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Date</language><language id="es">Fecha</language></name></property>
+  <property id="filehash" index="true" stored="true" editable="false" keyword="true"><name><language id="en">File SHA-256</language><language id="es">SHA-256 del archivo</language></name></property>
+  <property id="platform" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Platform</language><language id="es">Plataforma</language></name></property>
+  <property id="appversion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">App version</language><language id="es">Versión</language></name></property>
+  <property id="ipaddress" index="true" stored="true" editable="false" keyword="true"><name><language id="en">IP address</language><language id="es">Dirección IP</language></name></property>
+  <property id="useragent" index="false" stored="true" editable="false"><name><language id="en">User agent</language><language id="es">Agente de usuario</language></name></property>
+</properties>

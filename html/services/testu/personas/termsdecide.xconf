@@ -1,0 +1,4 @@
+<page>
+  <path-action name="TestUTermsModule.decide"/>
+  <permission name="view"><user/></permission>
+</page>
