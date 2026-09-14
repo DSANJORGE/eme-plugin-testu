@@ -20,8 +20,8 @@ LISTS_DIR = os.path.join(REPO_ROOT, "data", "lists")
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
 
 
-def post(url, data, content_type):
-    req = urllib.request.Request(url, data=data, method="POST")
+def post(url, data, content_type, method="POST"):
+    req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", content_type)
     try:
         with opener.open(req, timeout=10) as resp:
@@ -49,8 +49,13 @@ for path in files:
         url = f"{BASE}/services/module/{searchtype}/create.json?id={quote(rowid)}"
         status, body = post(url, json.dumps(fields).encode(), "application/json")
         if status == 404:  # no services/module/<type>/ route (plain picklists like masterylevel/suitesurface)
-            print(f"{searchtype}/{rowid} skip (no module route)")
-            continue
+            extra = {k: v for k, v in row.attrib.items() if k != "id"}
+            if not extra:
+                print(f"{searchtype}/{rowid} skip (no module route)")
+                continue
+            # attributes only (e.g. masterylevel.minpercent), so the list's multilanguage names stay untouched
+            status, body = post(f"{BASE}/services/lists/data/{searchtype}/{quote(rowid)}.json",
+                                json.dumps({"id": rowid, **extra}).encode(), "application/json", "PUT")
         print(f"{searchtype}/{rowid} {status}")
         if status // 100 != 2:
             failed = True
