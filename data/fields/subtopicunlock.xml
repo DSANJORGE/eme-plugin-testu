@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Learning engine v1: a subtopic a learner unlocked through a sequential condition; create-only, never rewritten, deleted or relocked
+     (id = <user>_<componentsection>). Written when an accepted answer.json / exposure.json meets the condition, or by
+     unlockbackfill.json; never by a read. First-subtopic and open unlocks need no row. unlockevidence = JSON of the previous
+     subtopic's answered/questions/percent/band/expert evidence at unlock time; previoussection = the order then. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="componentsection" index="true" stored="true" editable="false" type="list" listid="componentsection"><name><language id="en">Subtopic</language><language id="es">Subtema</language></name></property>
+  <property id="previoussection" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Previous subtopic</language><language id="es">Subtema anterior</language></name></property>
+  <property id="policyversion" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Policy version</language><language id="es">Versión de política</language></name></property>
+  <property id="unlockpolicy" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Policy</language><language id="es">Política</language></name></property>
+  <property id="requiredlevel" index="true" stored="true" editable="false" type="list" listid="masterylevel"><name><language id="en">Required level</language><language id="es">Nivel requerido</language></name></property>
+  <property id="unlockcondition" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Condition</language><language id="es">Condición</language></name></property>
+  <property id="unlockevidence" index="true" stored="true" editable="false" type="text"><name><language id="en">Evidence (JSON)</language><language id="es">Evidencia (JSON)</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Unlocked</language><language id="es">Desbloqueado</language></name></property>
+</properties>
