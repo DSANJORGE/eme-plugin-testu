@@ -182,12 +182,30 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			}
 		}
 
+		// tutormastery has user x section rows and user x topic rows (blank componentsection); levels come from
+		// the stored band (learning engine v1), counters from the section rows only.
 		List<Data> mastery = new ArrayList<>();
+		Map<String, Map<String, String>> bandByUserTopic = new HashMap<>();
+		Map<String, Map<String, Integer>> pctByUserTopic = new HashMap<>();
+		Map<String, Map<String, Integer>> orgPctByUserTopic = new HashMap<>();
 		for (Data r : allMastery)
 		{
+			boolean topicRow = r.get("componentsection") == null || r.get("componentsection").isEmpty();
+			if (topicRow)
+			{
+				orgPctByUserTopic.computeIfAbsent(r.get("user"), k -> new HashMap<>()).put(r.get("entitytopic"), getInt(r, "masterypercent"));
+			}
 			if (users.containsKey(r.get("user")) && (topicFilter.isEmpty() || topicFilter.equals(r.get("entitytopic"))))
 			{
-				mastery.add(r);
+				if (topicRow)
+				{
+					bandByUserTopic.computeIfAbsent(r.get("user"), k -> new HashMap<>()).put(r.get("entitytopic"), r.get("band"));
+					pctByUserTopic.computeIfAbsent(r.get("user"), k -> new HashMap<>()).put(r.get("entitytopic"), getInt(r, "masterypercent"));
+				}
+				else
+				{
+					mastery.add(r);
+				}
 			}
 		}
 
@@ -258,17 +276,29 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				map.put("cw", 0);
 				return map;
 			});
-			((List<String>) ps.get("levels")).add(levelOf(m, a));
+			((List<String>) ps.get("levels")).add(r.get("band"));
 			ps.put("answered", (Integer) ps.get("answered") + a);
 			ps.put("attempts", (Integer) ps.get("attempts") + att);
 			ps.put("cw", (Integer) ps.get("cw") + cw);
 		}
 
+		// Person overall level: weighted mastery over the topics the person started (sum of topic % x topic weight / sum of weights,
+		// weights = sum of question difficulty weights), banded with the org default thresholds. Not the weakest topic.
+		LearningEngine engine = new LearningEngine(archive);
+		Map<String, Integer> topicWeight = new HashMap<>();
+		for (LearningEngine.Topic t : engine.loadContent().topics.values())
+		{
+			int w = 0;
+			for (LearningEngine.Question q : t.questions)
+				w += q.weight;
+			topicWeight.put(t.id, w);
+		}
+		int[] orgThresholds = (int[]) engine.orgThresholds()[0];
 		Map<String, String> levelByUser = new HashMap<>();
 		for (String u : users.keySet())
 		{
 			Map<String, Object> pu = perUser.get(u);
-			levelByUser.put(u, pu != null ? levelOf((Integer) pu.get("mastered"), (Integer) pu.get("answered")) : null);
+			levelByUser.put(u, overallBand(pctByUserTopic.get(u), topicWeight, orgThresholds));
 		}
 
 		List<Data> allDaily = new ArrayList<>();
@@ -365,7 +395,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			{
 				Map<String, Map<String, Integer>> userTopicMap = perUserTopic.get(u);
 				Map<String, Integer> pt = (userTopicMap != null) ? userTopicMap.get(tid) : null;
-				lv.add(pt != null ? levelOf(pt.get("mastered"), pt.get("answered")) : null);
+				lv.add(pt != null ? bandOf(bandByUserTopic, u, tid) : null);
 			}
 
 			Map<String, Object> weakest = null;
@@ -547,7 +577,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				{
 					Map<String, Map<String, Integer>> userTopicMap = perUserTopic.get(mId);
 					Map<String, Integer> pt = (userTopicMap != null) ? userTopicMap.get(tId) : null;
-					if (pt != null && "beginner".equals(levelOf(pt.get("mastered"), pt.get("answered"))))
+					if (pt != null && "beginner".equals(bandOf(bandByUserTopic, mId, tId)))
 					{
 						countB++;
 					}
@@ -605,18 +635,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		Map<String, Object> median = null;
 		if (orgUsers.size() >= 5)
 		{
-			Map<String, int[]> orgPer = new HashMap<>();
-			for (Data r : allMastery)
-			{
-				String u = r.get("user");
-				if (orgUsers.containsKey(u))
-				{
-					int[] ma = orgPer.computeIfAbsent(u, k -> new int[2]);
-					ma[0] += getInt(r, "mastered");
-					ma[1] += getInt(r, "answered");
-				}
-			}
-
 			Calendar org7Cal = Calendar.getInstance();
 			org7Cal.setTime(to);
 			org7Cal.add(Calendar.DAY_OF_MONTH, -7);
@@ -636,8 +654,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			int expertCount = 0;
 			for (String u : orgUsers.keySet())
 			{
-				int[] ma = orgPer.get(u);
-				if (ma != null && "expert".equals(levelOf(ma[0], ma[1])))
+				if ("expert".equals(overallBand(orgPctByUserTopic.get(u), topicWeight, orgThresholds)))
 				{
 					expertCount++;
 				}
@@ -670,7 +687,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				inactive.add(inactObj);
 			}
 		}
-		inactive.sort(Comparator.comparing(a -> (String) a.getOrDefault("lastactivity", "")));
+		inactive.sort(Comparator.comparing(a -> (String) a.get("lastactivity"), Comparator.nullsFirst(Comparator.naturalOrder())));
 
 		Map<String, Object> iris = buildIrisAggregates(tq, sections);
 
@@ -693,6 +710,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		analytics.put("mastery", mastery);
 		analytics.put("perUser", perUser);
 		analytics.put("perUserTopic", perUserTopic);
+		analytics.put("bandByUserTopic", bandByUserTopic);
 		analytics.put("perSection", perSection);
 		analytics.put("levelByUser", levelByUser);
 		analytics.put("dailyAll", dailyAll);
@@ -878,6 +896,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				rObj.put("attempts", getInt(r, "attempts"));
 				rObj.put("correct", getInt(r, "correct"));
 				rObj.put("level", r.get("level"));
+				rObj.put("masterypercent", getInt(r, "masterypercent"));
 				Date la = DateStorageUtil.getStorageUtil().parseFromObject(r.getValue("lastactivity"));
 				rObj.put("lastactivity", la != null ? isoFormat.format(la) : null);
 				rObj.put("certaincorrect", getInt(r, "certaincorrect"));
@@ -912,7 +931,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				JSONObject r = (JSONObject) ro;
 				if (tid.equals(r.get("entitytopic")) && ((Integer) r.get("answered")) > 0)
 				{
-					double ratio = ((Integer) r.get("mastered")) / (double) ((Integer) r.get("answered"));
+					double ratio = (Integer) r.get("masterypercent");
 					if (ratio < minRatio)
 					{
 						minRatio = ratio;
@@ -924,7 +943,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			JSONObject tObj = new JSONObject();
 			tObj.put("id", tid);
 			tObj.put("name", tname);
-			tObj.put("level", levelOf(pt.get("mastered"), pt.get("answered")));
+			tObj.put("level", bandOf((Map<String, Map<String, String>>) a.get("bandByUserTopic"), uid, tid));
 			tObj.put("mastered", pt.get("mastered"));
 			tObj.put("answered", pt.get("answered"));
 			tObj.put("weakest", weakestSection);
@@ -1035,9 +1054,44 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		irisObj.put("sections", irisSections);
 		irisObj.put("helpfulShare", rated > 0 ? helpfulCount / (double) rated : null);
 
+		// Required topics vs role requirement (live, learning engine) and the lowest required topic as a separate risk signal.
+		// Overall mastery is not changed by it. Readiness states (Action needed / At risk) are not computed yet.
+		LearningEngine engine = new LearningEngine(archive);
+		LearningEngine.Learner learner = engine.loadLearner(uid, LearningEngine.jobrolesOf(u));
+		JSONArray required = new JSONArray();
+		JSONObject lowest = null;
+		int gaps = 0;
+		for (LearningEngine.Topic t : engine.loadContent().topics.values())
+		{
+			JSONObject st = engine.topicState(t, learner);
+			String req = (String) st.get("requiredlevel");
+			if (req == null)
+				continue;
+			JSONObject ro = new JSONObject();
+			ro.put("id", t.id);
+			ro.put("name", t.title);
+			ro.put("requiredlevel", req);
+			ro.put("band", st.get("band"));
+			ro.put("masterypercent", st.get("masterypercent"));
+			ro.put("meetsrequirement", st.get("meetsrequirement"));
+			int gap = LearningEngine.levelIndex(req) - LearningEngine.levelIndex((String) st.get("band"));
+			ro.put("gap", gap);
+			required.add(ro);
+			if (!Boolean.TRUE.equals(st.get("meetsrequirement")))
+				gaps++;
+			if (lowest == null || gap > (Integer) lowest.get("gap")
+				|| (gap == (Integer) lowest.get("gap") && (Integer) st.get("masterypercent") < (Integer) lowest.get("masterypercent")))
+				lowest = ro;
+		}
+		JSONObject risk = new JSONObject();
+		risk.put("requiredtopics", required);
+		risk.put("requiredgaps", gaps);
+		risk.put("lowestrequiredtopic", lowest);
+
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
 		resp.put("user", userObj);
+		resp.put("risk", risk);
 		resp.put("rows", rows);
 		resp.put("series", new ArrayList<>(seriesMap.values()));
 		resp.put("calibration", calibObj);
@@ -1285,8 +1339,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 					Map<String, Object> extra = new HashMap<>();
 					extra.put("user", sel);
 					extra.put("entitytopic", tid);
+					String band = bandOf((Map<String, Map<String, String>>) a.get("bandByUserTopic"), sel, tid);
 					addFactHelper(addFact, base, formatUserName(u) + " en «" + topics.get(tid)
-						+ "»", (levelOf(pt.get("mastered"), pt.get("answered")) != null ? levelOf(pt.get("mastered"), pt.get("answered")) : "sin empezar") + ", " + pt.get("mastered") + " de "
+						+ "»", (band != null ? band : "sin empezar") + ", " + pt.get("mastered") + " de "
 							+ pt.get("answered") + " dominadas", "person", extra, "topic");
 				}
 			}
@@ -1552,8 +1607,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			{
 				Data r = (Data) o;
 				Data u = users.get(r.get("user"));
-				if (u == null)
-					continue;
+				if (u == null || r.get("componentsection") == null || r.get("componentsection").isEmpty())
+					continue; // topic rows (blank section) are not report rows
 				String team = u.get("team");
 				if (scope != null && (team == null || !scope.contains(team)))
 					continue;
@@ -1661,16 +1716,27 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		return 0;
 	}
 
-	private static String levelOf(int mastered, int answered)
+	/** Stored band of a user x topic tutormastery row (learning engine v1). */
+	private static String bandOf(Map<String, Map<String, String>> bands, String user, String topic)
 	{
-		if (answered == 0)
+		Map<String, String> byTopic = bands != null ? bands.get(user) : null;
+		return byTopic != null ? byTopic.get(topic) : null;
+	}
+
+	/** Overall band of a person from their topic rows (see loadAnalytics); null when no topic started. */
+	private static String overallBand(Map<String, Integer> pctByTopic, Map<String, Integer> topicWeight, int[] thresholds)
+	{
+		if (pctByTopic == null || pctByTopic.isEmpty())
 			return null;
-		double ratio = mastered / (double) answered;
-		if (ratio < 0.5)
-			return "beginner";
-		if (ratio < 0.9)
-			return "competent";
-		return "expert";
+		double w = 0, ws = 0;
+		for (Map.Entry<String, Integer> e : pctByTopic.entrySet())
+		{
+			int tw = topicWeight.getOrDefault(e.getKey(), 0);
+			w += tw;
+			ws += tw * e.getValue();
+		}
+		int pct = w == 0 ? 0 : (int) Math.round(ws / w);
+		return pct >= thresholds[1] ? "expert" : pct >= thresholds[0] ? "competent" : "beginner";
 	}
 
 	private static Map<String, Integer> levelsOf(Collection<String> lv)
