@@ -104601,7 +104601,7 @@ A.avj.prototype={
 $0(){return this.a.e.$1(this.b)},
 $S:0}
 A.IC.prototype={
-F(a){var s=null,r=this.c,q=A.xS("assets/img/minsur_logo.png",B.fX,s,r,"Minsur",s)
+F(a){var s=null,r=this.c,q=A.xS("assets/img/minsur_logo_nav.png",B.fX,s,r,"Minsur",s)
 return A.da(new A.dM(B.cx,s,s,q,s),r,s)}}
 A.Ni.prototype={
 a5(){return new A.a4T()}}
@@ -118161,7 +118161,7 @@ B.WF=new A.IA(null)
 B.WG=new A.zy(30,null,null)
 B.WH=new A.zy(62,null,null)
 B.WI=new A.IB(null,null)
-B.WJ=new A.IC(22,null)
+B.WJ=new A.IC(32,null)
 B.WK=new A.IC(48,null)
 B.bB=new A.ID(0,"primary")
 B.cr=new A.ID(1,"quiet")

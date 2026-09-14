@@ -106978,7 +106978,7 @@ A.avH.prototype={
 $0(){return this.a.e.$1(this.b)},
 $S:0}
 A.XT.prototype={
-F(a){var s=null,r=A.b1n("assets/img/minsur_logo.png",B.fN,s,48,"Minsur",s)
+F(a){var s=null,r=A.b1n("assets/img/minsur_logo_nav.png",B.fN,s,48,"Minsur",s)
 return A.c4(new A.cv(B.b_,s,s,r,s),48,s)}}
 A.Ny.prototype={
 a2(){return new A.a5F()}}
