@@ -3,5 +3,6 @@
   <questionflagreason id="wrong"><name><![CDATA[Incorrecta]]></name></questionflagreason>
   <questionflagreason id="unclear"><name><![CDATA[Confusa o mal redactada]]></name></questionflagreason>
   <questionflagreason id="outdated"><name><![CDATA[Desactualizada]]></name></questionflagreason>
+  <questionflagreason id="content_unavailable"><name><![CDATA[Contenido no disponible (automático)]]></name></questionflagreason>
   <questionflagreason id="other"><name><![CDATA[Otro]]></name></questionflagreason>
 </questionflagreasons>

@@ -20,4 +20,7 @@
   <property id="unsurewrong" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Wrong · unsure</language><language id="es">Incorrectas · inseguro</language></name></property>
   <property id="lastactivity" index="true" stored="true" editable="false" type="date"><name><language id="en">Last activity</language><language id="es">Última actividad</language></name></property>
   <property id="computedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Computed at</language><language id="es">Calculado</language></name></property>
+  <!-- Learning engine v1: weighted mastery % and band (level = band). Topic rows have a blank componentsection. -->
+  <property id="masterypercent" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Mastery %</language><language id="es">Dominio %</language></name></property>
+  <property id="band" index="true" stored="true" editable="false" type="list" listid="masterylevel"><name><language id="en">Band</language><language id="es">Banda</language></name></property>
 </properties>

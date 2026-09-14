@@ -20,4 +20,14 @@
       <language id="en"><![CDATA[Section]]></language>
     </name>
   </property> 
+  <!-- Learning engine v1 (services/testu/learn/answer.json validates all of these): mode learn|dailychallenge|improve, or legacy = not verified
+       (blank reads as legacy and never advances the learning sequence); scope = canonical topic|subtopic of the question; hints used 0-3;
+       attemptid = client retry key (row id = <user>_<attemptid>). -->
+  <property id="mode" index="true" stored="true" editable="true" type="list"><name><language id="en">Mode</language><language id="es">Modo</language></name></property>
+  <property id="scopetype" index="true" stored="true" editable="true" type="list"><name><language id="en">Scope type</language><language id="es">Tipo de alcance</language></name></property>
+  <property id="scopeid" index="true" stored="true" editable="true" type="list"><name><language id="en">Scope</language><language id="es">Alcance</language></name></property>
+  <property id="attemptid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Attempt id</language><language id="es">Id de intento</language></name></property>
+  <property id="hintlevel" index="true" stored="true" editable="true" type="number" datatype="number"><name><language id="en">Hint level</language><language id="es">Nivel de pista</language></name></property>
+  <!-- learningsession id (Learn/Improve) or dailychallengeset id the question was served in. -->
+  <property id="learningsession" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Session</language><language id="es">Sesión</language></name></property>
 </properties>
