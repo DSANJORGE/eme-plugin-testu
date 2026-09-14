@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Learning engine v1: the ordered question snapshot next.json issued for one Learn or Improve session (id = <user>_<uuid>).
+     answer.json / exposure.json require its id (learningsession) and accept only its questions; Learn also only the next unanswered one.
+     The Daily Challenge session is its dailychallengeset row. questionlist = JSON array of question ids in served order;
+     inputs = JSON policy context (policy, requiredlevel, policyversion, lockedquestions). Valid until expiresat (7 days). -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="mode" index="true" stored="true" editable="false" type="list"><name><language id="en">Mode</language><language id="es">Modo</language></name></property>
+  <property id="scopetype" index="true" stored="true" editable="false" type="list"><name><language id="en">Scope type</language><language id="es">Tipo de alcance</language></name></property>
+  <property id="scopeid" index="true" stored="true" editable="false" type="list"><name><language id="en">Scope</language><language id="es">Alcance</language></name></property>
+  <property id="questionlist" index="true" stored="true" editable="false" type="text"><name><language id="en">Questions (JSON)</language><language id="es">Preguntas (JSON)</language></name></property>
+  <property id="algorithmversion" index="true" stored="true" editable="false" type="list"><name><language id="en">Algorithm</language><language id="es">Algoritmo</language></name></property>
+  <property id="policyversion" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Policy version</language><language id="es">Versión de política</language></name></property>
+  <property id="inputs" index="true" stored="true" editable="false" type="text"><name><language id="en">Inputs (JSON)</language><language id="es">Entradas (JSON)</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Created</language><language id="es">Creado</language></name></property>
+  <property id="expiresat" index="true" stored="true" editable="false" type="date"><name><language id="en">Expires</language><language id="es">Vence</language></name></property>
+</properties>

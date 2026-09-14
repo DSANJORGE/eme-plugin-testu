@@ -25,4 +25,9 @@
 			<ref bean="moduleManager" />
 		</property>
 	</bean>
+	<bean id="TestULearningModule" class="tech.genailabs.tutor.TestULearningModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
 </beans>

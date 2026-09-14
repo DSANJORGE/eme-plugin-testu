@@ -1,0 +1,188 @@
+# TestU learning engine v1 (server-owned modes, selection, mastery)
+
+Date: 2026-09-14. Source of truth: Notion Project Hub → 02 Product Requirements, 05 Data/Mastery, 06, 07.
+Goal: pilot build tomorrow morning runs one generic, server-owned model. The app renders; it never calculates mastery bands, eligibility or selection.
+
+## Content model (existing)
+
+- Topic = `entitytopic`. Its tutorials = `entitytutorial` with `entitytopic` = topic id (order: same order the app's topic service uses).
+- Subtopic = `componentsection` with `playbackentitymoduleid=entitytutorial`, `playbackentityid=<tutorial>` (order as `services/module/entitytutorial/tutorial.json`).
+- Question slot = `componentcontent` with `componenttype=mcq`, `questionid` set, sorted by `ordering`. Question = `entityquestion`.
+- Difficulty = `entityquestion.mcqcognitivelevel`, stored as the canonical list id (list `mcqcognitivelevel`: beginner 10, competent 20, expert 40 points → weights 1, 2, 4). Missing or any other value = beginner.
+  - Source labels are mapped at import, never read by the engine: Baja → beginner, Media → competent, Alta → expert (`importing/banco2026_load.py`, `importing/make_content_extra.py`; existing data: `tools/normalize_difficulty.py --apply`). `tools/validate_content.py` reports non-canonical values.
+- Learner-visible topic = returned by the platform's security-filtered topic query for that user (`entitytopic` entity security: `securityenabled`, `viewusers|viewgroups|viewroles`, owner), the same query the app's topic service uses. `entitytopic` has no status/published/active field today; when one is added, filter on it here.
+- Learning sequence of a topic = tutorials in order → sections in order → mcq contents by `ordering`. Excludes questions with `entityquestion.evaluationreserved=true` (new boolean field).
+
+## Attempt and exposure records
+
+- `tutoranswer` new fields: `mode`, `scopetype` (topic | subtopic), `scopeid`, `hintlevel` (0–3), `attemptid`, `learningsession` (the session id it was served in; also on `tutorexposure`). Written only by `answer.json` after server validation (see Endpoints); the client never labels an answer. Row id = `<user>_<attemptid>`.
+- `mode` values: learn | dailychallenge | improve (verified by `answer.json`); `legacy` = not verified: rows without mode (pre-v1 data) read as legacy, and `AdaptiveTutorialAnswerSkill` stores `legacy` when a message arrives without `context_answerid` (older app builds), ignoring any client-sent mode, scope or hint. Legacy attempts count as mastery evidence (latest attempt) but never as learning attempts: they do not advance the learning sequence, Learn completion, Improve unlock, cooldown or remediation. `evaluation` is reserved; no endpoint accepts it yet.
+- New table `tutorexposure`: user, entityquestion, componentsection, entitytutorial, entitytopic, mode, scopetype, scopeid, position, datecreated. Posted by the app when a question is shown (best effort); question, mode and scope validated like answers, hierarchy and position stored as resolved by the server.
+- Records are never updated or deleted.
+
+## Answered state
+
+Question q is *answered in the learning sequence* for user u when u has a `tutoranswer` on q with mode learn or dailychallenge. Evaluation/Improve attempts never set it (Improve only serves already-answered questions anyway).
+
+- Subtopic learn complete = every sequence question of the subtopic answered in the learning sequence. Subtopic Improve available = learn complete.
+- Topic learn complete = every sequence question of the topic answered. Topic Improve available = topic learn complete.
+
+## Mastery (generic model v1)
+
+Per question evidence = latest attempt in ANY mode.
+- score = 0 if incorrect; if correct = confidence weight × hint factor.
+- confidence weight: confident 1.0, mostlysure 0.85, notsure 0.6, noidea 0.4.
+- hint factor by hintlevel: 0 → 1.0, 1 → 0.75, 2 → 0.5, 3 → 0.25.
+- unanswered question = 0.
+
+Scope mastery % (subtopic or topic) = 100 × Σ(weight × score) / Σ(weight) over the scope's sequence questions.
+
+Bands: org defaults Competent ≥ 60, Expert ≥ 85 (Beginner below), stored as `minpercent` on list `masterylevel` rows (beginner 0, competent 60, expert 85). Topic override: `entitytopic.competentmin`, `entitytopic.expertmin` (blank or 0 = org default; editable by admins only, not learners). Band is `null` when nothing in scope was ever answered.
+
+Boundary validation (org pair and the effective topic pair, each on its own): `1 ≤ competentmin < expertmin ≤ 100`. Beginner implicitly starts at 0: Beginner 0 … competentmin − 1, Competent competentmin … expertmin − 1, Expert expertmin … 100 (default 0–59 / 60–84 / 85–100). An invalid org pair falls back to 60 / 85; an invalid topic pair (override merged with the org pair) falls back to the org pair. The reason is reported, never silent: `thresholdsreason` = `competentmin_below_1` | `competentmin_not_below_expertmin` | `expertmin_above_100` | `masterylevel_unavailable` (org, top level of state.json; topic, per topic).
+
+Expert evidence (scope): expert-difficulty questions exist in scope, their own weighted mastery ≥ expert threshold, and at least min(3, count of expert questions) of them latest-correct. Otherwise false with reason `no_expert_questions` | `insufficient`.
+
+Required level: new table `topicrequirement` (jobrole, entitytopic, requiredlevel beginner|competent|expert) and user field `jobrole` (multi, list `jobrole`). Strictest wins across the user's job roles. None → `requiredlevel: null`.
+Meets requirement: band ≥ required, and if required = expert, expert evidence true.
+
+`tutormastery` (user × section, and user × topic rows with blank section) gets `masterypercent`, `band`; `level` = band (kept for existing consumers). The 15-min `computemastery` event calls the engine instead of the old share rule. Analytics module uses the stored band, not `levelOf`.
+
+Analytics (console):
+- Section and topic levels = stored bands. Person overall level = weighted mastery over the topics the person started: Σ(topic masterypercent × topic weight) / Σ(topic weight), topic weight = Σ question difficulty weights of the topic sequence, rounded, banded with the org default thresholds. It is not the weakest topic.
+- `person.json` adds `risk`: `requiredtopics` (each topic with a requirement for the person's job roles: `requiredlevel`, `band`, `masterypercent`, `meetsrequirement`, `gap` = level index(required) − level index(band), band null = −1), `requiredgaps` (required topics not met) and `lowestrequiredtopic` (largest gap, then lower masterypercent, then topic order; null when none). A separate risk signal: it never rewrites overall mastery.
+- Readiness states (Action needed / At risk from required-topic gaps, critical skills, evaluations, certificates) are not computed yet; only the required-topic gap part above exists.
+
+## Selection
+
+Terms:
+- *Learning-answered* = has a submitted `tutoranswer` in mode learn or dailychallenge. *Learning attempts* = attempts in learn, dailychallenge or improve (never evaluation).
+- *High-confidence incorrect (HCI)* = incorrect with confidence confident|mostlysure.
+- *Unresolved HCI question* = its latest HCI attempt has no later attempt that is correct, confident|mostlysure and hintlevel 0.
+- *Last shown* = latest of any learning-mode exposure or learning attempt on the question.
+
+Improve priority class for a learning-answered question (from its latest attempt in any mode; evidence):
+1. latest is HCI
+2. latest correct with confidence notsure|noidea
+3. latest other incorrect
+4. everything else (retention risk joins here when modelled)
+One risk record per question: base risk class 1 = 1.0, class 2 = 0.5, class 3 = 0.5, class 4 = 0; recurrence multiplier = 1 + 0.25 × min(incorrectLearningAttempts − 1, 2) (never negative), applied to classes 1–3.
+Deterministic order: class asc → risk desc → required topic first → higher difficulty first if the scope band ≥ competent → oldest last shown → topic order → sequence position → question id.
+Reason codes: `highconfwrong`, `lowconfright`, `wrong`, `harder`, `stale`, `new`.
+
+- **learn** (`topicid`, optional `sectionid`): all non-learning-answered sequence questions in scope, sequence order. Empty list + `complete: true` when done.
+- **improve** (`topicid`, optional `sectionid`, `size` default 10): `{ok:false, error:"improve_locked"}` unless the scope's Improve is available; else the top `size` questions by the order above.
+- **dailychallenge** — selection algorithm `dc-v0` (approved by the user 2026-09-14 with corrections):
+  - **Eligible topics:** required topics = topics with a `topicrequirement` for the user's job roles. Generic fallback: when role–topic assignment data is unavailable for the user, all learner-visible topics (see Content model; active/published once such a field exists) that contain eligible questions are treated as required and `inputs.topicsreason` = `assignment_data_unavailable`. Never seed `topicrequirement` to hide content; hide or archive content through its own visibility/status. Optional topics only when catalog setting `testu_dailychallenge_enrichment` = true; then required topics get a 1.5× topic-score multiplier.
+  - **Buckets:** new = eligible sequence questions not learning-answered (an Evaluation-only answer keeps a question here); reinforcement = learning-answered questions. Evaluation-reserved never eligible. A new question counts toward Learn completion only after submission.
+  - **Pressures** (0–0.5 each):
+    - U = 0.5 × clamp(pendingShare + 0.1 × requiredTopicsBarelyStarted, 0, 1); pendingShare = new-bucket size / eligible sequence questions; barely started = < 10% learning-answered.
+    - R = 0.5 × clamp(Σ risk / learningAnswered, 0, 1); 0 when nothing learning-answered.
+    - Capability flags, all false in dc-v0 (each adds a signal only in a new algorithm version): pace, deadlines, criticalSkills, retention, evaluationFailure, availableTime.
+  - **Critical remediation:** active when (a) ≥ 3 distinct questions are unresolved HCI, or (b) over the user's last 20 learning attempts (recent = that count, up to 20): recent ≥ 8 AND hciAttempts ≥ max(3, ceil(recent × 0.25)). A later confident unassisted correct answer resolves the flag only; HCI attempts stay in history (retention evidence decides consolidation later).
+  - **Size:** n = min + round((max − min) × clamp(U + R, 0, 1)); min/max from catalog settings `testu_dailychallenge_min` (5) / `testu_dailychallenge_max` (20). Valid only when min ≥ 1, max ≥ min and max ≤ 50 (documented safe upper bound); otherwise both fall back to 5 / 20 and `inputs.sizesreason` = `min_below_1` | `max_below_min` | `above_safe_max` (null when valid). `inputs.min` / `inputs.max` record the values used.
+  - **New share:** s = clamp(0.5 + U − R, 0.2, 0.7); remediation → clamp(s, 0, 0.2); nothing learning-answered → 1.0; new bucket empty → 0. newTarget = round(n × s).
+  - **Guardrails:** new bucket non-empty and not remediation → newTarget ≥ 1; reinforcement bucket non-empty → newTarget ≤ n − 1.
+  - **Hard new cap:** maxNew = ceil(n × 0.70); newTarget = min(newTarget, maxNew). E.g. n = 15 → maxNew = 11: 11 new / 4 reinforcement is valid, 14 / 1 is not while reinforcement can still fill. New may exceed maxNew only in fill step 4 below, i.e. when the reinforcement bucket is exhausted even with cooldown and topic cap relaxed (cold start is the common case); that is recorded as `newfill` + `newcap`.
+  - **New slots**, one at a time: topic score = (enrichment && required ? 1.5 : 1) × (0.6 × completionGap + 0.4 × min(daysSinceTopicLastNewQuestion, 7) / 7); completionGap = 1 − learningAnswered/total. Ties: topic order. Take that topic's next non-learning-answered question in sequence (never skip ahead); re-score counting the slot as answered and last-new = today. No cooldown on new questions.
+  - **Reinforcement slots:** deterministic Improve order. Cooldown: skip questions last shown in any learning mode within 48 h, unless the question is an unresolved HCI during remediation.
+  - **Session topic cap:** no topic > 50% of all slots (new + reinforcement) unless only one topic has eligible questions.
+  - **Filling** (in this order, each step only for slots still empty, total never above n):
+    1. new slots up to newTarget (topic cap kept), then reinforcement for all remaining slots (cooldown and topic cap kept). A new-bucket shortfall therefore goes to reinforcement.
+    2. reinforcement with the cooldown relaxed (topic cap kept);
+    3. reinforcement with the topic cap relaxed as well;
+    4. only then new questions fill what is left (topic cap kept, then relaxed). Only this step can take new above maxNew.
+    5. `inputs.relaxations` records every relaxation actually used (an item was taken that the rule would have blocked): `cooldown`, `topiccap`, `newfill` (step 4 added new questions), `newcap` (new count ended above maxNew). `inputs` also stores `newtarget`, `maxnew`, `reinforcementtarget` (= n − newTarget).
+  - **Order (ratio-aware interleave):** spreads the smaller bucket evenly through the larger one, deterministically.
+    - n = items in the set; newCount and reinforcementCount after filling. If either is 0 the set is that bucket alone (cold start → all new).
+    - Minority bucket = the smaller one (reinforcement on a tie); k = its size; majority = the other bucket.
+    - Minority item j (j = 0..k−1, in bucket order) goes to 0-based position p_j = floor((j + 1) × (n + 1) / (k + 1) + 0.5) − 1 (round half up of the ideal evenly spaced 1-based slot (j+1)(n+1)/(k+1)), clamped to [0, n−1]. If p_j is already taken, move to the next free position (wrapping to 0).
+    - Majority items fill the remaining positions left to right, in bucket order. Within each bucket the order is the selection order (new: slot order; reinforcement: Improve order).
+    - Remediation: position 0 must be reinforcement; if it is new, swap it with the first reinforcement position.
+    - Examples (checked in `tools/LearningEngineCheck.java`): 7N/3R, n = 10, k = 3: 11/4 = 2.75 → 3 → p = 2; 22/4 = 5.5 → 6 → 5; 33/4 = 8.25 → 8 → 7 → N N R N N R N R N N. 3N/7R → R R N R R N R N R R. 5N/5R (tie, R minority) → N R N R N R R N R N. 11N/4R → N N R N N R N N N R N N R N N. Same inputs always give the same order.
+  - **Response** adds `newcount`, `reinforcementcount`, `algorithmversion`. App wording: "Today, {tutor} (org tutor persona, e.g. IRIS for Minsur) is introducing 4 new questions and revisiting 6 questions that need reinforcement." Scores stay internal.
+  - **Challenge day:** the organisation's local date. Timezone = catalog setting `testu_timezone` (IANA id, e.g. `America/Lima`); unset or invalid → UTC, with `inputs.timezonereason` = `timezone_not_configured` | `timezone_invalid`. One rule (`LearningEngine.challengeDate` / `challengeId`) builds, reads (next.json, answer/exposure validation) and identifies the set: id = `<user>_<yyyyMMdd of the local date>`. Changing the timezone moves the day boundary from the next request on.
+  - **Stored** per user per local day in `dailychallengeset`: user, `localdate` (yyyy-MM-dd, org-local), `timezone` (IANA id used), day (the same date as a date value), `questionlist` (JSON list with bucket + reason per item; not `questions`, a numeric field name elsewhere in the index), algorithmversion, inputs (JSON: U, R, n, s, min, max, newtarget, maxnew, reinforcementtarget, remediation, unresolvedhci, relaxations, flags, topicsreason, sizesreason, timezonereason, lockedsubtopics, lockedsubtopicids, progression = per topic {policy, requiredlevel, policyversion, policyreason} used for the lock decisions), datecreated (generation instant, UTC). Create-only: built under the engine write lock after a realtime id check, never rebuilt for the day. Reopening the same local day returns the same set; answered items are reported as done. The response adds `localdate`, `timezone` and `sessionid` (= the set id).
+- Answer-option shuffling is independent of selection (app side, unchanged).
+- Evaluation-reserved questions are never returned by any of these.
+
+## Subtopic progression (per topic, server-owned)
+
+- **Policy** per topic, append-only versions in `subtopicpolicy` (id `<topicid>_v<n>`: entitytopic, policyversion, unlockpolicy, requiredlevel, appliesto, sectionorder JSON, user, datecreated). The highest version is current. No row → `open` (`policy_not_configured`, today's behaviour); unknown/corrupted policy → `sequential_completion` (`policy_invalid`, fails safe); `sequential_mastery` without a canonical level → `sequential_completion` (`requiredlevel_invalid`). There are no policy fields on entitytopic, so the only writer is the versioned endpoint, which rejects invalid values. Versions are create-only: a save names the version it was based on (`expectedversion`); under one write lock the server probes the next ids with realtime gets and stores `v(n+1)` only if `expectedversion` is still the latest, else 409 `version_conflict` (nothing written). Concurrent saves therefore produce one stored version and conflicts, never an overwrite. (Lock scope: one Tomcat node only — not cluster-safe; see Known limitations.)
+  - `open`: every subtopic unlocked.
+  - `sequential_completion`: first subtopic unlocked; each next one unlocks when every eligible question of the immediately preceding subtopic (content order) has a learn or dailychallenge answer. Evaluation, improve and legacy answers never count.
+  - `sequential_mastery`: completion as above and the preceding subtopic's band ≥ `requiredlevel` (beginner | competent | expert); expert also needs expert evidence (percent alone is not enough). An empty preceding subtopic counts as met.
+- **Unlock state** (`LearningEngine.subtopicStates`, read-only), precedence: `first_subtopic`, `policy_open`, `unlock_recorded` (a `subtopicunlock` row), the condition met (`previous_subtopic_complete` | `previous_subtopic_mastery_met`), `subtopic_started` (a learn/dailychallenge answer or exposure in it), then locked: `previous_subtopic_incomplete` | `previous_subtopic_below_required_mastery` | `previous_subtopic_missing_expert_evidence`. A condition unlock not yet recorded reports `unlockedat: null`.
+- **Persistence** (`LearningEngine.recordUnlocks`): state and selection reads never create unlock records. state.json writes nothing at all; next.json may create an immutable session snapshot (`learningsession`) or the day's Daily Challenge set, never a `subtopicunlock` row. A `subtopicunlock` row is written for every condition unlock of the topic without a row when (a) answer.json accepts an answer (learn or dailychallenge completing a subtopic, or any learning answer — improve included — raising the band to the required level), (b) exposure.json accepts a learn/dailychallenge exposure (the learner reached the subtopic), or (c) the explicit backfill `unlockbackfill.json` runs. Row: id `<user>_<section>`, user, topic, section, previoussection (order at the time), policyversion, policy, requiredlevel, unlockcondition, unlockevidence (answered, questions, percent, band, expertevidence), datecreated. Create-only and idempotent: under the write lock an existing id is skipped, so the first unlock keeps its date and evidence. Rows are never deleted; later lower mastery never relocks. First-subtopic and open unlocks need no row.
+- **Policy change** (`appliesto: unreached_subtopics`): a new version applies to every learner, but only to subtopics the learner has not reached. Reached = recorded unlock or started (answer/exposure in learn or DC). Nobody is relocked out of a subtopic they unlocked or started; a subtopic that was only open (never started) under an earlier `open` version follows the new policy.
+- **Reordering** subtopics is not a policy change: records are keyed by section id, so a recorded or started subtopic stays unlocked; every other subtopic is judged on its new immediate predecessor.
+- **Modes:** Learn and Daily Challenge never introduce an unanswered question from a locked subtopic (next.json learn skips it, `sectionid` of a locked subtopic → 409 `subtopic_locked`; answer/exposure in learn → 409 `subtopic_locked`; dc-v0 new pool and slot cursor skip locked sections, `inputs.lockedsubtopics`). A question already in today's stored Daily Challenge stays answerable after a same-day policy change: the set is a fixed snapshot and stores the policy versions it was built with. Improve keeps its own rule (scope fully answered in learn/DC); Evaluation is independent.
+- **Blocked Learn:** topic Learn with no unlocked unanswered question but locked ones (typically: previous subtopic complete, band below the required level) returns `blocked: true` with `blockedreason`, `blockedsubtopicid` (first locked), `previoussubtopicid` (condition unmet), `requiredlevel`, `currentband`, `recommendedmode` (`improve` unless the reason is incompleteness) and `recommendedscope` (that subtopic). The app explains the requirement and offers that session.
+- **New unlocks mid-session:** a session never grows. A subtopic unlocked during a session starts in a new session; the debrief names it and offers that session.
+- **Permission:** read `training_view` or `training_manage`; change `training_manage` (orgadmin). Each change also writes an `auditevent` (`subtopicpolicy.change`; the version rows hold the before/after values).
+
+## Endpoints (plugin testu, Java module `TestULearningModule`, logged-in user only)
+
+All under `services/testu/learn/`, JSON, `{ok:true, ...}` / `{ok:false, error}`.
+
+`state.json?topicid=` (omit topicid = all user topics)
+```json
+{"ok":true,"topics":[{"id":"t1","title":"...","questions":151,"answered":40,"learncomplete":false,"improveavailable":false,
+  "masterypercent":22,"band":"beginner","competentmin":60,"expertmin":85,"requiredlevel":"competent","meetsrequirement":false,
+  "expertevidence":{"ok":false,"reason":"insufficient"},"nextquestionid":"q41","lastactivity":"2026-09-14T10:00:00Z",
+  "sections":[{"id":"s1","title":"...","tutorialid":"tu1","questions":12,"answered":12,"learncomplete":true,"improveavailable":true,
+    "masterypercent":71,"band":"competent","expertevidence":{"ok":false,"reason":"no_expert_questions"},
+    "position":1,"unlocked":true,"unlockpolicy":"sequential_mastery","unlockreason":"first_subtopic","previoussubtopicid":null,"requiredlevel":"competent",
+    "previouscomplete":null,"previousband":null,"previousmeetsrequirement":null,"unlockedat":null}],
+  "subtopicunlockpolicy":"sequential_mastery","subtopicrequiredlevel":"competent","subtopicpolicyversion":2,"subtopicpolicyreason":null}],
+ "canmanageprogression":false}
+```
+`nextquestionid` is the first unanswered question in an unlocked subtopic.
+
+`next.json?mode=learn|improve|dailychallenge&topicid=&sectionid=&size=`
+```json
+{"ok":true,"mode":"learn","complete":false,"total":12,"lockedquestions":30,"blocked":false,"sessionid":"u@x_3f2a…",
+ "items":[{"questionid":"q41","componentid":"c9","sectionid":"s4","tutorialid":"tu1","topicid":"t1","position":41,"reason":"new","done":false}]}
+```
+Blocked: `{"ok":true,"mode":"learn","complete":false,"total":0,"items":[],"lockedquestions":30,"sessionid":null,"blocked":true,"blockedreason":"previous_subtopic_below_required_mastery","blockedsubtopicid":"s5","previoussubtopicid":"s4","requiredlevel":"competent","currentband":"beginner","recommendedmode":"improve","recommendedscope":{"scopetype":"subtopic","scopeid":"s4"}}`.
+
+**Sessions.** Every served list is a server-issued snapshot. Learn and Improve: next.json saves a `learningsession` row (id `<user>_<uuid>`: user, mode, scopetype, scopeid, `questionlist` = ordered question ids, algorithmversion `learn-v1` | `improve-v1`, policyversion, inputs {policy, requiredlevel, policyversion, policyreason, lockedquestions}, datecreated, expiresat = +7 days) and returns its id as `sessionid` (null when there are no items). Retention: usable 7 days, then kept 30 days after `expiresat` for diagnostics (answers keep the id), then deleted by `LearningEngine.purgeSessions`, which the computemastery event runs every 15 minutes (idempotent). Daily Challenge: the session is the stored set (`sessionid` = set id). `total` is the session's size; the app's "Question N of T" and the stop prompt's remaining count (T − completed) read it.
+
+`answer.json` (POST form) — the only writer of verified answers; synchronous: `ok` means stored.
+- Fields: `attemptid` (client retry key, 16–64 of `[A-Za-z0-9_-]`), `sessionid` (from next.json), `questionid`, `selectedoption` (A–F, an option the question has), `confidence` (noidea | notsure | mostlysure | confident), `hintlevel` (integer 0–3), `mode` (learn | dailychallenge | improve), `scopetype` + `scopeid` (learn and improve: `topic` + topic id or `subtopic` + section id; dailychallenge: none), optional consistency claims `topicid`, `tutorialid`, `sectionid`, `componentid`, optional `channel`.
+- Server validation (`LearningEngine.resolve`, shared with exposure.json), in order: mode supported; question in the learner's visible content (entity security as the topic service applies it; evaluation-reserved excluded); every claimed hierarchy value equals the canonical one; dailychallenge takes no scope, `sessionid` must be today's set id (an older set of the learner → `session_expired`) and the question in that set; learn/improve scope names the question's own topic or section; learn needs the subtopic unlocked, improve that scope's learn sequence complete; then the `learningsession` must exist (`unknown_session`), belong to this learner, mode and scope (`session_mismatch`), not be expired (`session_expired`) and contain the question (`not_in_session`); a learn answer also needs the question not yet answered in learn/dailychallenge (`already_answered`) and to be the session's first such question (`out_of_order`: no skipping ahead). Improve accepts only its selected questions, in any order. Exposure needs membership only (a later session question may be shown). Correctness, points, bonus and the stored hierarchy come from the server; the row stores `learningsession`.
+- Idempotent: the same `attemptid` again returns the stored row (`duplicate: true`) without re-validating (a retry after the challenge day rolled over still succeeds); the same `attemptid` with a different payload → 409 `attempt_conflict`.
+- `{ok:true, answerid, duplicate, iscorrect, mode, questionid, topicid, tutorialid, sectionid, componentid, position, scopetype, scopeid, hintlevel}` (topicid, componentid, position omitted on a duplicate).
+- Errors: 400 `missing_*` (incl. `missing_sessionid`) | `bad_attemptid` | `bad_selectedoption` | `bad_confidence` | `bad_hintlevel` | `bad_mode` | `bad_scopetype` | `scope_not_allowed`; 404 `unknown_question` | `unknown_scope` | `unknown_session`; 409 `hierarchy_mismatch` | `scope_mismatch` | `subtopic_locked` | `improve_locked` | `session_mismatch` | `session_expired` | `not_in_session` | `already_answered` | `out_of_order` | `not_in_daily_challenge` | `attempt_conflict`; 401 not signed in. A retry with the same attemptid must also repeat the sessionid.
+- The app then sends `chat_tutor_answer` with `context_answerid` for the tutor's feedback; `AdaptiveTutorialAnswerSkill` reads the stored row (same user and question) and writes no new answer.
+
+`exposure.json` (POST form: questionid, mode, sessionid, scopetype, scopeid, optional claims topicid, tutorialid, sectionid, componentid) → `{ok:true, mode, questionid, topicid, tutorialid, sectionid, componentid, position}`. Same validation and errors as answer.json; the stored topic, tutorial, section and position are the server's.
+
+`subtopicpolicy.json` — GET: `{ok, canmanage, topics:[{id, title, policy, requiredlevel, version, reason, subtopics:[{id, title, position}]}]}`; GET `?topicid=`: `{ok, canmanage, topic, versions:[{version, policy, requiredlevel, appliesto, user, datecreated}]}` newest first; POST `topicid, policy, requiredlevel, expectedversion` → `{ok, unchanged, topic}` (same policy + level as the current valid version → `unchanged:true`, no version). Errors: 403 `forbidden`, 400 `missing_topicid` | `bad_policy` | `missing_requiredlevel` | `bad_requiredlevel` | `missing_expectedversion` | `bad_expectedversion`, 404 `unknown_topic`, 409 `version_conflict` (`{currentversion, topic}`: reload and save again).
+
+`unlockbackfill.json` — POST, `training_manage`, optional `user`: records missing condition unlocks for every learner with answers or exposures (or one) → `{ok, learners, created}`; idempotent (a rerun creates 0, existing rows keep their date). GET → 405.
+
+**Servable content.** Before a session is started (learn, improve) or a Daily Challenge set is served, every item not yet done is checked against what `tutorial.json` can render (`LearningEngine.contentProblem`: non-blank question, option_a–option_d, correctoption a–f naming a non-blank option). Any failure → 409 `{error: content_unavailable, items:[{questionid, componentid, sectionid, tutorialid, topicid, problem}]}`, no session stored, and one open `questionflag` per question (id `contentunavailable_<question>`, reason `content_unavailable`, create-only) for administrators. The app never skips an item (that would break the shared order): the server's 409, or an item missing from the tutorial detail, fails the load with a recoverable message and Try again. `tools/validate_content.py` reports the same rule and is a required release check (exit 0).
+
+App contract: answers are awaited and carry the session's `sessionid`. The session keeps every attempt with its attemptid; advancing, finishing, opening the debrief and refreshing progress wait until all attempts are stored; a failed save blocks with Retry (same attemptid) or an explicit leave-without-saving; a permanent refusal (session out of date: expired, already answered elsewhere, out of order) offers Start again (a fresh next.json) instead of Retry. Exposure stays best effort. A notification that opens a question keeps Learn order (the question is not moved ahead); a question outside the session (already answered) is shown for its thread but its answer is not saved. Outbox entries are versioned (`v: 2` = carries `sessionid`); on replay an older entry is removed unsent (the server would refuse it) and it, like any replayed answer the server refuses for good, is counted (`testu.answerOutboxUnsubmitted`, a count only) and announced once: "One answer from an earlier session could not be submitted. Please answer that question again." No released build had the outbox (origin/main bundles predate it), so this migration only affects local/test installs.
+
+## Known limitations (tracked)
+
+- **Single application node.** Create-only writes (policy versions, unlock rows, Daily Challenge sets, content flags) are serialized by a JVM-local lock with realtime get-before-save. This is safe for the current one-Tomcat deployment only and must not be described as cluster-safe. Architecture item: before deploying more than one application node, replace the JVM lock with Elasticsearch atomic create (`op_type=create`) and distributed optimistic concurrency (`if_seq_no`/`if_primary_term` or versioned ids).
+- Session content is selected by next.json and rendered from `tutorial.json`; longer term, next.json could return the renderable question content itself.
+
+## Out of tonight's scope (explicit)
+
+Evaluation sessions and blueprints (only `evaluationreserved` is honoured), retention/forgetting decay, Skill-level mastery, admin UI for job roles and topic requirements (seed by data), per-user overrides.
+
+## Checks
+
+Boundary cases (server checks, fixed inputs, algorithm version dc-v0, identical output on repeat runs): fill order — reinforcement only in cooldown → `cooldown` relaxed and new ≤ maxNew; reinforcement short under the topic cap → `topiccap` relaxed with no new fill; reinforcement exhausted → new > maxNew with `newfill` + `newcap`; every served set has n items and new ≤ maxNew unless `newcap`; 0 learning-answered; 0 unanswered; exactly 8 recent attempts; exactly 25% (8 recent, 2 HCI → no remediation by (b); 12 recent, 3 HCI → remediation); 3 distinct unresolved HCI; resolution by confident unassisted correct; one eligible topic (cap not applied); pool so small both relaxation passes are used and recorded; evaluation-only answer stays new; question shown (exposure) but not submitted stays new; assignment_data_unavailable reason. App: singular and zero-count messages.
+
+- `tools/LearningEngineCheck.java` (run first by check_learning.sh): pure dc-v0 checks (interleave examples above, fill order F1–F3, remediation (a)/(b) boundaries, cooldown across modes, topic cap, Improve order) and each variable validated on its own: band boundaries, difficulty weights, correctness, confidence weights, hint penalties, latest-evidence selection, weighted aggregation, expert evidence, critical-skill flag (false, not available), level ranking, legacy attempts, Daily Challenge sizes, challenge date per timezone, resolve() scope/mode/hierarchy rules, sessions (missing/unknown/mismatched user, mode and scope/expired/not in session, learn already_answered and out_of_order, exposure of a later question, questions answered in DC meanwhile skipped, improve membership in any order, Daily Challenge set id / expired / unknown, startSession snapshot + no-items), subtopic progression (first always unlocked, open, completion, evaluation/improve/legacy not counting, DC counting, mastery level, expert evidence, DC excluding locked subtopics, learn topic scope + subtopic_locked, reads never record, recordUnlocks evidence + idempotent create-only, completing answer records, improve answer reaching the level records, open records nothing, blocked state + recommendation, started-and-met reports the condition, no relock after lower mastery, started subtopics, reorder, policy fallbacks incl. invalid → sequential_completion), content problems (blank question/option, bad or missing correct option, option_x form) and unavailable items with ids (done items ignored), retention cutoff (29 days kept, 31 purged).
+- Server checks also cover: answer.json and exposure.json acceptance and every rejection above (nothing stored on rejection), canonical hierarchy and mode/scope/hint persistence, retry duplicate and attempt_conflict, rows without mode not advancing learn, improve answers once unlocked, Daily Challenge day and stored date/timezone/version/created under a set, a changed, an invalid and an unset timezone, invalid size settings, invalid topic boundary pairs, learners unable to edit topic boundaries; sessions: sessionid issued and stored in order, answer/exposure rejections (missing/unknown session, mismatch, not in session, already answered, out of order, DC expired/unknown), row stores learningsession, improve not_in_session; subtopic policy: learner 403 on read and write, every save rejection (incl. missing/bad expectedversion), version n+1, unchanged re-save, stale expectedversion → version_conflict, 6 concurrent saves → exactly one version and 409s, history, audit, list, first/second subtopic states, 409 subtopic_locked on next/answer/exposure, learn topic scope, DC without locked new questions + stored progression context, evaluation and improve answers not unlocking, the completing answer recording the unlock at once, state.json and next.json creating no unlock rows, exposure recording an unrecorded unlock, backfill 403/405/idempotent/recreating, stricter version not relocking, mastery below level with blocked Learn + improve recommendation, improve answers reaching the level recording mastery_met, lower later mastery not relocking; content_unavailable (409 with ids and problem, no session stored, one create-only questionflag, content restored serves again); retention (a session expired 31 days ago purged by the event, 29 days ago kept). Strictest requirement across roles is checked in the required-level section. Authorized per-user overrides do not exist yet (out of scope).
+- Credentials: the check user gets a random password per run; admin credentials come only from `EME_USER` / `EME_PASSWORD` (no defaults, also in check_mastery.py and normalize_difficulty.py).
+- Deployment: `bin/sync-testu.sh` (server repo) copies the engine runtime files from `plugins/testu` into `webapp/`; `--check` fails on drift.
+- `tools/check_mastery.py`: v1 model recomputed from raw rows vs every stored tutormastery row (weights, confidence × hint, bands, topic override, legacy counters, topic rows, no extra rows) and, with `EME_CHECK_USER`, live state.json percent/band/expert evidence. Run by check_learning.sh with a topic override set.
+- `tools/validate_content.py` (read-only, any ES; required before release): unrenderable questions in tutorials (content_unavailable rule), draft/test topics, unpublished topics (reports that no status field exists), topics without valid titles, placeholder questions, non-canonical difficulty, topics without eligible questions, topics accidentally visible to learners.
+- `tools/check_learning.sh`: seeds a user's answers against local server and asserts state/next for: fresh user (learn from q1, improve locked), partial (resume at first unanswered even when a later one was answered in dailychallenge), evaluation answer does not advance learn, subtopic complete unlocks subtopic Improve only, priority order, bands with topic override, expert evidence, dailychallenge same set on second call.

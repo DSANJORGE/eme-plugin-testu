@@ -14,4 +14,6 @@
     <name><language id="en">Source page</language><language id="es">Página fuente</language></name>
   </property>
   <property id="skill" index="true" stored="true" editable="true" type="list" listid="skill"><name><language id="en">Skill</language><language id="es">Skill</language></name></property>
+  <!-- Learning engine v1: reserved for evaluations, never served by learn/improve/dailychallenge. -->
+  <property id="evaluationreserved" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Reserved for evaluation</language><language id="es">Reservada para evaluación</language></name></property>
 </properties>
