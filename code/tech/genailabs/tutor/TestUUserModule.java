@@ -390,7 +390,7 @@ public class TestUUserModule extends TestUBaseModule
 	{
 		MediaArchive archive = getMediaArchive(inReq);
 		String userid = inReq.getRequestParameter("userid");
-		userid = (userid != null) ? userid.trim().toLowerCase() : "";
+		userid = (userid != null) ? userid.trim() : "";
 
 		User currentUser = inReq.getUser();
 		if (currentUser != null && userid.equals(currentUser.getId()))
@@ -435,7 +435,7 @@ public class TestUUserModule extends TestUBaseModule
 	{
 		MediaArchive archive = getMediaArchive(inReq);
 		String userid = inReq.getRequestParameter("userid");
-		userid = (userid != null) ? userid.trim().toLowerCase() : "";
+		userid = (userid != null) ? userid.trim() : "";
 		String role = inReq.getRequestParameter("role");
 		role = (role != null) ? role.trim() : "";
 
@@ -485,7 +485,7 @@ public class TestUUserModule extends TestUBaseModule
 	{
 		MediaArchive archive = getMediaArchive(inReq);
 		String userid = inReq.getRequestParameter("userid");
-		userid = (userid != null) ? userid.trim().toLowerCase() : "";
+		userid = (userid != null) ? userid.trim() : "";
 		String team = inReq.getRequestParameter("team");
 		team = (team != null) ? team.trim() : "";
 
