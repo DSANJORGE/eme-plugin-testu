@@ -1,0 +1,8 @@
+<page>
+  <property name="eventname">TestU: daily reminder</property>
+  <property name="eventdescription">One push a day per learner at the moment they chose in the onboarding (learneronboarding.whenlearn), unless reminders are off</property>
+  <property name="enabled">true</property>
+  <property name="period">30m</property>
+  <property name="delay">3m</property>
+  <path-action name="Script.run"><script>/${catalogid}/events/scripts/testu/dailyreminder.groovy</script></path-action>
+</page>

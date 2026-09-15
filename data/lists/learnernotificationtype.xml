@@ -4,4 +4,5 @@
   <learnernotificationtype id="mention"><name><![CDATA[Mención]]></name></learnernotificationtype>
   <learnernotificationtype id="reaction"><name><![CDATA[Reacción a tu comentario]]></name></learnernotificationtype>
   <learnernotificationtype id="tutorreply"><name><![CDATA[Respuesta del tutor]]></name></learnernotificationtype>
+  <learnernotificationtype id="reminder"><name><![CDATA[Recordatorio diario]]></name></learnernotificationtype>
 </learnernotificationtypes>

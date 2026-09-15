@@ -1,7 +1,9 @@
 package tech.genailabs.tutor;
 
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Set;
+import java.util.TimeZone;
 import org.entermediadb.asset.MediaArchive;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
@@ -679,6 +681,9 @@ public class TestULearningModule extends TestUBaseModule
 				d.setValue("finished", now);
 			if ("true".equals(inReq.getRequestParameter("skipped")))
 				d.setValue("skipped", Boolean.TRUE);
+			String notify = param(inReq, "notify");
+			if (notify != null)
+				d.setValue("notify", Boolean.valueOf("true".equals(notify)));
 			String goals = param(inReq, "goals");
 			if (goals != null)
 				d.setValue("goals", goals.length() > 200 ? goals.substring(0, 200) : goals);
@@ -711,6 +716,67 @@ public class TestULearningModule extends TestUBaseModule
 		reply(inReq, out);
 	}
 
+	/** Periodic (catalog event, every 30 min): one push a day per learner at the moment they chose
+	 *  (learneronboarding.whenlearn), unless they turned reminders off (notify=false). shiftstart 07 · break 13 ·
+	 *  dayend 17 · random = an hour 08-17 drawn per learner per day. Fires in the hour after the target;
+	 *  `lastreminder` (yyyyMMdd) makes it once a day. Timezone: catalog setting testu.timezone, default
+	 *  America/Lima. Every day of the week: mine shifts run weekends too. Returns the number sent. */
+	public int dailyReminder(MediaArchive archive)
+	{
+		String tzid = archive.getCatalogSettingValue("testu.timezone");
+		Calendar cal = Calendar.getInstance(TimeZone.getTimeZone(tzid == null || tzid.isEmpty() ? "America/Lima" : tzid));
+		int hour = cal.get(Calendar.HOUR_OF_DAY);
+		String today = String.format("%04d%02d%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH));
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		String tutor = persona == null || persona.getName() == null ? "IRIS" : persona.getName();
+		Searcher ob = archive.getSearcher("learneronboarding");
+		Searcher ns = archive.getSearcher("learnernotification");
+		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
+		HitTracker rows = ob.query().all().search();
+		rows.enableBulkOperations();
+		int sent = 0;
+		for (Object hit : rows)
+		{
+			Data r = (Data) hit;
+			String user = r.get("user");
+			String when = r.get("whenlearn");
+			if (user == null || when == null || "false".equals(String.valueOf(r.getValue("notify"))) || today.equals(r.get("lastreminder")))
+				continue;
+			int target;
+			switch (when)
+			{
+				case "shiftstart": target = 7; break;
+				case "break": target = 13; break;
+				case "dayend": target = 17; break;
+				case "random": target = 8 + Math.abs((user + today).hashCode()) % 10; break;
+				default: continue;
+			}
+			if (hour != target)
+				continue;
+			Data u = archive.getCachedData("user", user);
+			boolean en = u != null && String.valueOf(u.get("language")).startsWith("en");
+			Data n = ns.createNewData();
+			n.setId(user + "_reminder_" + today);
+			n.setValue("user", user);
+			n.setValue("actor", "tutor");
+			n.setValue("actorname", tutor);
+			n.setValue("type", "reminder");
+			n.setValue("datecreated", new Date());
+			n.setValue("read", Boolean.FALSE);
+			n.setValue("text", en ? "Time to learn: today’s questions are waiting for you. A few minutes and you’re done."
+					: "Es tu momento de aprender: tus preguntas de hoy te esperan. Unos minutos y listo.");
+			ns.saveData(n, null);
+			Data row = (Data) ob.searchById(r.getId());
+			row.setValue("lastreminder", today);
+			ob.saveData(row, null);
+			social.push(archive, n);
+			notifyUser(user, "notifications", null);
+			sent++;
+		}
+		return sent;
+	}
+
 	private static JSONObject onboardingJson(Data d)
 	{
 		JSONObject o = new JSONObject();
@@ -719,6 +785,8 @@ public class TestULearningModule extends TestUBaseModule
 		o.put("finished", TestUTermsModule.iso(d.getValue("finished")));
 		o.put("skipped", Boolean.valueOf("true".equals(String.valueOf(d.getValue("skipped")))));
 		o.put("opens", TestUTermsModule.number(d.get("opens")));
+		// Absent = on: choosing a moment in the onboarding is the opt-in.
+		o.put("notify", Boolean.valueOf(!"false".equals(String.valueOf(d.getValue("notify")))));
 		o.put("goals", d.get("goals"));
 		o.put("whenlearn", d.get("whenlearn"));
 		o.put("sessiontotal", TestUTermsModule.number(d.get("sessiontotal")));

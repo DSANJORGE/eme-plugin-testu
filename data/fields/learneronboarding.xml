@@ -13,6 +13,8 @@
   <property id="skipped" index="true" stored="true" editable="false" type="boolean"><name><language id="en">Skipped</language><language id="es">Saltado</language></name></property>
   <property id="goals" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Goals (comma-separated)</language><language id="es">Objetivos</language></name></property>
   <property id="whenlearn" index="true" stored="true" editable="false" keyword="true"><name><language id="en">When they learn</language><language id="es">Cuándo aprende</language></name></property>
+  <property id="notify" index="true" stored="true" editable="false" type="boolean"><name><language id="en">Daily reminder on</language><language id="es">Recordatorio diario activo</language></name></property>
+  <property id="lastreminder" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Last reminder (yyyyMMdd)</language><language id="es">Último recordatorio</language></name></property>
   <property id="sessiontotal" index="true" stored="true" editable="false" type="number"><name><language id="en">First session · questions</language><language id="es">Primera sesión · preguntas</language></name></property>
   <property id="sessioncorrect" index="true" stored="true" editable="false" type="number"><name><language id="en">First session · correct</language><language id="es">Primera sesión · aciertos</language></name></property>
 </properties>
