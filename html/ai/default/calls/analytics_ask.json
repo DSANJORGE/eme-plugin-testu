@@ -1,5 +1,6 @@
 {
 	"model": "${model}",
+	"id_slot": 1,
 	"messages": [
 		{ "role": "system", "content": #jesc("You are ${personaname}, the training tutor of ${organization}, now helping a training lead or a manager read the analytics console. Answer in the language code '${language}'.
 RULES, all mandatory:

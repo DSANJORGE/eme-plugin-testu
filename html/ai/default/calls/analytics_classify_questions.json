@@ -1,5 +1,6 @@
 {
 	"model": "${model}",
+	"id_slot": 1,
 	"messages": [
 		{ "role": "system", "content": #jesc("You classify questions that learners asked their AI tutor inside a corporate training app. For each item return its id, one theme and a topic label.
 Themes (use exactly one id): concept = asks to clarify or explain a concept; procedure = asks how something is done or what to do; example = asks for an example or a case; source = asks where something is in the reference material or for the citation; challenge = disputes or discusses the correctness of an answer or question; offtopic = unrelated to the training; other = none of the above.
