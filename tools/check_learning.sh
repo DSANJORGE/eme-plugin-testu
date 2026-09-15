@@ -806,6 +806,16 @@ try:
     answer(target, True, "confident", "dailychallenge", datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2))
     d2 = must("dc", nxt(mode="dailychallenge"))
     ok("dc answered item reported done, same set", [i["questionid"] for i in d1["items"]] == [i["questionid"] for i in d2["items"]] and d2["items"][0]["done"] is True and not any(i["done"] for i in d2["items"][1:]), d2["items"][:2])
+    # modes keep their roles: a Learn or Improve answer to a question in today's set neither completes, shrinks nor
+    # replaces the item; the Daily Challenge answer still counts as answered for Learn (skipped there)
+    later = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=3)
+    for mode_, item in (("learn", next(i for i in d1["items"][1:] if i["bucket"] == "new")), ("improve", next(i for i in d1["items"][1:] if i["bucket"] == "reinforcement"))):
+        answer(item["questionid"], True, "confident", mode_, later)
+        d3 = must("dc", nxt(mode="dailychallenge"))
+        it = next((i for i in d3["items"] if i["questionid"] == item["questionid"]), None)
+        ok(f"dc item answered in {mode_} first: still pending, same set and total", it is not None and it["done"] is False and d3["sessionid"] == d1["sessionid"] and d3["total"] == d1["total"]
+           and [i["questionid"] for i in d3["items"]] == [i["questionid"] for i in d1["items"]] and sum(i["done"] for i in d3["items"]) == 1, (mode_, it, d3["total"]))
+    ok("dc answer counts as answered for Learn (skipped there)", target not in [i["questionid"] for i in must("learn after dc", nxt(mode="learn", topicid=T))["items"]], target)
 
     # ------------------------------------------------------------ 0 unanswered, small fresh pool: both relaxations
     delete_rows("topicrequirement", ["lcheck-r1", "lcheck-r2", "lcheck-r3"])

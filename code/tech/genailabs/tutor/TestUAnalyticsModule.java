@@ -140,7 +140,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		{
 			Data u = entry.getValue();
 			String id = entry.getKey();
-			boolean isLearner = !"admin".equals(id) && !"agent".equals(id) && !"false".equals(String.valueOf(u.get("enabled")));
+			boolean isLearner = countsAsPerson(id, u);
 			String t = u.get("team");
 			boolean inScope = (scope == null || (t != null && scope.contains(t))) && (teamFilter.isEmpty() || (t != null && teamFilter.equals(t)));
 			if (isLearner && inScope)
@@ -626,7 +626,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		{
 			Data u = entry.getValue();
 			String id = entry.getKey();
-			if (!"admin".equals(id) && !"agent".equals(id) && !"false".equals(String.valueOf(u.get("enabled"))))
+			if (countsAsPerson(id, u))
 			{
 				orgUsers.put(id, u);
 			}
@@ -2113,6 +2113,12 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	}
 
 	// ---------------- Helper Methods ----------------
+
+	/** An enabled account other than the system agent. Administrators count too: an administrator can also be a learner. */
+	static boolean countsAsPerson(String inId, Data inUser)
+	{
+		return !"agent".equals(inId) && !"false".equals(String.valueOf(inUser.get("enabled")));
+	}
 
 	private static int getInt(Data d, String field)
 	{

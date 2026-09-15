@@ -1562,7 +1562,8 @@ public class LearningEngine
 			boolean done = false;
 			for (Attempt a : l.attempts)
 			{
-				if (q.id.equals(a.questionid) && a.at != null && (created == null || !a.at.before(created)))
+				// only a Daily Challenge answer completes a Daily Challenge item (a Learn answer to the same question does not)
+				if (q.id.equals(a.questionid) && "dailychallenge".equals(a.mode) && a.at != null && (created == null || !a.at.before(created)))
 				{
 					done = true;
 					break;
