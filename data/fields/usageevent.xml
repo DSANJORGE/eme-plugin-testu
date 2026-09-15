@@ -12,6 +12,7 @@
   <property id="componentsection" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Section</language><language id="es">Subtema</language></name></property>
   <property id="entityquestion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Question</language><language id="es">Pregunta</language></name></property>
   <property id="rating" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Rating</language><language id="es">Valoración</language></name></property>
+  <property id="source" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Source</language><language id="es">Fuente</language></name></property>
   <property id="platform" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Platform</language><language id="es">Plataforma</language></name></property>
   <property id="appversion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">App version</language><language id="es">Versión</language></name></property>
   <property id="lat" index="true" stored="true" editable="false" type="number" datatype="double"><name><language id="en">Latitude (approx.)</language><language id="es">Latitud (aprox.)</language></name></property>

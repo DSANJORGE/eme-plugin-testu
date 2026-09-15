@@ -4,4 +4,6 @@
   <usageeventtype id="resume"><name><![CDATA[Vuelve a la app]]></name></usageeventtype>
   <usageeventtype id="pause"><name><![CDATA[Sale de la app]]></name></usageeventtype>
   <usageeventtype id="iris_rate"><name><![CDATA[Valora una respuesta del tutor]]></name></usageeventtype>
+  <usageeventtype id="source_open"><name><![CDATA[Abre una fuente]]></name></usageeventtype>
+  <usageeventtype id="session_leave"><name><![CDATA[Abandona una sesión]]></name></usageeventtype>
 </usageeventtypes>
