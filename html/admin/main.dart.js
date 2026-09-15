@@ -31842,7 +31842,8 @@ if(r!=null){s=A.aC(s.b)
 s=s==null?null:B.c.aa(s)
 q.m(0,r,s==null?0:s)}}return q},
 aUS(a){var s
-A:{if("training"===a){J.a($.z().a,"es")
+A:{if("tutor"===a){s=J.a($.z().a,"es")?"TUTORA":"TUTOR"
+break A}if("training"===a){J.a($.z().a,"es")
 s="INSTRUCTOR"
 break A}if("manager"===a){s="MANAGER"
 break A}if("orgadmin"===a){J.a($.z().a,"es")
