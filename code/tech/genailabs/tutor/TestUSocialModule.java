@@ -149,6 +149,7 @@ public class TestUSocialModule extends TestUBaseModule
 
 		List<String> filteredMentions = new ArrayList<>();
 		Searcher profileSearcher = archive.getSearcher("userprofile");
+		boolean askTutor = mentions.contains(TUTOR);
 		for (String uid : mentions)
 		{
 			User u = (um != null) ? um.getUser(uid) : null;
@@ -164,6 +165,8 @@ public class TestUSocialModule extends TestUBaseModule
 			}
 		}
 		mentions = filteredMentions;
+		if (askTutor)
+			mentions.add(TUTOR);
 
 		Data d = chats.createNewData();
 		d.setValue("channel", channel);
@@ -184,11 +187,13 @@ public class TestUSocialModule extends TestUBaseModule
 		sendNotification(archive, parentauthor, me, "reply", d, null);
 		for (String mid : mentions)
 		{
-			if (!mid.equals(parentauthor))
+			if (!mid.equals(parentauthor) && !mid.equals(TUTOR))
 			{
 				sendNotification(archive, mid, me, "mention", d, null);
 			}
 		}
+		if (askTutor)
+			tutorReply(archive, d);
 
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -459,6 +464,12 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 
 		out.sort((a, b) -> String.valueOf(a.get("name")).compareToIgnoreCase(String.valueOf(b.get("name"))));
+		// The tutor, first: @IRIS in a thread gets her reply and a notification to the author.
+		JSONObject tutor = new JSONObject();
+		tutor.put("id", TUTOR);
+		tutor.put("name", tutorName(archive));
+		tutor.put("role", TUTOR);
+		out.add(0, tutor);
 
 		JSONArray peopleArray = new JSONArray();
 		peopleArray.addAll(out);
@@ -628,6 +639,8 @@ public class TestUSocialModule extends TestUBaseModule
 
 		java.util.function.Function<String, User> userOf = uid -> userCache.computeIfAbsent(uid, k -> (um != null) ? um.getUser(k) : null);
 		java.util.function.Function<String, String> nameOf = uid -> {
+			if (TUTOR.equals(uid))
+				return tutorName(archive);
 			User u = userOf.apply(uid);
 			if (u == null)
 				return uid;
@@ -637,6 +650,8 @@ public class TestUSocialModule extends TestUBaseModule
 			return !n.isEmpty() ? n : uid;
 		};
 		java.util.function.Function<String, String> roleOf = uid -> roleCache.computeIfAbsent(uid, k -> {
+			if (TUTOR.equals(k))
+				return TUTOR;
 			Data p = (Data) profileSearcher.searchById(k);
 			return (p != null && p.get("settingsgroup") != null) ? p.get("settingsgroup") : "users";
 		});
@@ -821,6 +836,86 @@ public class TestUSocialModule extends TestUBaseModule
 		reply(inReq, resp);
 	}
 
+	/** The tutor's user id inside threads: a mentionable, never a real account. */
+	public static final String TUTOR = "tutor";
+
+	/** The org's tutor persona name (catalog setting tutorpersona, default iris). */
+	static String tutorName(MediaArchive archive)
+	{
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		return persona == null || persona.getName() == null ? "IRIS" : persona.getName();
+	}
+
+	/** @tutor in a thread comment: the LLM answers with the question in play as context (call template
+	 *  social_tutor_mention), the answer lands as a thread reply from TUTOR and the author gets a "reply"
+	 *  notification (push included). On its own thread: the comment POST must not wait 2-10 s on the model.
+	 *  A model failure leaves no reply — the comment stands for the humans on the thread. */
+	void tutorReply(final MediaArchive archive, final Data comment)
+	{
+		new Thread(() -> {
+			try
+			{
+				String channel = comment.get("channel");
+				Data q = channel.startsWith("q-") ? archive.getData("entityquestion", channel.substring(2)) : null;
+				StringBuilder ctxq = new StringBuilder();
+				if (q != null)
+				{
+					ctxq.append("Question: ").append(q.get("question")).append("\n");
+					for (String o : new String[] { "a", "b", "c", "d", "e", "f" })
+					{
+						String t = q.get("option_" + o);
+						if (t != null && !t.isEmpty())
+							ctxq.append(o).append(") ").append(t).append("\n");
+					}
+					ctxq.append("Correct option: ").append(q.get("correctoption")).append("\n");
+					if (q.get("rationale") != null)
+						ctxq.append("Rationale: ").append(q.get("rationale")).append("\n");
+				}
+				StringBuilder thread = new StringBuilder();
+				HitTracker rows = archive.query("chatterbox").exact("channel", channel).exact("functionname", "testu_social").sort("dateUp").search();
+				int n = 0;
+				for (Object o : rows)
+				{
+					Data m = (Data) o;
+					if (m.getId().equals(comment.getId()))
+						continue;
+					String text = m.get("message") == null ? "" : m.get("message").replaceAll("<[^>]*>", "");
+					thread.append(TUTOR.equals(m.get("user")) ? tutorName(archive) : "Colaborador").append(": ").append(text.length() > 300 ? text.substring(0, 300) : text).append("\n");
+					if (++n >= 12)
+						break;
+				}
+				org.entermediadb.ai.llm.BaseAgentContext ctx = new org.entermediadb.ai.llm.BaseAgentContext();
+				ctx.putContextValue("questioncontext", ctxq.toString());
+				ctx.putContextValue("thread", thread.toString());
+				ctx.putContextValue("comment", comment.get("message").replaceAll("<[^>]*>", ""));
+				java.util.Map<String, Object> out = (java.util.Map<String, Object>) archive.getLlmConnection("thinking").callStructure(ctx, "social_tutor_mention").getResponsePayload();
+				String answer = out == null || out.get("message") == null ? null : String.valueOf(out.get("message")).trim();
+				if (answer == null || answer.isEmpty())
+					return;
+				Searcher chats = archive.getSearcher("chatterbox");
+				Data r = chats.createNewData();
+				r.setValue("channel", channel);
+				r.setValue("user", TUTOR);
+				r.setValue("date", new Date());
+				r.setValue("message", answer);
+				r.setValue("messageplain", answer);
+				r.setValue("functionname", "testu_social");
+				r.setValue("moduleid", comment.get("moduleid"));
+				r.setValue("entityid", comment.get("entityid"));
+				// One level of nesting, like a human reply: under the top-level comment.
+				String parent = comment.get("replytoid");
+				r.setValue("replytoid", parent == null || parent.isEmpty() ? comment.getId() : parent);
+				archive.saveData("chatterbox", r);
+				sendNotification(archive, comment.get("user"), TUTOR, "reply", r, null);
+			}
+			catch (Throwable e)
+			{
+				org.apache.commons.logging.LogFactory.getLog(TestUSocialModule.class).error("testu social: tutor reply failed", e);
+			}
+		}, "testu-tutor-reply").start();
+	}
+
 	public void sendNotification(MediaArchive archive, String recipient, String actor, String type, Data msg, String id)
 	{
 		if (recipient == null || recipient.isEmpty() || recipient.equals(actor))
@@ -840,7 +935,7 @@ public class TestUSocialModule extends TestUBaseModule
 		String channel = msg.get("channel") != null ? msg.get("channel").toString() : "";
 		String qid = channel.startsWith("q-") ? channel.substring(2) : "";
 		String tid = tutorialOfChannel(archive, channel);
-		Data a = (Data) archive.getSearcher("user").searchById(actor);
+		Data a = TUTOR.equals(actor) ? null : (Data) archive.getSearcher("user").searchById(actor);
 		n.setValue("user", recipient);
 		n.setValue("actor", actor);
 		n.setValue("type", type);
@@ -864,7 +959,7 @@ public class TestUSocialModule extends TestUBaseModule
 			if (nameBuilder.length() > 0)
 				actorName = nameBuilder.toString();
 		}
-		n.setValue("actorname", actorName != null ? actorName : actor);
+		n.setValue("actorname", actorName != null ? actorName : TUTOR.equals(actor) ? tutorName(archive) : actor);
 
 		String text = (msg.get("message") != null) ? msg.get("message").toString() : "";
 		text = text.replaceAll("<[^>]*>", "").replaceAll("\\s+", " ").trim();

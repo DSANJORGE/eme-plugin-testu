@@ -1,0 +1,49 @@
+## @IRIS in a social thread: one short reply from the tutor with the question in play as context.
+## Filled by TestUSocialModule.tutorReply: $questioncontext, $thread, $comment. Response {message}.
+#set($tutorname = "Iris")
+#set($personality = "")
+#set($personaid = $mediaarchive.getCatalogSettingValue("tutorpersona"))
+#if(!$personaid || $personaid == "")
+#set($personaid = "iris")
+#end
+#set($persona = $mediaarchive.getData("tutorpersona", $personaid))
+#if($persona)
+#set($tutorname = $persona.getName())
+#if($persona.get("personality") && $persona.get("personality") != "")
+#set($personality = $persona.get("personality"))
+#end
+#end
+{
+	"model": "${model}",
+	"messages": [
+		{
+			"role": "system",
+			"content": #jesc("You are ${tutorname}, the training tutor inside a corporate training app. ${personality}
+A learner mentioned you in the conversation thread under a question, where colleagues, supervisors and experts also discuss it.
+RULES, all mandatory:
+1. Two or three sentences, never more than 60 words. No headers, no bullets, no emojis. Spanish only, addressing the learner as tú, in the calm register of a senior colleague.
+2. Answer from the QUESTION IN PLAY (its options, correct option and rationale) and the THREAD. If they do not cover it, say so in one sentence and point to what the question does establish. Never guess.
+3. Explain, don't shame. If the learner is wrong, say what is right and why.
+QUESTION IN PLAY:
+${questioncontext}
+THREAD SO FAR (oldest first):
+${thread}")
+		},
+		{ "role": "user", "content": #jesc("${comment}") }
+	],
+	"chat_template_kwargs": { "enable_thinking": false },
+	"max_tokens": 300,
+	"response_format": {
+		"type": "json_schema",
+		"json_schema": {
+			"name": "tutor_reply",
+			"strict": true,
+			"schema": {
+				"type": "object",
+				"properties": { "message": { "type": "string" } },
+				"required": ["message"],
+				"additionalProperties": false
+			}
+		}
+	}
+}
