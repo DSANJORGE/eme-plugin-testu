@@ -668,8 +668,13 @@ public class TestULearningModule extends TestUBaseModule
 				d.setValue("user", user.getId());
 			}
 			Date now = new Date();
-			if ("true".equals(inReq.getRequestParameter("started")) && d.getValue("started") == null)
-				d.setValue("started", now);
+			if ("true".equals(inReq.getRequestParameter("started")))
+			{
+				if (d.getValue("started") == null)
+					d.setValue("started", now);
+				// Every showing of the tour: the app re-shows an unfinished one up to its cap.
+				d.setValue("opens", Integer.valueOf(LearningEngine.intOr(d.get("opens"), 0) + 1));
+			}
 			if ("true".equals(inReq.getRequestParameter("finished")) && d.getValue("finished") == null)
 				d.setValue("finished", now);
 			if ("true".equals(inReq.getRequestParameter("skipped")))
@@ -713,6 +718,7 @@ public class TestULearningModule extends TestUBaseModule
 		o.put("started", TestUTermsModule.iso(d.getValue("started")));
 		o.put("finished", TestUTermsModule.iso(d.getValue("finished")));
 		o.put("skipped", Boolean.valueOf("true".equals(String.valueOf(d.getValue("skipped")))));
+		o.put("opens", TestUTermsModule.number(d.get("opens")));
 		o.put("goals", d.get("goals"));
 		o.put("whenlearn", d.get("whenlearn"));
 		o.put("sessiontotal", TestUTermsModule.number(d.get("sessiontotal")));
