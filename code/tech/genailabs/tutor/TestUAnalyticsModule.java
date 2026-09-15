@@ -773,9 +773,17 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	 */
 	public void loadForecast(WebPageRequest inReq)
 	{
+		JSONObject resp = forecast(inReq);
+		if (resp != null)
+			reply(inReq, resp);
+	}
+
+	/** The Previsión screen's data, also given to the console tutor as facts. Null without loaded analytics. */
+	private JSONObject forecast(WebPageRequest inReq)
+	{
 		Map<String, Object> a = (Map<String, Object>) inReq.getPageValue("analytics");
 		if (a == null)
-			return;
+			return null;
 		MediaArchive archive = getMediaArchive(inReq);
 		Set<String> users = ((Map<String, Data>) a.get("users")).keySet();
 		String topicFilter = (String) a.get("topicFilter");
@@ -849,7 +857,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("people", users.size());
 		resp.put("overall", forecastJson(overallShares, days));
 		resp.put("topics", topicOut);
-		reply(inReq, resp);
+		return resp;
 	}
 
 	/** Forecast.of as JSON: history [[yyyy-MM-dd, share]], projection [[daysAhead, value, low, high]]. */
@@ -899,9 +907,17 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	 */
 	public void loadEngagement(WebPageRequest inReq)
 	{
+		JSONObject resp = engagement(inReq);
+		if (resp != null)
+			reply(inReq, resp);
+	}
+
+	/** The Actividad screen's data, also given to the console tutor as facts. Null without loaded analytics. */
+	private JSONObject engagement(WebPageRequest inReq)
+	{
 		Map<String, Object> a = (Map<String, Object>) inReq.getPageValue("analytics");
 		if (a == null)
-			return;
+			return null;
 		MediaArchive archive = getMediaArchive(inReq);
 		Date from = (Date) a.get("from");
 		Date to = (Date) a.get("to");
@@ -1076,7 +1092,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("modes", modes);
 		resp.put("platforms", platformOut);
 		resp.put("social", social);
-		reply(inReq, resp);
+		return resp;
 	}
 
 	public void loadActivity(WebPageRequest inReq)
@@ -1471,6 +1487,20 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		Map<String, String> topics = (Map<String, String>) a.get("topics");
 		List<Data> tq = (List<Data>) a.get("tq");
 
+		// Dates first: without "today" and the period, "¿cuántos activos hay hoy?" got "no tengo datos" (2026-09-14).
+		SimpleDateFormat ymd = new SimpleDateFormat("yyyy-MM-dd");
+		addFactHelper(addFact, base, "Fecha de hoy", ymd.format(new Date()), "overview", Collections.emptyMap(), "stat");
+		String topicName = topic.isEmpty() ? "todos los temas" : topics.getOrDefault(topic, topic);
+		Data teamData = team.isEmpty() ? null : allteams.get(team);
+		addFactHelper(addFact, base, "Periodo mostrado en la consola (desde, hasta inclusive) y filtros (tema, equipo)", a.get("fromDay") + " a " + a.get("toDayInclusive") + (period.isEmpty() ? "" : " (" + period + ")") + "; tema: " + topicName + "; equipo: "
+			+ (team.isEmpty() ? "todos los equipos" : teamData != null ? teamData.getName() : team), "overview", Collections.emptyMap(), "stat");
+		for (Map<String, Object> s : series)
+		{
+			Map<String, Object> dVal = new HashMap<>(s);
+			dVal.remove("day");
+			addFactHelper(addFact, base, "Día " + s.get("day") + ": personas activas, respuestas, minutos, sesiones, conceptos erróneos, preguntas al tutor", dVal, "activity", Collections.emptyMap(), "stat");
+		}
+
 		addFactHelper(addFact, base, "Personas en el alcance", cohort.get("total"), "overview", Collections.emptyMap(), "stat");
 		addFactHelper(addFact, base, "Personas que han respondido alguna vez", cohort.get("activated"), "overview", Collections.emptyMap(), "stat");
 		addFactHelper(addFact, base, "Personas activas en los últimos 7 días", cohort.get("active7d"), "overview", Collections.emptyMap(), "stat");
@@ -1505,8 +1535,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		List<Map<String, Object>> sortedSections = new ArrayList<>(sectionStats);
 		sortedSections.sort((s1, s2) -> Integer.compare((Integer) s2.get("beginners"), (Integer) s1.get("beginners")));
-		int secLimit = Math.min(15, sortedSections.size());
-		for (int k = 0; k < secLimit; k++)
+		for (int k = 0; k < sortedSections.size(); k++)
 		{
 			Map<String, Object> s = sortedSections.get(k);
 			Map<String, Object> sVal = new HashMap<>();
@@ -1546,8 +1575,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			addFactHelper(addFact, base, "Mediana de la organización: cuota de activas 7 días y de expertos (anónima)", medVal, "overview", Collections.emptyMap(), "stat");
 		}
 
-		int inactLimit = Math.min(20, inactive.size());
-		for (int k = 0; k < inactLimit; k++)
+		for (int k = 0; k < inactive.size(); k++)
 		{
 			Map<String, Object> p = inactive.get(k);
 			String pTeam = (String) p.get("team");
@@ -1576,8 +1604,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				}
 			}
 		}
-		int riskLimit = Math.min(15, atRisk.size());
-		for (int k = 0; k < riskLimit; k++)
+		for (int k = 0; k < atRisk.size(); k++)
 		{
 			Map<String, Object> item = atRisk.get(k);
 			Data u = (Data) item.get("user");
@@ -1585,6 +1612,82 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			String lvl = levelByUser.get(u.getId());
 			addFactHelper(addFact, base, "En riesgo: " + formatUserName(u), "nivel " + (lvl != null ? lvl : "sin empezar") + ", " + pu.get("cw") + " conceptos erróneos en " + pu.get("attempts")
 				+ " intentos", "person", Collections.singletonMap("user", u.getId()), "inactive");
+		}
+
+		// Every person in scope (the Colaboradores screen), with their band per topic.
+		// ponytail: capped at 150 people to fit llamat's 30k context; group by team beyond that.
+		Map<String, Map<String, Map<String, Integer>>> perUserTopicAll = (Map<String, Map<String, Map<String, Integer>>>) a.get("perUserTopic");
+		Map<String, Map<String, String>> bandByUserTopic = (Map<String, Map<String, String>>) a.get("bandByUserTopic");
+		int peopleCount = 0;
+		for (Data u : users.values())
+		{
+			if (++peopleCount > 150)
+				break;
+			Map<String, Object> pu = perUser.get(u.getId());
+			Data tData = u.get("team") != null ? allteams.get(u.get("team")) : null;
+			Date last = pu != null ? (Date) pu.get("last") : null;
+			StringBuilder desc = new StringBuilder();
+			desc.append("equipo ").append(tData != null ? tData.getName() : "sin equipo");
+			desc.append(", nivel ").append(levelByUser.getOrDefault(u.getId(), "sin empezar"));
+			desc.append(", ").append(pu != null ? pu.get("answered") : 0).append(" respondidas, ").append(pu != null ? pu.get("mastered") : 0).append(" dominadas, ")
+				.append(pu != null ? pu.get("cw") : 0).append(" conceptos erróneos, última actividad ").append(last != null ? ymd.format(last) : "nunca");
+			Map<String, Map<String, Integer>> byTopic = perUserTopicAll.get(u.getId());
+			if (byTopic != null)
+			{
+				for (Map.Entry<String, Map<String, Integer>> e : byTopic.entrySet())
+				{
+					String band = bandOf(bandByUserTopic, u.getId(), e.getKey());
+					desc.append("; «").append(topics.get(e.getKey())).append("»: ").append(band != null ? band : "sin empezar").append(", ").append(e.getValue().get("mastered")).append(" de ")
+						.append(e.getValue().get("answered")).append(" dominadas");
+				}
+			}
+			addFactHelper(addFact, base, "Persona: " + formatUserName(u), desc.toString(), "person", Collections.singletonMap("user", u.getId()), "stat");
+		}
+
+		// The questions people asked the tutor in the period (the Conversaciones screen), newest first.
+		// ponytail: last 40; a summary per section is already above.
+		List<Data> recentQs = new ArrayList<>(tq);
+		recentQs.sort((x, y) -> String.valueOf(y.get("datecreated")).compareTo(String.valueOf(x.get("datecreated"))));
+		Map<String, String> sectionNames = (Map<String, String>) a.get("sections");
+		for (int k = 0; k < Math.min(40, recentQs.size()); k++)
+		{
+			Data r = recentQs.get(k);
+			Data u = users.get(r.get("user"));
+			String when = String.valueOf(r.get("datecreated"));
+			String q = r.get("query") != null ? r.get("query") : "";
+			addFactHelper(addFact, base, "Pregunta al tutor de " + (u != null ? formatUserName(u) : r.get("user")) + " el " + when.substring(0, Math.min(10, when.length())) + " sobre «"
+				+ sectionNames.getOrDefault(r.get("componentsection"), "sin subtema") + "»", (q.length() > 200 ? q.substring(0, 200) + "…" : q) + " (respondida: " + r.get("replied") + ", con fuente: " + r.get("cited")
+					+ (r.get("rating") != null ? ", valoración: " + r.get("rating") : "") + ")", "activity", Collections.singletonMap("user", r.get("user")), "iris");
+		}
+
+		// The Previsión screen: share of people at competent or expert per topic, and when the target is reached.
+		JSONObject fc = forecast(inReq);
+		if (fc != null)
+		{
+			List<Object> fcTopics = new ArrayList<>((List<Object>) fc.get("topics"));
+			fcTopics.add(0, fc.get("overall"));
+			for (Object o : fcTopics)
+			{
+				JSONObject t = (JSONObject) o;
+				Map<String, Object> fVal = new HashMap<>();
+				fVal.put("hoy", pct((Double) t.get("current")));
+				fVal.put("meta", pct((Double) fc.get("target")));
+				fVal.put("estado", t.get("status"));
+				fVal.put("diasHastaLaMeta", t.get("eta"));
+				fVal.put("rangoDias", t.get("etaEarly") + "-" + t.get("etaLate"));
+				addFactHelper(addFact, base, "Previsión " + (t.get("name") != null ? "del tema «" + t.get("name") + "»" : "global") + ": cuota de personas competentes o expertas hoy, meta, estado, días hasta la meta", fVal, "forecast",
+					t.get("id") != null ? Collections.singletonMap("entitytopic", t.get("id")) : Collections.emptyMap(), "stat");
+			}
+		}
+
+		// The Actividad screen: who is in the app right now, learning modes, platforms and social activity.
+		JSONObject eng = engagement(inReq);
+		if (eng != null)
+		{
+			addFactHelper(addFact, base, "Personas usando la app ahora mismo (últimos 5 minutos)", eng.get("live"), "activity", Collections.emptyMap(), "stat");
+			addFactHelper(addFact, base, "Modos de aprendizaje en el periodo: respuestas y personas por modo", eng.get("modes"), "activity", Collections.emptyMap(), "stat");
+			addFactHelper(addFact, base, "Plataformas (dispositivos) en el periodo", eng.get("platforms"), "activity", Collections.emptyMap(), "stat");
+			addFactHelper(addFact, base, "Actividad social en el periodo: comentarios, comentaristas, reacciones, avisos, útil, no útil", eng.get("social"), "activity", Collections.emptyMap(), "stat");
 		}
 
 		Map<String, Object> irisStats = new HashMap<>();
@@ -1607,8 +1710,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		List<Map<String, Object>> irisSecs = (List<Map<String, Object>>) iris.get("sections");
 		if (irisSecs != null)
 		{
-			int secLim = Math.min(10, irisSecs.size());
-			for (int k = 0; k < secLim; k++)
+			for (int k = 0; k < irisSecs.size(); k++)
 			{
 				Map<String, Object> s = irisSecs.get(k);
 				addFactHelper(addFact, base, "Preguntas al tutor sobre «" + s.get("name") + "»", s.get("questions"), "activity", Collections.emptyMap(), "iris");
@@ -1618,8 +1720,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		List<Map<String, Object>> labels = (List<Map<String, Object>>) iris.get("labels");
 		if (labels != null)
 		{
-			int labelLim = Math.min(20, labels.size());
-			for (int k = 0; k < labelLim; k++)
+			for (int k = 0; k < labels.size(); k++)
 			{
 				Map<String, Object> l = labels.get(k);
 				addFactHelper(addFact, base, "Sobre qué preguntan (etiqueta): «" + l.get("label") + "»", l.get("count"), "activity", Collections.emptyMap(), "iris");
