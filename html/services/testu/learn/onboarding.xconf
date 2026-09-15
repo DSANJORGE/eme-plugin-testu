@@ -1,0 +1,5 @@
+<page>
+  <path-action name="TestUTeamModule.loadScope"/>
+  <path-action name="TestULearningModule.onboarding" allowduplicates="true"/>
+  <permission name="view"><user/></permission>
+</page>

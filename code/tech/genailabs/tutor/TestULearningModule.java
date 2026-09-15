@@ -1,12 +1,15 @@
 package tech.genailabs.tutor;
 
 import java.util.Date;
+import java.util.Set;
 import org.entermediadb.asset.MediaArchive;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.openedit.Data;
 import org.openedit.WebPageRequest;
 import org.openedit.data.Searcher;
+import org.openedit.hittracker.HitTracker;
+import org.openedit.profile.UserProfile;
 import org.openedit.users.User;
 
 /** services/testu/learn/{state,next,exposure,answer,subtopicpolicy,unlockbackfill}.json -- thin wrappers over LearningEngine for the signed-in user. */
@@ -596,4 +599,114 @@ public class TestULearningModule extends TestUBaseModule
 		String v = inReq.getRequestParameter(inName);
 		return v == null || v.trim().isEmpty() ? null : v.trim();
 	}
+
+	/**
+	 * services/testu/learn/onboarding.json -- the learner's first-run onboarding row (learneronboarding, id = user id).
+	 * GET: {ok, started, finished, skipped, goals, whenlearn, sessiontotal, sessioncorrect} (all null before the first POST).
+	 * POST any of started=true | finished=true | skipped=true | goals=a,b | whenlearn=x | sessiontotal=n&sessioncorrect=n: upserts.
+	 * GET report=true (personas_view or analytics_view, teams in scope): {ok, rows:[...]} for the console.
+	 */
+	public void onboarding(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+			return;
+		MediaArchive archive = getMediaArchive(inReq);
+		Searcher s = archive.getSearcher("learneronboarding");
+
+		if ("true".equals(inReq.getRequestParameter("report")))
+		{
+			UserProfile p = inReq.getUserProfile();
+			if (p == null || !(p.hasPermission("personas_view") || p.hasPermission("analytics_view")))
+			{
+				fail(inReq, 403, "forbidden");
+				return;
+			}
+			Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
+			JSONArray rows = new JSONArray();
+			HitTracker hits = s.query().all().search();
+			if (hits != null)
+			{
+				hits.enableBulkOperations();
+				for (Object hit : hits)
+				{
+					Data r = (Data) hit;
+					if (scope != null)
+					{
+						Data u = archive.getCachedData("user", r.get("user"));
+						if (u == null || !scope.contains(u.get("team")))
+							continue;
+					}
+					rows.add(onboardingJson(r));
+				}
+			}
+			JSONObject out = new JSONObject();
+			out.put("ok", Boolean.TRUE);
+			out.put("rows", rows);
+			reply(inReq, out);
+			return;
+		}
+
+		Data d = (Data) s.searchById(user.getId());
+		if (inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod()))
+		{
+			if (d == null)
+			{
+				d = s.createNewData();
+				d.setId(user.getId());
+				d.setValue("user", user.getId());
+			}
+			Date now = new Date();
+			if ("true".equals(inReq.getRequestParameter("started")) && d.getValue("started") == null)
+				d.setValue("started", now);
+			if ("true".equals(inReq.getRequestParameter("finished")) && d.getValue("finished") == null)
+				d.setValue("finished", now);
+			if ("true".equals(inReq.getRequestParameter("skipped")))
+				d.setValue("skipped", Boolean.TRUE);
+			String goals = param(inReq, "goals");
+			if (goals != null)
+				d.setValue("goals", goals.length() > 200 ? goals.substring(0, 200) : goals);
+			String when = param(inReq, "whenlearn");
+			if (when != null)
+				d.setValue("whenlearn", when.length() > 40 ? when.substring(0, 40) : when);
+			String total = param(inReq, "sessiontotal");
+			String correct = param(inReq, "sessioncorrect");
+			if (total != null && correct != null && d.getValue("sessiontotal") == null)
+			{
+				try
+				{
+					d.setValue("sessiontotal", Integer.valueOf(total));
+					d.setValue("sessioncorrect", Integer.valueOf(correct));
+				}
+				catch (NumberFormatException e)
+				{
+					fail(inReq, 400, "bad_session");
+					return;
+				}
+			}
+			s.saveData(d, user);
+		}
+		JSONObject out = d == null ? new JSONObject() : onboardingJson(d);
+		out.put("ok", Boolean.TRUE);
+		// The tutor's own welcome line, so the first screen speaks in the organisation's voice.
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		out.put("greeting", persona == null ? null : persona.get("greeting"));
+		reply(inReq, out);
+	}
+
+	private static JSONObject onboardingJson(Data d)
+	{
+		JSONObject o = new JSONObject();
+		o.put("user", d.get("user"));
+		o.put("started", TestUTermsModule.iso(d.getValue("started")));
+		o.put("finished", TestUTermsModule.iso(d.getValue("finished")));
+		o.put("skipped", Boolean.valueOf("true".equals(String.valueOf(d.getValue("skipped")))));
+		o.put("goals", d.get("goals"));
+		o.put("whenlearn", d.get("whenlearn"));
+		o.put("sessiontotal", TestUTermsModule.number(d.get("sessiontotal")));
+		o.put("sessioncorrect", TestUTermsModule.number(d.get("sessioncorrect")));
+		return o;
+	}
+
 }
