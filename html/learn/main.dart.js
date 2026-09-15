@@ -100107,7 +100107,7 @@ t.X.a(A.T(a).c.h(0,A.ag(t.Q))).toString
 s=A.aP(a,B.aH,t.w).w
 r=$.M()
 q=J.b(r.a,i)?"FOTO DE PERFIL":"PROFILE PHOTO"
-p=J.b(r.a,i)?"Tu foto se queda en este tel\xe9fono: TestU nunca la sube. Quitar una aqu\xed no la borra de tu carrete.":"Your photo stays on this phone \u2014 TestU never uploads it. Removing one here leaves it in your camera roll."
+p=J.b(r.a,i)?"Tu foto se guarda en tu cuenta de TestU para que aparezca tambi\xe9n en tus otros dispositivos. Solo la ves t\xfa. Quitarla aqu\xed no la borra de tu carrete.":"Your photo is saved to your TestU account, so it shows on your other devices too. Only you see it. Removing it here leaves it in your camera roll."
 o=t.p
 p=A.c([new A.Ba(A.c([new A.AG(q,j),B.a2V,B.bt,new A.a28(p,j)],o),j)],o)
 q=J.b(r.a,i)?"IDIOMA":"LANGUAGE"
