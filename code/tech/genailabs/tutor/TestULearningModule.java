@@ -102,6 +102,17 @@ public class TestULearningModule extends TestUBaseModule
 				return;
 			}
 			JSONObject learn = LearningEngine.learnNext(topic, section, learner, unlocks);
+			// Optional cap (the onboarding's first session asks for 3); the engine's order is kept.
+			String sizeParam = param(inReq, "size");
+			JSONArray learnItems = (JSONArray) learn.get("items");
+			if (sizeParam != null && learnItems != null)
+			{
+				int cap = Math.max(1, Math.min(100, LearningEngine.intOr(sizeParam, learnItems.size())));
+				while (learnItems.size() > cap)
+				{
+					learnItems.remove(learnItems.size() - 1);
+				}
+			}
 			if (!contentUnavailable(inReq, engine, user, content, learn))
 			{
 				reply(inReq, engine.startSession(user.getId(), scopetype, scopeid, topic, learn));
