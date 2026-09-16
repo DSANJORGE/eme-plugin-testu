@@ -17,6 +17,8 @@ ${facts}") },
 		{ "role": "user", "content": #jesc("Previous turns (JSON, may be empty): ${history}
 Question: ${question}") }
 	],
+	"max_tokens": 1024,
+	"chat_template_kwargs": { "enable_thinking": false },
 	"response_format": { "type": "json_schema", "json_schema": { "name": "analyst", "strict": true, "schema": {
 		"type": "object", "properties": {
 			"answer": { "type": "string" },
