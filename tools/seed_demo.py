@@ -675,6 +675,7 @@ def build(topics, tutorials, by_topic, questions, cluster):
 
     # ---- reports and corrections: open ones recent, some already fixed with a change log
     flag_qs = random.sample(thread_qs, min(len(thread_qs), 14)) + random.sample([q for q, _ in popular[len(thread_qs):]], min(10, max(0, len(popular) - len(thread_qs))))
+    random.shuffle(flag_qs)  # so corrected reports (with their change log) also land on questions that show in the inbox
     for i, q in enumerate(flag_qs):
         qd, answered = questions[q], channels[q]
         s = answered[0][3]
