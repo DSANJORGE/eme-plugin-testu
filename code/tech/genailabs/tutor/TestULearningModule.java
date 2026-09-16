@@ -26,7 +26,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
 		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
-		Data urec = freshUser(getMediaArchive(inReq), user.getId());
+		Data urec = freshUser(getMediaArchive(inReq), user);
 		LearningEngine.Learner learner = engine.loadLearner(user.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
 		engine.applyProfiles(content, learner);
 		String topicid = param(inReq, "topicid");
@@ -69,7 +69,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
 		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
-		Data urec = freshUser(getMediaArchive(inReq), user.getId());
+		Data urec = freshUser(getMediaArchive(inReq), user);
 		LearningEngine.Learner learner = engine.loadLearner(user.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
 		engine.applyProfiles(content, learner);
 		if ("dailychallenge".equals(mode))
@@ -538,7 +538,7 @@ public class TestULearningModule extends TestUBaseModule
 	private LearningEngine.Resolved resolve(WebPageRequest inReq, LearningEngine inEngine, User inUser, boolean inAnswer)
 	{
 		LearningEngine.Content content = inEngine.loadContent(visibleTopics(inReq));
-		Data urec = freshUser(getMediaArchive(inReq), inUser.getId());
+		Data urec = freshUser(getMediaArchive(inReq), inUser);
 		LearningEngine.Learner learner = inEngine.loadLearner(inUser.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
 		inEngine.applyProfiles(content, learner);
 		java.util.Map<String, String> claimed = new java.util.HashMap<>();

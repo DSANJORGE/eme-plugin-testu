@@ -8,9 +8,15 @@ import groovy.json.JsonOutput
 // documented fallback classes instead, which do resolve and have the same addProperties(Row,Data) shape.
 
 // Only these headers may reach the user table; BaseImporter would auto-create a field for anything else.
+// The xconf gate is personas_operate (create/update people); the primaryjobrole / jobrole columns are a
+// personas_manage write (same permission as setprofiles.json), so a row carrying either column fails with
+// profiles_need_manage unless the actor has it. Applied assignments are audited as jobprofile.assign,
+// same action and before/after shape as TestUProfileModule.setProfiles, after the import commits.
 class UsersImporter extends BaseImporter {
   static final ALLOWED = ["id", "email", "firstName", "lastName", "team", "primaryjobrole", "jobrole"] as Set
   int count = 0
+  boolean canmanage = false
+  List assigned = []
   protected void addProperties(Row inRow, Data inData) {
     List names = inRow.getHeader().getHeaderNames()
     for (int i = 0; i < names.size(); i++) {
@@ -26,6 +32,8 @@ class UsersImporter extends BaseImporter {
     String team = inRow.get("team")
     if (team && getMediaArchive().getCachedData("team", team) == null) throw new IllegalArgumentException("unknown team: " + team)
     // Job profiles: primaryjobrole (one) and jobrole (a|b|c), each an id or a name of the jobrole list; primary is added to jobrole.
+    boolean wantsprofiles = ((inRow.get("primaryjobrole") ?: "") as String).trim() || ((inRow.get("jobrole") ?: "") as String).trim()
+    if (wantsprofiles && !canmanage) throw new IllegalArgumentException("profiles_need_manage")
     def resolve = { String v ->
       String s = (v ?: "").trim()
       if (!s) return null
@@ -45,6 +53,7 @@ class UsersImporter extends BaseImporter {
     inData.setValue("password", UUID.randomUUID().toString())
     inData.setValue("primaryjobrole", primary)
     inData.setValue("jobrole", roles ? roles : null)
+    if (primary || roles) assigned << [id: inData.getId(), primary: primary, jobroles: roles]
     count++
   }
 }
@@ -53,8 +62,15 @@ imp.setModuleManager(moduleManager)
 imp.setContext(context)
 imp.setLog(log)
 imp.setMakeId(false)
+imp.canmanage = context.getUserProfile() != null && context.getUserProfile().hasPermission("personas_manage")
 try {
   imp.importData()
+  // After the commit: importData() saves nothing when any row throws, so an audit row never outlives a failed import.
+  def profilemodule = moduleManager.getBean("TestUProfileModule")
+  for (a in imp.assigned) {
+    profilemodule.audit(context, imp.getMediaArchive(), "jobprofile.assign", "user", a.id,
+      [primaryjobrole: null, jobroles: []], [primaryjobrole: a.primary, jobroles: a.jobroles])
+  }
   context.putPageValue("importedcount", imp.count)
 } catch (Exception ex) {
   // ponytail: importData() throws before any row is saved (BaseImporter buffers Data objects and only

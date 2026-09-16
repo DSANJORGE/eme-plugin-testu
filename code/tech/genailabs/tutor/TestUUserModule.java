@@ -103,7 +103,7 @@ public class TestUUserModule extends TestUBaseModule
 			userObj.put("email", u.get("email"));
 			userObj.put("firstName", u.get("firstName"));
 			userObj.put("lastName", u.get("lastName"));
-			Data urec = freshUser(archive, u.getId());
+			Data urec = freshUser(archive, u);
 			userObj.put("primaryjobrole", LearningEngine.primaryJobroleOf(urec));
 			userObj.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(urec)));
 			String avatar = avatarVersion(avatarFile(archive, u.getId()));

@@ -79,14 +79,16 @@ public class TestUBaseModule extends BaseMediaModule
 		s.saveData(e, actor);
 	}
 
-	/** The user's stored record (fresh read by id), or null. Session User objects are cached at login, so profile assignments made afterwards are only visible here. */
-	public Data freshUser(MediaArchive inArchive, String inUserId)
+	/** The user's stored record (fresh read by id), falling back to inUser when the lookup misses (deleted mid-request, index lag) so callers never
+	 *  get null for a signed-in user. Session User objects are cached at login, so profile assignments made afterwards are only visible here. */
+	public Data freshUser(MediaArchive inArchive, User inUser)
 	{
-		if (inUserId == null || inUserId.isEmpty())
+		if (inUser == null || inUser.getId() == null || inUser.getId().isEmpty())
 		{
-			return null;
+			return (Data) inUser;
 		}
-		return (Data) inArchive.getSearcher("user").searchById(inUserId);
+		Data stored = (Data) inArchive.getSearcher("user").searchById(inUser.getId());
+		return stored == null ? (Data) inUser : stored;
 	}
 
 	/**

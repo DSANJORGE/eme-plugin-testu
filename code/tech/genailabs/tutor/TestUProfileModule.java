@@ -62,6 +62,11 @@ public class TestUProfileModule extends TestUBaseModule
 			fail(inReq, 400, "missing_name");
 			return;
 		}
+		if (name.length() > 120)
+		{
+			fail(inReq, 400, "bad_name");
+			return;
+		}
 		Object parsed = JSONValue.parse(inReq.getRequestParameter("rows") == null ? "[]" : inReq.getRequestParameter("rows"));
 		if (!(parsed instanceof List))
 		{
@@ -121,6 +126,7 @@ public class TestUProfileModule extends TestUBaseModule
 		}
 		Searcher list = archive.getSearcher("jobrole");
 		JSONObject before = null;
+		JSONObject after = null;
 		synchronized (LOCK)
 		{
 			Data p = id.isEmpty() ? null : (Data) list.searchById(id);
@@ -179,8 +185,10 @@ public class TestUProfileModule extends TestUBaseModule
 					req.delete(d, inReq.getUser());
 				}
 			}
+			// Built from the row we just saved, still under the lock. Re-reading it after the block could come back null
+			// when a concurrent delete wins the race, and the audit "after" payload must not NPE the request.
+			after = profileJson(archive, content, p, memberCounts(archive));
 		}
-		JSONObject after = profileJson(archive, content, (Data) list.searchById(id), memberCounts(archive));
 		audit(inReq, archive, "jobprofile.save", "jobrole", id, before, after);
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -255,7 +263,7 @@ public class TestUProfileModule extends TestUBaseModule
 		Data u = (Data) users.searchById(userid);
 		if (u == null)
 		{
-			fail(inReq, 404, "no user");
+			fail(inReq, 404, "unknown_user");
 			return;
 		}
 		if (extras.contains(primary))
@@ -328,7 +336,10 @@ public class TestUProfileModule extends TestUBaseModule
 		return out;
 	}
 
-	/** profile id -> number of users whose jobrole contains it. */
+	/**
+	 * profile id -> number of users referencing it, once per user: jobrole contains it OR primaryjobrole equals it. A dangling
+	 * primaryjobrole (jobrole cleared without the primary) must still block the delete and show in the headcount.
+	 */
 	static Map<String, Integer> memberCounts(MediaArchive archive)
 	{
 		Map<String, Integer> out = new HashMap<>();
@@ -338,7 +349,13 @@ public class TestUProfileModule extends TestUBaseModule
 			hits.enableBulkOperations();
 			for (Object o : hits)
 			{
-				for (String id : LearningEngine.jobrolesOf((Data) o))
+				Set<String> mine = new HashSet<>(LearningEngine.jobrolesOf((Data) o));
+				String primary = LearningEngine.primaryJobroleOf((Data) o);
+				if (primary != null && !primary.isEmpty())
+				{
+					mine.add(primary);
+				}
+				for (String id : mine)
 				{
 					out.merge(id, 1, Integer::sum);
 				}
