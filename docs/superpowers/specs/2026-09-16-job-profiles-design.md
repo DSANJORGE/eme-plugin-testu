@@ -41,7 +41,7 @@ Behaviour:
 - **Locks**: `next.json` learn or improve with a locked topic (or a section of it) → 409 `topic_locked` `{topic, previoustopic}`; `answer.json` / `exposure.json` in learn or improve on a locked topic → 409 `topic_locked`. Improve scope inside a locked topic is impossible in practice (not Started ⇒ not learn complete) but the check is explicit. Reads never persist anything.
 - **Existing rules unchanged**: subtopic progression inside a topic, Improve unlock, mastery, bands, sessions, strictest required level.
 
-`state.json` per topic adds: `position` (null when not assigned), `profile` (id of the profile the occurrence came from, null when not assigned), `mandatory`, `requiresprevious`, `previoustopic`, `locked`, `lockreason`, `afterfinish`, `finished`. Removed topics are omitted from `topics`; their ids are listed in a top-level `removedtopics` array so the app can, if it ever wants to, show "Completed: Onboarding". Top-level `profiles` = `[{id, name, primary}]` for the learner (the app explains "Required: Competent · from your Pilot profile").
+`state.json` per topic adds: `position` (null when not assigned), `profile` (id of the profile the occurrence came from, null when not assigned), `profilename`, `mandatory`, `requiresprevious`, `previoustopic`, `locked`, `lockreason`, `afterfinish`, `finished`. Removed topics are omitted from `topics`; their ids are listed in a top-level `removedtopics` array so the app can, if it ever wants to, show "Completed: Onboarding". Top-level `profiles` = `[{id, name, primary}]` for the learner (the app explains "Required: Competent · from your Pilot profile").
 
 `person.json` (analytics) `risk.requiredtopics` uses the same assignment: profile order, removed topics excluded, plus `profile` and `position` per row.
 
@@ -54,7 +54,7 @@ All return `{ok, ...}` or `{error}` in the existing style. Learners (no `persona
 - `deleteprofile.json` (POST, personas_manage): `id`. 409 `profile_in_use` `{members}` when any user references it; otherwise deletes the rows and the list entry. Audited.
 - `setprofiles.json` (POST, personas_manage): `user`, `primary`, `extras` (JSON array). Validation: all ids exist, `primary` not in `extras`, `primary` blank only when `extras` empty. Writes `primaryjobrole` and `jobrole` = [primary, …extras]. Audited. Also called by the person editor when changing the roster.
 - `users.json`: each user adds `primaryjobrole` and `jobroles` (ids). `me.json` adds the same for the signed-in user.
-- `importusers.json`: optional columns `primaryjobrole` and `jobroles` (profile **names**, `jobroles` separated by `|`). Unknown name → row error like an unknown team today. Existing rows without the columns are untouched.
+- `importusers.json`: optional columns `primaryjobrole` and `jobrole` (each a profile id **or name**; `jobrole` separated by `|`; the primary is added to the list). Column names equal the field ids so the importer maps them itself. Unknown name → row error like an unknown team today. Existing rows without the columns are untouched.
 
 Scope: managers with `personas_view` see profiles read-only; `personas_manage` edits. Same verbs the People screen already uses.
 
@@ -63,8 +63,8 @@ Scope: managers with `personas_view` see profiles read-only; `personas_manage` e
 Personas screen (`admin_people.dart`):
 
 - The rail gets a second section, **Job profiles / Perfiles**, under the teams: one item per profile with its headcount, then "+ New profile" (personas_manage only). Selecting a profile filters the roster to its members (primary or extra) and shows the profile editor above the table, the same slot the team head uses.
-- Profile editor (new `admin_profiles.dart`): name field; topic table with drag-to-reorder handle, position, topic, required level (dropdown: none / Beginner / Competent / Expert), Mandatory (switch), Requires previous (switch, disabled on row 1), After finish (Keep / Remove); "Add topic" picker listing topics not yet in the profile (with question counts; 0 shows a warning icon); remove row; Save / Cancel; Delete (disabled with a tooltip while members > 0). Save posts the full ordered list; on success the rail headcounts and roster refresh. Read-only rendering without personas_manage.
-- Person add/edit sheet: "Primary profile" dropdown and "Extra profiles" multi-select; saved through `setprofiles.json` after the user save.
+- Profile editor (new `admin_profiles.dart`): name field; topic table with move up/down acts (no drag: keyboard and screen-reader friendly), position, topic, required level (dropdown: none / Beginner / Competent / Expert), Mandatory (switch), Requires previous (switch, disabled on row 1), After finish (Keep / Remove); "Add topic" picker listing topics not yet in the profile (with question counts; 0 shows a warning icon); remove row; Save / Cancel; Delete (disabled with a tooltip while members > 0). Save posts the full ordered list; on success the rail headcounts and roster refresh. Read-only rendering without personas_manage.
+- Add-person sheet: "Primary profile" dropdown (saved through `setprofiles.json` after the user save). Roster Profile cell opens a per-person sheet with primary dropdown + extra-profile checkboxes, saved through `setprofiles.json`.
 - Roster: new column Profile = primary name, "+n" when extras exist; the search box matches profile names.
 - Models (`admin_models.dart`): `AdminProfile`, `ProfileRow`; `AdminUser` gains `primaryProfile`, `profiles`. API (`admin_api.dart`): `profiles()`, `saveProfile()`, `deleteProfile()`, `setProfiles()`.
 
