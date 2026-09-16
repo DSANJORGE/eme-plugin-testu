@@ -1390,15 +1390,17 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		// Required topics vs role requirement (live, learning engine) and the lowest required topic as a separate risk signal.
 		// Overall mastery is not changed by it. Readiness states (Action needed / At risk) are not computed yet.
 		LearningEngine engine = new LearningEngine(archive);
-		LearningEngine.Learner learner = engine.loadLearner(uid, LearningEngine.jobrolesOf(u));
+		LearningEngine.Learner learner = engine.loadLearner(uid, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+		LearningEngine.Content pcontent = engine.loadContent();
+		engine.applyProfiles(pcontent, learner);
 		JSONArray required = new JSONArray();
 		JSONObject lowest = null;
 		int gaps = 0;
-		for (LearningEngine.Topic t : engine.loadContent().topics.values())
+		for (LearningEngine.Topic t : pcontent.topics.values())
 		{
 			JSONObject st = engine.topicState(t, learner);
 			String req = (String) st.get("requiredlevel");
-			if (req == null)
+			if (req == null && !(t.position != null && t.mandatory))
 				continue;
 			JSONObject ro = new JSONObject();
 			ro.put("id", t.id);
@@ -1407,7 +1409,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			ro.put("band", st.get("band"));
 			ro.put("masterypercent", st.get("masterypercent"));
 			ro.put("meetsrequirement", st.get("meetsrequirement"));
-			int gap = LearningEngine.levelIndex(req) - LearningEngine.levelIndex((String) st.get("band"));
+			ro.put("profile", t.profile);
+			ro.put("position", t.position);
+			int gap = req == null ? 0 : LearningEngine.levelIndex(req) - LearningEngine.levelIndex((String) st.get("band"));
 			ro.put("gap", gap);
 			required.add(ro);
 			if (!Boolean.TRUE.equals(st.get("meetsrequirement")))

@@ -940,11 +940,20 @@ public class LearningEngine
 	 */
 	public Map<String, Boolean> requiredTopics(Content c, Learner l, String[] inReason)
 	{
+		boolean anyAssigned = false;
+		for (Topic t : c.topics.values())
+		{
+			if (t.position != null)
+			{
+				anyAssigned = true;
+				break;
+			}
+		}
 		Map<String, Boolean> required = new HashMap<>();
 		boolean any = false;
 		for (Topic t : c.topics.values())
 		{
-			boolean r = t.position != null ? t.mandatory : requiredLevel(t.id, l.jobroles) != null;
+			boolean r = anyAssigned ? (t.position != null && t.mandatory) : requiredLevel(t.id, l.jobroles) != null;
 			required.put(t.id, r);
 			any |= r;
 		}
@@ -1551,6 +1560,11 @@ public class LearningEngine
 			if (!inScopeid.equals("topic".equals(inScopetype) ? q.topicid : q.sectionid))
 			{
 				return Resolved.fail(409, "scope_mismatch");
+			}
+			Topic top = c.topics.get(q.topicid);
+			if (top != null && top.locked)
+			{
+				return Resolved.fail(409, "topic_locked");
 			}
 			if ("learn".equals(inMode) && !isUnlocked(subtopicStates(c, l), q.sectionid))
 			{
@@ -2237,6 +2251,16 @@ public class LearningEngine
 		o.put("requiredlevel", required);
 		o.put("meetsrequirement", required == null ? null : levelIndex(m.band) >= levelIndex(required) && (!"expert".equals(required) || m.evidence));
 		o.put("expertevidence", evidence(m));
+		o.put("position", t.position);
+		o.put("profile", t.profile);
+		o.put("profilename", t.profilename);
+		o.put("mandatory", t.position == null ? null : Boolean.valueOf(t.mandatory));
+		o.put("requiresprevious", t.position == null ? null : Boolean.valueOf(t.requiresprevious));
+		o.put("previoustopic", t.previoustopic);
+		o.put("locked", Boolean.valueOf(t.locked));
+		o.put("lockreason", t.locked ? "previous_topic_incomplete" : null);
+		o.put("afterfinish", t.position == null ? null : t.afterfinish);
+		o.put("finished", t.position == null ? null : Boolean.valueOf(t.finished));
 		String nextid = null;
 		Date last = null;
 		for (Question q : t.questions)

@@ -26,13 +26,14 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
 		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
+		LearningEngine.Learner learner = engine.loadLearner(user.getId(), LearningEngine.jobrolesOf(user), LearningEngine.primaryJobroleOf(user));
+		engine.applyProfiles(content, learner);
 		String topicid = param(inReq, "topicid");
 		if (topicid != null && !content.topics.containsKey(topicid))
 		{
 			fail(inReq, 404, "unknown_topic");
 			return;
 		}
-		LearningEngine.Learner learner = engine.loadLearner(user.getId(), LearningEngine.jobrolesOf(user));
 		java.util.Map<String, JSONObject> unlocks = engine.subtopicStates(content, learner);
 		JSONArray topics = new JSONArray();
 		for (LearningEngine.Topic t : content.topics.values())
@@ -47,6 +48,8 @@ public class TestULearningModule extends TestUBaseModule
 		resp.put("thresholdsreason", content.thresholdsreason);
 		resp.put("canmanageprogression", canManageProgression(inReq));
 		resp.put("topics", topics);
+		resp.put("removedtopics", content.removedtopics);
+		resp.put("profiles", content.profiles);
 		reply(inReq, resp);
 	}
 
@@ -65,7 +68,8 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
 		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
-		LearningEngine.Learner learner = engine.loadLearner(user.getId(), LearningEngine.jobrolesOf(user));
+		LearningEngine.Learner learner = engine.loadLearner(user.getId(), LearningEngine.jobrolesOf(user), LearningEngine.primaryJobroleOf(user));
+		engine.applyProfiles(content, learner);
 		if ("dailychallenge".equals(mode))
 		{
 			JSONObject dc = engine.dailyChallenge(content, learner);
@@ -92,6 +96,21 @@ public class TestULearningModule extends TestUBaseModule
 				fail(inReq, 404, "unknown_section");
 				return;
 			}
+		}
+		if (topic.locked)
+		{
+			JSONObject err = new JSONObject();
+			err.put("ok", Boolean.FALSE);
+			err.put("error", "topic_locked");
+			err.put("topic", topic.id);
+			err.put("previoustopic", topic.previoustopic);
+			if (inReq.getResponse() != null)
+			{
+				inReq.getResponse().setStatus(409);
+			}
+			reply(inReq, err);
+			inReq.setCancelActions(true);
+			return;
 		}
 		String scopetype = section == null ? "topic" : "subtopic";
 		String scopeid = section == null ? topic.id : section.id;
@@ -517,7 +536,8 @@ public class TestULearningModule extends TestUBaseModule
 	private LearningEngine.Resolved resolve(WebPageRequest inReq, LearningEngine inEngine, User inUser, boolean inAnswer)
 	{
 		LearningEngine.Content content = inEngine.loadContent(visibleTopics(inReq));
-		LearningEngine.Learner learner = inEngine.loadLearner(inUser.getId(), LearningEngine.jobrolesOf(inUser));
+		LearningEngine.Learner learner = inEngine.loadLearner(inUser.getId(), LearningEngine.jobrolesOf(inUser), LearningEngine.primaryJobroleOf(inUser));
+		inEngine.applyProfiles(content, learner);
 		java.util.Map<String, String> claimed = new java.util.HashMap<>();
 		for (String k : new String[] {"topicid", "tutorialid", "sectionid", "componentid"})
 		{
