@@ -1,8 +1,10 @@
 #!/bin/sh
 # Evaluation Mode (spec docs/superpowers/specs/2026-09-16-evaluation-mode-design.md): server checks of the learner side
 # (evaluation.json, startevaluation.json, submitevaluation.json, answer.json mode evaluation) against a local eMe as
-# eval.check@testu.local. LOCAL ONLY. Writes and removes: evaluationblueprint versions of one topic, the user's learning
-# and evaluationattempt rows. Blueprints are seeded directly (the admin endpoint is Task 4's).
+# eval.check@testu.local. LOCAL ONLY, then the admin side (evaluationblueprint.json, evaluationrequired on profile rows,
+# person.json evaluation fields). Writes and removes: evaluationblueprint versions of one topic (seeded directly for the
+# learner side, through the admin endpoint for the admin side), a jobrole/topicrequirement pair and the user's learning
+# and evaluationattempt rows.
 # Usage: EME_USER=... EME_PASSWORD=... plugins/testu/tools/check_evaluation.sh   (from the server root)
 set -eu
 exec python3 - "$@" <<'PY'
@@ -174,6 +176,7 @@ def wrong(qid):
 
 
 BP = []
+BP_EXTRA = []  # (table, id) rows the admin section adds, removed by cleanup() even when a check raises
 VERSION = [0]
 
 
@@ -193,6 +196,8 @@ def blueprint(**f):
 
 def cleanup():
     delete_rows("evaluationblueprint", BP)
+    for table, rid in BP_EXTRA:
+        delete_rows(table, [rid])
     wipe_user_rows()
     refresh()
 
@@ -350,6 +355,88 @@ try:
     blueprint(strategy="reserved", requirelearncomplete="false")
     r = start()
     ok("empty pool: start -> 409 pool_insufficient, no attempt row", r[0] == 409 and r[1]["error"] == "pool_insufficient" and es_doc("evaluationattempt", f"{USER}_{T}_a2") is None, r)
+
+    # ---- admin endpoint: evaluationblueprint.json
+    BPP = "/services/testu/learn/evaluationblueprint.json"
+    r = call(me, "GET", BPP)
+    ok("blueprint: learner 403", r[0] == 403 and r[1]["error"] == "forbidden", r)
+    r = call(me, "POST", BPP, form={"topicid": T, "expectedversion": "0"})
+    ok("blueprint: learner POST 403", r[0] == 403, r)
+    lst = must("blueprint list", call(admin, "GET", BPP))
+    row = next(t for t in lst["topics"] if t["id"] == T)
+    # T's current version here is the reserved-strategy one from the empty-pool section above, so pool.size is legitimately 0;
+    # what the list must carry is the report itself with real per-subtopic sequence/reserved counts.
+    ok("blueprint list: canmanage, current version, pool report with per-subtopic numbers and stats", lst["canmanage"] is True and row["version"] == VERSION[0] and "size" in row["pool"] and len(row["pool"]["bysection"]) >= 2 and any(s["sequence"] >= 1 for s in row["pool"]["bysection"]) and "attempts" in row["stats"], row)
+    other = next((t for t in lst["topics"] if t["id"] != T), None)
+    if other:
+        ok("blueprint list: unconfigured topic reports version 0 / not_configured with its pool", other["version"] == 0 and other["reason"] == "not_configured" and "size" in other["pool"], other)
+
+    def save(op=None, expected=None, **f):
+        if expected is None:
+            expected = must("blueprint get", call(admin, "GET", BPP + "?topicid=" + quote(T)))["topic"]["version"]
+        form = {"topicid": T, "expectedversion": str(expected), "active": "true", "strategy": "random", "maxquestions": str(MAXQ), "minpersubtopic": "0",
+                "difficultymix": "proportional", "passpercent": "60", "subtopicminpercent": "0", "timerminutes": "0", "retakewaithours": "0", "maxattempts": "0",
+                "requirelearncomplete": "false"}
+        form.update({k: str(v) for k, v in f.items()})
+        return call(op or admin, "POST", BPP, form=form)
+
+    for field, value, err in (("maxquestions", "0", "bad_maxquestions"), ("maxquestions", "x", "bad_maxquestions"), ("passpercent", "101", "bad_passpercent"),
+                              ("strategy", "common", "bad_strategy"), ("difficultymix", "odd", "bad_difficultymix"), ("timerminutes", "481", "bad_timerminutes"),
+                              ("retakewaithours", "-1", "bad_retakewaithours"), ("excludedsections", "nope", "bad_excludedsections"), ("excludedsections", '["nope"]', "unknown_section")):
+        r = save(**{field: value})
+        ok(f"blueprint save: {field}={value} -> {err}", r[0] in (400, 404) and r[1]["error"] == err, r)
+    r = save(expected="999")
+    ok("blueprint save: stale expectedversion -> 409 version_conflict with currentversion", r[0] == 409 and r[1]["error"] == "version_conflict" and r[1]["currentversion"] == VERSION[0], r)
+    r = call(admin, "POST", BPP, form={"topicid": T, "active": "true"})
+    ok("blueprint save: missing expectedversion -> 400", r[0] == 400 and r[1]["error"] == "missing_expectedversion", r)
+    r = save(minpersubtopic="1000")
+    ok("blueprint save: activating over an insufficient pool -> 409 pool_insufficient with the report", r[0] == 409 and r[1]["error"] == "pool_insufficient" and r[1]["pool"]["shortfall"] == "subtopic_below_min", r)
+    r = save(minpersubtopic="1000", active="false")
+    ok("blueprint save: the same draft saves inactive as v+1", r[0] == 200 and r[1]["unchanged"] is False and r[1]["topic"]["version"] == VERSION[0] + 1 and r[1]["topic"]["active"] is False and r[1]["topic"]["reason"] == "inactive", r)
+    VERSION[0] += 1
+    BP.append(f"{T}_v{VERSION[0]}")
+    r = save(minpersubtopic="1000", active="false")
+    ok("blueprint save: identical values -> unchanged, no version", r[0] == 200 and r[1]["unchanged"] is True and r[1]["topic"]["version"] == VERSION[0], r)
+    secs = [s for s in topic_of(state(), T)["sections"] if s["questions"] > 0]
+    sec = min(secs, key=lambda s: s["questions"])["id"]  # the smallest subtopic, so the rest still covers maxquestions
+    maxq = max(MAXQ, len(secs))  # minpersubtopic 1 over the remaining subtopics must fit in maxquestions (poolReport: minimums_exceed_max)
+    r = save(excludedsections=json.dumps([sec]), minpersubtopic="1", maxquestions=maxq)
+    ok("blueprint save: active with an excluded subtopic and min 1 -> v+1, excludedsections stored", r[0] == 200 and r[1]["topic"]["version"] == VERSION[0] + 1 and r[1]["topic"]["excludedsections"] == [sec] and r[1]["topic"]["reason"] is None, r)
+    VERSION[0] += 1
+    BP.append(f"{T}_v{VERSION[0]}")
+    hist = must("blueprint history", call(admin, "GET", BPP + "?topicid=" + quote(T)))
+    ok("blueprint history: newest first, user and date", hist["versions"][0]["version"] == VERSION[0] and hist["versions"][0]["user"] == os.environ["EME_USER"] and hist["versions"][0]["datecreated"], hist["versions"][:2])
+    ok("blueprint audit written", any(a["action"] == "evaluationblueprint.change" for a in audits("evaluationblueprint.change", T)), "")
+    st, e = ev()
+    ok("learner sees the new version's pool (excluded subtopic never served)", e["status"] == "available", e)
+    st, s5 = start()
+    ok("start: no item from the excluded subtopic", st == 200 and all(i["sectionid"] != sec for i in s5["items"]), [i["sectionid"] for i in s5["items"]])
+    delete_rows("evaluationattempt", es_ids("evaluationattempt", {"term": {"user": USER}}))
+    refresh()
+
+    # ---- profile row + analytics
+    put_row("jobrole", "echeck-role", {"name": "Echeck Role"})
+    put_row("topicrequirement", "echeck-r1", {"jobrole": "echeck-role", "entitytopic": T, "position": "1", "requiredlevel": "", "mandatory": "true", "requiresprevious": "false", "afterfinish": "keep", "evaluationrequired": "true"})
+    BP_EXTRA += [("topicrequirement", "echeck-r1"), ("jobrole", "echeck-role")]
+    usersave("jobrole", "echeck-role")
+    usersave("primaryjobrole", "echeck-role")
+    refresh()
+    t = topic_of(state(), T)
+    ok("state: profile row marks the evaluation required; topic not finished", t["evaluation"]["required"] is True and t["finished"] is False, t["evaluation"])
+    prof = must("profiles.json", call(admin, "GET", "/services/testu/personas/profiles.json"))
+    prow = next(p for p in prof["profiles"] if p["id"] == "echeck-role")["rows"][0]
+    ok("profiles.json: evaluationrequired on the row", prow["evaluationrequired"] is True, prow)
+    r = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": "echeck-role", "name": "Echeck Role", "rows": json.dumps([{"topic": T, "requiredlevel": "", "mandatory": True, "requiresprevious": False, "afterfinish": "keep", "evaluationrequired": False}])})
+    ok("saveprofile: evaluationrequired round-trips (false)", r[0] == 200 and r[1]["profile"]["rows"][0]["evaluationrequired"] is False, r)
+    r = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": "echeck-role", "name": "Echeck Role", "rows": json.dumps([{"topic": T, "requiredlevel": "", "mandatory": True, "requiresprevious": False, "afterfinish": "keep", "evaluationrequired": True}])})
+    ok("saveprofile: evaluationrequired round-trips (true)", r[0] == 200 and r[1]["profile"]["rows"][0]["evaluationrequired"] is True, r)
+    refresh()
+    person = must("person.json", call(admin, "GET", "/services/testu/analytics/person.json?user=" + quote(USER)))
+    prow = next((x for x in person["risk"]["requiredtopics"] if x["id"] == T), None)
+    ok("person.json: evaluationrequired, evaluation status and evaluationmet false; counted as a gap", prow and prow["evaluationrequired"] is True and prow["evaluationmet"] is False and prow["evaluation"]["status"] in ("available", "locked", "waiting", "exhausted") and person["risk"]["requiredgaps"] >= 1, prow)
+    usersave("jobrole", "")
+    usersave("primaryjobrole", "")
+    refresh()
 
     # ---- inactive and legacy rows
     blueprint(active="false")

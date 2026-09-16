@@ -3,7 +3,8 @@
 
 Reports: questions in tutorial content the app cannot render (LearningEngine.contentProblem; next.json refuses them with
 content_unavailable), draft/test topics, unpublished topics, topics without valid titles, placeholder questions, non-canonical
-difficulty, topics without eligible questions, topics accidentally visible to learners. Exit 1 when anything is reported.
+difficulty, topics without eligible questions, topics accidentally visible to learners, active evaluation blueprints whose question
+pool cannot satisfy them. Exit 1 when anything is reported.
 
 Usage: python3 tools/validate_content.py [--es http://host:9200/site_catalog]
        (ES alias of the catalog index; default $ES or http://localhost:9200/site_catalog)"""
@@ -62,6 +63,7 @@ questions = {q["id"]: q for q in rows("entityquestion")}
 tut_topic = {t["id"]: t.get("entitytopic") for t in tutorials}
 sec_topic = {s["id"]: tut_topic.get(s.get("playbackentityid")) for s in sections}
 eligible = {}
+POOLQ = {}  # (topic, reserved?) -> {question: section}, the two evaluation pools before exclusions
 
 
 def content_problem(q):
@@ -79,6 +81,8 @@ def content_problem(q):
 for c in contents:
     q = questions.get(str(c["questionid"]))
     tid = sec_topic.get(str(c.get("componentsectionid")))
+    if tid and q:
+        POOLQ.setdefault((tid, str(q.get("evaluationreserved")).lower() == "true"), {})[q["id"]] = str(c.get("componentsectionid"))
     if tid and q and str(q.get("evaluationreserved")).lower() != "true":
         eligible.setdefault(tid, set()).add(q["id"])
         if content_problem(q):
@@ -124,6 +128,36 @@ for t in topics:
     if has_tutorial and visible and flags:
         report("topics accidentally visible to learners", f"{label}: {', '.join(flags)}")
 
+# Active blueprints whose pool cannot satisfy them (same rules as LearningEngine.poolReport; learners would get pool_insufficient).
+BLUEPRINTS = "active blueprints with insufficient pools"
+current = {}
+for b in rows("evaluationblueprint"):
+    tid = str(b.get("entitytopic") or "")
+    if tid and int(b.get("blueprintversion") or 0) >= int(current.get(tid, {}).get("blueprintversion") or 0):
+        current[tid] = b
+for tid, b in current.items():
+    if str(b.get("active")).lower() != "true":
+        continue
+    label = f"{tid} ({name_of(next((t for t in topics if t['id'] == tid), {})) or 'no title'}) v{b.get('blueprintversion')}"
+    strategy = b.get("strategy")
+    strategy = strategy.get("id") if isinstance(strategy, dict) else strategy
+    ex = b.get("excludedsections") or "[]"
+    ex = ex if isinstance(ex, list) else (json.loads(ex) if str(ex).strip().startswith("[") else [])
+    excluded = {str(x) for x in ex}
+    maxq, minper = int(b.get("maxquestions") or 0), int(b.get("minpersubtopic") or 0)
+    pool = {qid: sid for qid, sid in POOLQ.get((tid, str(strategy) == "reserved"), {}).items() if sid not in excluded and not content_problem(questions[qid])}
+    if len(pool) < maxq:
+        report(BLUEPRINTS, f"{label}: pool {len(pool)} < max {maxq}")
+    if minper > 0:
+        persec = {}
+        for sid in pool.values():
+            persec[sid] = persec.get(sid, 0) + 1
+        for sid, k in sorted(persec.items()):
+            if k < minper:
+                report(BLUEPRINTS, f"{label}: section {sid} has {k} < min {minper}")
+        if sum(min(minper, k) for k in persec.values()) > maxq:
+            report(BLUEPRINTS, f"{label}: minimums {sum(min(minper, k) for k in persec.values())} exceed max {maxq}")
+
 print(f"ES {ES}: {len(topics)} topics, {len(tutorials)} tutorials, {len(sections)} sections, {len(questions)} questions")
 for t in topics:
     print(f"  topic {t['id']}: {name_of(t)!r}, eligible questions {len(eligible.get(t['id'], ()))}, securityenabled={t.get('securityenabled')}")
@@ -131,7 +165,7 @@ if not status_fields:
     print(f"note: entitytopic has no status/published field ({'/'.join(STATUS_FIELDS)}); unpublished cannot be detected, "
           "visibility is entity security only (securityenabled, viewusers/groups/roles)")
 for kind in ("unrenderable questions in tutorials (content_unavailable)", "draft/test topics", "unpublished topics", "topics without valid titles", "placeholder questions",
-             "non-canonical difficulty (run tools/normalize_difficulty.py)", "topics without eligible questions", "topics accidentally visible to learners"):
+             "non-canonical difficulty (run tools/normalize_difficulty.py)", "topics without eligible questions", "topics accidentally visible to learners", BLUEPRINTS):
     found = issues.get(kind, [])
     print(f"{kind}: {len(found)}")
     for f in found[:20]:

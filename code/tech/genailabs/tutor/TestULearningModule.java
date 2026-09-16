@@ -688,6 +688,310 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/**
+	 * Evaluation blueprint per topic (spec 2026-09-16-evaluation-mode). GET: every topic with its current blueprint, pool report and
+	 * attempt stats (or ?topicid= with its version history). POST topicid + fields + expectedversion: appends version n+1 to
+	 * evaluationblueprint and an auditevent, create-only under LearningEngine.WRITE_LOCK; expectedversion no longer the latest = 409
+	 * version_conflict; active=true over a pool that cannot satisfy the blueprint = 409 pool_insufficient (nothing written; save it
+	 * inactive instead). Reading needs training_view or training_manage, writing training_manage. An in-progress attempt keeps the
+	 * version it started with; a new version applies from the next startevaluation.
+	 */
+	public void evaluationBlueprint(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		boolean canmanage = canManageProgression(inReq);
+		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
+		if (!canmanage && (profile == null || !profile.hasPermission("training_view")))
+		{
+			fail(inReq, 403, "forbidden");
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		LearningEngine.Content content = new LearningEngine(archive).loadContent();
+		java.util.Map<String, int[]> stats = attemptStats(archive);
+		String topicid = param(inReq, "topicid");
+		boolean post = inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
+		if (topicid == null)
+		{
+			if (post)
+			{
+				fail(inReq, 400, "missing_topicid");
+				return;
+			}
+			JSONArray topics = new JSONArray();
+			for (LearningEngine.Topic t : content.topics.values())
+			{
+				topics.add(blueprintJson(t, stats));
+			}
+			JSONObject resp = new JSONObject();
+			resp.put("ok", Boolean.TRUE);
+			resp.put("canmanage", canmanage);
+			resp.put("topics", topics);
+			reply(inReq, resp);
+			return;
+		}
+		LearningEngine.Topic topic = content.topics.get(topicid);
+		if (topic == null)
+		{
+			fail(inReq, 404, "unknown_topic");
+			return;
+		}
+		Searcher searcher = archive.getSearcher("evaluationblueprint");
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("canmanage", canmanage);
+		if (post)
+		{
+			if (!canmanage)
+			{
+				fail(inReq, 403, "forbidden");
+				return;
+			}
+			String expected = param(inReq, "expectedversion");
+			if (expected == null)
+			{
+				fail(inReq, 400, "missing_expectedversion");
+				return;
+			}
+			if (!expected.matches("[0-9]{1,6}"))
+			{
+				fail(inReq, 400, "bad_expectedversion");
+				return;
+			}
+			LearningEngine.Blueprint b = new LearningEngine.Blueprint();
+			b.topicid = topic.id;
+			b.active = "true".equals(param(inReq, "active"));
+			b.strategy = param(inReq, "strategy") == null ? "random" : param(inReq, "strategy");
+			b.mix = param(inReq, "difficultymix") == null ? "proportional" : param(inReq, "difficultymix");
+			b.requirelearncomplete = !"false".equals(param(inReq, "requirelearncomplete"));
+			String[][] numbers = {{"maxquestions", "20"}, {"minpersubtopic", "0"}, {"passpercent", "70"}, {"subtopicminpercent", "0"}, {"timerminutes", "0"}, {"retakewaithours", "0"}, {"maxattempts", "0"}};
+			int[] values = new int[numbers.length];
+			for (int i = 0; i < numbers.length; i++)
+			{
+				String v = param(inReq, numbers[i][0]);
+				if (v == null)
+				{
+					v = numbers[i][1];
+				}
+				if (!v.matches("-?[0-9]{1,6}"))
+				{
+					fail(inReq, 400, "bad_" + numbers[i][0]);
+					return;
+				}
+				values[i] = Integer.parseInt(v);
+			}
+			b.maxquestions = values[0];
+			b.minpersubtopic = values[1];
+			b.passpercent = values[2];
+			b.subtopicminpercent = values[3];
+			b.timerminutes = values[4];
+			b.retakewaithours = values[5];
+			b.maxattempts = values[6];
+			String excluded = param(inReq, "excludedsections");
+			if (excluded != null)
+			{
+				Object parsed = org.json.simple.JSONValue.parse(excluded);
+				if (!(parsed instanceof java.util.List))
+				{
+					fail(inReq, 400, "bad_excludedsections");
+					return;
+				}
+				for (Object o : (java.util.List) parsed)
+				{
+					String sid = String.valueOf(o);
+					boolean known = false;
+					for (LearningEngine.Section s : topic.sections)
+					{
+						known |= s.id.equals(sid);
+					}
+					if (!known)
+					{
+						fail(inReq, 404, "unknown_section");
+						return;
+					}
+					b.excludedsections.add(sid);
+				}
+			}
+			String bad = LearningEngine.invalidField(b);
+			if (bad != null)
+			{
+				fail(inReq, 400, "bad_" + bad);
+				return;
+			}
+			LearningEngine.settle(b);
+			JSONObject pool = LearningEngine.poolReport(topic, b);
+			if (b.active && !Boolean.TRUE.equals(pool.get("sufficient")))
+			{
+				if (inReq.getResponse() != null)
+				{
+					inReq.getResponse().setStatus(409);
+				}
+				JSONObject err = new JSONObject();
+				err.put("ok", Boolean.FALSE);
+				err.put("error", "pool_insufficient");
+				err.put("pool", pool);
+				reply(inReq, err);
+				inReq.setCancelActions(true);
+				return;
+			}
+			boolean unchanged;
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				// loadContent's search can lag a just-saved version: probe the next ids with realtime gets.
+				int v = topic.blueprint.version;
+				Data latest = null;
+				while (true)
+				{
+					Data d = (Data) searcher.searchById(topic.id + "_v" + (v + 1));
+					if (d == null)
+					{
+						break;
+					}
+					latest = d;
+					v++;
+				}
+				if (latest != null)
+				{
+					topic.blueprint = LearningEngine.blueprintOf(latest, topic.id);
+				}
+				if (Integer.parseInt(expected) != topic.blueprint.version)
+				{
+					if (inReq.getResponse() != null)
+					{
+						inReq.getResponse().setStatus(409);
+					}
+					JSONObject err = new JSONObject();
+					err.put("ok", Boolean.FALSE);
+					err.put("error", "version_conflict");
+					err.put("currentversion", topic.blueprint.version);
+					err.put("topic", blueprintJson(topic, stats));
+					reply(inReq, err);
+					inReq.setCancelActions(true);
+					return;
+				}
+				unchanged = topic.blueprint.version > 0 && sameBlueprint(topic.blueprint, b);
+				if (!unchanged)
+				{
+					JSONObject before = blueprintJson(topic, stats);
+					before.remove("pool");
+					before.remove("stats");
+					int version = topic.blueprint.version + 1;
+					b.version = version;
+					b.user = user.getId();
+					b.created = new Date();
+					Data row = searcher.createNewData();
+					row.setId(topic.id + "_v" + version);
+					row.setValue("entitytopic", topic.id);
+					row.setValue("blueprintversion", version);
+					row.setValue("active", b.active);
+					row.setValue("strategy", b.strategy);
+					row.setValue("maxquestions", b.maxquestions);
+					row.setValue("minpersubtopic", b.minpersubtopic);
+					JSONArray ex = new JSONArray();
+					ex.addAll(new java.util.TreeSet<>(b.excludedsections));
+					row.setValue("excludedsections", ex.toJSONString());
+					row.setValue("difficultymix", b.mix);
+					row.setValue("passpercent", b.passpercent);
+					row.setValue("subtopicminpercent", b.subtopicminpercent);
+					row.setValue("timerminutes", b.timerminutes);
+					row.setValue("retakewaithours", b.retakewaithours);
+					row.setValue("maxattempts", b.maxattempts);
+					row.setValue("requirelearncomplete", b.requirelearncomplete);
+					row.setValue("user", b.user);
+					row.setValue("datecreated", b.created);
+					searcher.saveData(row, user);
+					topic.blueprint = b;
+					JSONObject after = blueprintJson(topic, stats);
+					after.remove("pool");
+					after.remove("stats");
+					audit(inReq, archive, "evaluationblueprint.change", "entitytopic", topic.id, before, after);
+				}
+			}
+			resp.put("unchanged", unchanged);
+			resp.put("topic", blueprintJson(topic, stats));
+			reply(inReq, resp);
+			return;
+		}
+		java.util.List<Data> rows = new java.util.ArrayList<>();
+		for (Object o : searcher.query().exact("entitytopic", topic.id).search())
+		{
+			rows.add((Data) o);
+		}
+		rows.sort((a, c) -> LearningEngine.intOr(c.get("blueprintversion"), 0) - LearningEngine.intOr(a.get("blueprintversion"), 0));
+		JSONArray versions = new JSONArray();
+		for (Data d : rows)
+		{
+			LearningEngine.Blueprint v = LearningEngine.blueprintOf(d, topic.id);
+			JSONObject vj = v.toJson();
+			vj.put("user", v.user);
+			vj.put("datecreated", LearningEngine.iso(v.created));
+			versions.add(vj);
+		}
+		resp.put("topic", blueprintJson(topic, stats));
+		resp.put("versions", versions);
+		reply(inReq, resp);
+	}
+
+	/** {id, title, ...blueprint fields, reason, pool, stats:{attempts, passed, inprogress}}; an unconfigured topic reports version 0 with the default pool. */
+	private static JSONObject blueprintJson(LearningEngine.Topic t, java.util.Map<String, int[]> inStats)
+	{
+		JSONObject o = t.blueprint.toJson();
+		o.put("id", t.id);
+		o.put("title", t.title);
+		o.put("pool", LearningEngine.poolReport(t, t.blueprint));
+		int[] s = inStats.getOrDefault(t.id, new int[3]);
+		JSONObject stats = new JSONObject();
+		stats.put("attempts", s[0]);
+		stats.put("passed", s[1]);
+		stats.put("inprogress", s[2]);
+		o.put("stats", stats);
+		return o;
+	}
+
+	/** Same configured values (version, reason, user and date ignored). */
+	private static boolean sameBlueprint(LearningEngine.Blueprint a, LearningEngine.Blueprint b)
+	{
+		JSONObject x = a.toJson();
+		JSONObject y = b.toJson();
+		for (String k : new String[] {"version", "reason"})
+		{
+			x.remove(k);
+			y.remove(k);
+		}
+		return x.toJSONString().equals(y.toJSONString());
+	}
+
+	/** topic -> {finalized attempts, passed, in progress} over every evaluationattempt row (ponytail: full scan, fine for a pilot cohort). */
+	private static java.util.Map<String, int[]> attemptStats(MediaArchive inArchive)
+	{
+		java.util.Map<String, int[]> out = new java.util.HashMap<>();
+		HitTracker hits = inArchive.query("evaluationattempt").all().search();
+		hits.enableBulkOperations();
+		for (Object o : hits)
+		{
+			Data d = (Data) o;
+			int[] s = out.computeIfAbsent(d.get("entitytopic"), k -> new int[3]);
+			String status = d.get("status");
+			if (status == null || "inprogress".equals(status))
+			{
+				s[2]++;
+			}
+			else
+			{
+				s[0]++;
+				if ("true".equals(String.valueOf(d.get("passed"))))
+				{
+					s[1]++;
+				}
+			}
+		}
+		return out;
+	}
+
+	/**
 	 * POST, training_manage: idempotent subtopicunlock backfill (LearningEngine.backfillUnlocks) for learners whose unlocks predate
 	 * event-time recording; optional user = one learner. Replies {ok, learners, created}; a rerun creates 0.
 	 */

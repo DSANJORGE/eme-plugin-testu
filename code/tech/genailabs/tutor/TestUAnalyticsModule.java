@@ -1467,10 +1467,20 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			ro.put("meetsrequirement", st.get("meetsrequirement"));
 			ro.put("profile", t.profile);
 			ro.put("position", t.position);
+			JSONObject evfull = (JSONObject) st.get("evaluation");
+			JSONObject ev = new JSONObject();
+			ev.put("status", evfull == null ? null : evfull.get("status"));
+			ev.put("scorepercent", evfull == null ? null : evfull.get("scorepercent"));
+			ev.put("passedat", evfull == null ? null : evfull.get("passedat"));
+			ev.put("attempts", evfull == null ? null : evfull.get("attempts"));
+			boolean evmet = !t.evaluationrequired || (evfull != null && Boolean.TRUE.equals(evfull.get("passed")));
+			ro.put("evaluationrequired", Boolean.valueOf(t.evaluationrequired));
+			ro.put("evaluation", ev);
+			ro.put("evaluationmet", Boolean.valueOf(evmet));
 			int gap = req == null ? 0 : LearningEngine.levelIndex(req) - LearningEngine.levelIndex((String) st.get("band"));
 			ro.put("gap", gap);
 			required.add(ro);
-			if (!Boolean.TRUE.equals(st.get("meetsrequirement")))
+			if (!Boolean.TRUE.equals(st.get("meetsrequirement")) || !evmet)
 				gaps++;
 			if (lowest == null || gap > (Integer) lowest.get("gap")
 				|| (gap == (Integer) lowest.get("gap") && (Integer) st.get("masterypercent") < (Integer) lowest.get("masterypercent")))

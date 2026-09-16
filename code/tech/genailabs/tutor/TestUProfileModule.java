@@ -105,6 +105,7 @@ public class TestUProfileModule extends TestUBaseModule
 			r.requiredlevel = lvl.isEmpty() ? null : lvl;
 			r.mandatory = !"false".equals(String.valueOf(m.get("mandatory")));
 			r.requiresprevious = "true".equals(String.valueOf(m.get("requiresprevious")));
+			r.evaluationrequired = "true".equals(String.valueOf(m.get("evaluationrequired")));
 			String af = trim(str(m.get("afterfinish")));
 			if (af.isEmpty())
 			{
@@ -174,6 +175,7 @@ public class TestUProfileModule extends TestUBaseModule
 				d.setValue("position", String.valueOf(r.position));
 				d.setValue("mandatory", r.mandatory ? "true" : "false");
 				d.setValue("requiresprevious", r.requiresprevious ? "true" : "false");
+				d.setValue("evaluationrequired", r.evaluationrequired ? "true" : "false");
 				d.setValue("afterfinish", r.afterfinish);
 				req.saveData(d, inReq.getUser());
 			}
@@ -384,6 +386,7 @@ public class TestUProfileModule extends TestUBaseModule
 			o.put("requiredlevel", r.requiredlevel);
 			o.put("mandatory", Boolean.valueOf(r.mandatory));
 			o.put("requiresprevious", Boolean.valueOf(r.requiresprevious));
+			o.put("evaluationrequired", Boolean.valueOf(r.evaluationrequired));
 			o.put("afterfinish", r.afterfinish);
 			o.put("questions", Integer.valueOf(t == null ? 0 : t.questions.size()));
 			arr.add(o);
