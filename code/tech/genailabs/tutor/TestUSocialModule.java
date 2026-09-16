@@ -769,6 +769,13 @@ public class TestUSocialModule extends TestUBaseModule
 			return d.getName() != null ? d.getName() : entityId;
 		};
 
+		// Inbox facets: the author's team and the tutorial behind each channel (one componentcontent lookup per distinct question).
+		java.util.function.Function<String, String> teamOf = uid -> { User u = userOf.apply(uid); return u != null && u.get("team") != null ? u.get("team") : ""; };
+		Map<String, String> tutCache = new HashMap<>();
+		java.util.function.Function<String, String> tutOf = ch -> ch == null ? "" : tutCache.computeIfAbsent(ch, k -> tutorialOfChannel(archive, k));
+		Map<String, String> tutNames = new HashMap<>();
+		java.util.function.Function<String, String> tutName = tid -> tid == null || tid.isEmpty() ? "" : tutNames.computeIfAbsent(tid, k -> { Data d = archive.getData("entitytutorial", k); return d != null && d.getName() != null ? d.getName() : k; });
+
 		HitTracker all = archive.query("chatterbox").exact("functionname", "testu_social").sort("dateDown").search();
 		if (all != null)
 			all.enableBulkOperations();
@@ -792,6 +799,10 @@ public class TestUSocialModule extends TestUBaseModule
 				c.put("date", d != null ? isoFormat.format(d) : null);
 				c.put("text", m.get("message") != null ? m.get("message") : "");
 				c.put("channel", m.get("channel"));
+				c.put("team", teamOf.apply(uid));
+				String rt = tutOf.apply(m.get("channel"));
+				c.put("entitytutorial", rt);
+				c.put("tutorial", tutName.apply(rt));
 				c.put("moduleid", m.get("moduleid"));
 				c.put("entityid", m.get("entityid"));
 				c.put("label", labelOf.apply(m.get("moduleid"), m.get("entityid")));
@@ -817,7 +828,10 @@ public class TestUSocialModule extends TestUBaseModule
 				JSONObject flagObj = new JSONObject();
 				flagObj.put("id", f.getId());
 				flagObj.put("entityquestion", f.get("entityquestion"));
-				flagObj.put("entitytutorial", f.get("entitytutorial"));
+				String ft = f.get("entitytutorial") != null && !f.get("entitytutorial").isEmpty() ? f.get("entitytutorial") : tutOf.apply("q-" + f.get("entityquestion"));
+				flagObj.put("entitytutorial", ft);
+				flagObj.put("tutorial", tutName.apply(ft));
+				flagObj.put("team", teamOf.apply(uid));
 				flagObj.put("label", labelOf.apply("entityquestion", f.get("entityquestion")));
 				flagObj.put("reason", f.get("reason"));
 				flagObj.put("note", f.get("note") != null ? f.get("note") : "");
