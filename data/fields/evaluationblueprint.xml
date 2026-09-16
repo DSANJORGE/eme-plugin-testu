@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Evaluation Mode (spec 2026-09-16-evaluation-mode): one row per topic blueprint version, append-only (id = <topicid>_v<blueprintversion>).
+     The highest version is the topic's current blueprint; active=false or no row = evaluation not offered. Written only by
+     services/testu/learn/evaluationblueprint.json (training_manage): create-only under the engine write lock, 409 version_conflict when the
+     caller's expectedversion is stale, 409 pool_insufficient when activating over a pool that cannot satisfy it. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="blueprintversion" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Version</language><language id="es">Versión</language></name></property>
+  <property id="active" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Active</language><language id="es">Activa</language></name></property>
+  <property id="strategy" index="true" stored="true" editable="false" type="list" listid="evaluationstrategy"><name><language id="en">Selection strategy</language><language id="es">Estrategia de selección</language></name></property>
+  <property id="maxquestions" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Max questions</language><language id="es">Máximo de preguntas</language></name></property>
+  <property id="minpersubtopic" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Min per subtopic</language><language id="es">Mínimo por subtema</language></name></property>
+  <property id="excludedsections" index="true" stored="true" editable="false" type="text"><name><language id="en">Excluded subtopics (JSON)</language><language id="es">Subtemas excluidos (JSON)</language></name></property>
+  <property id="difficultymix" index="true" stored="true" editable="false" type="list" listid="difficultymix"><name><language id="en">Difficulty mix</language><language id="es">Mezcla de dificultad</language></name></property>
+  <property id="passpercent" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Pass %</language><language id="es">% para aprobar</language></name></property>
+  <property id="subtopicminpercent" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Subtopic min %</language><language id="es">% mínimo por subtema</language></name></property>
+  <property id="timerminutes" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Timer (minutes)</language><language id="es">Tiempo (minutos)</language></name></property>
+  <property id="retakewaithours" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Wait between attempts (hours)</language><language id="es">Espera entre intentos (horas)</language></name></property>
+  <property id="maxattempts" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Max attempts</language><language id="es">Máximo de intentos</language></name></property>
+  <property id="requirelearncomplete" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Requires Learn complete</language><language id="es">Requiere Aprender completado</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Changed by</language><language id="es">Cambiado por</language></name></property>
+  <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Created</language><language id="es">Creado</language></name></property>
+</properties>

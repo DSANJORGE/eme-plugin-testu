@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<difficultymixs>
+  <difficultymix id="proportional"><name><![CDATA[Proporcional al banco]]></name></difficultymix>
+  <difficultymix id="balanced"><name><![CDATA[Equilibrada]]></name></difficultymix>
+</difficultymixs>

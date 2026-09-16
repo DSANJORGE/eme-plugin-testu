@@ -11,4 +11,5 @@
   <property id="mandatory" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Mandatory</language><language id="es">Obligatorio</language></name></property>
   <property id="requiresprevious" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Requires previous topic</language><language id="es">Requiere el tema anterior</language></name></property>
   <property id="afterfinish" index="true" stored="true" editable="true" type="list" listid="afterfinish"><name><language id="en">After finish</language><language id="es">Al terminar</language></name></property>
+  <property id="evaluationrequired" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Evaluation required</language><language id="es">Evaluación requerida</language></name></property>
 </properties>
