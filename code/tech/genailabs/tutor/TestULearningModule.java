@@ -305,6 +305,7 @@ public class TestULearningModule extends TestUBaseModule
 		answer.setValue("datecreated", now);
 		answer.setValue("lastpenalty", now);
 		searcher.saveData(answer, user);
+		archive.fireSharedMediaEvent("testu/computemastery"); // ponytail: full analytics rebuild per answer (async, coalesced) so admin sees it now, not at the 15 min sweep; incremental tutordaily if the sweep gets slow
 		LearningEngine.Attempt attempt = LearningEngine.attemptOf(answer);
 		attempt.at = now;
 		engine.recordUnlocks(r.content.topics.get(r.question.topicid), LearningEngine.withAttempt(r.learner, attempt));

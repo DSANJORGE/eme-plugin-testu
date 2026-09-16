@@ -279,6 +279,10 @@ public class TestUUserModule extends TestUBaseModule
 			for (Object hit : userHits)
 			{
 				Data u = (Data) hit;
+				if ("agent".equals(u.getId()))
+				{
+					continue; // the system tutor account is not a person: same population as analytics (countsAsPerson)
+				}
 				String team = u.get("team");
 				if (scope != null && !scope.contains(team))
 				{

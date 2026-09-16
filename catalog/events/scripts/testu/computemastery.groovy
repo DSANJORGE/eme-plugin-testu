@@ -35,7 +35,7 @@ Map days = [:]   // "<user>_<yyyyMMdd>" -> map
 def dayFor = { String user, Date at ->
   String k = user + "_" + dayOf(at)
   Map d = days[k]
-  if (d == null) { d = [user: user, day: Date.parse("yyyyMMdd", dayOf(at)), answers: 0, correct: 0, certainwrong: 0, questions: 0, helpful: 0, nothelpful: 0, minutes: 0.0d, spans: 0, first: at, last: at, times: []]; days[k] = d }
+  if (d == null) { d = [user: user, day: Date.parse("yyyyMMdd", dayOf(at)), answers: 0, correct: 0, certainwrong: 0, questions: 0, helpful: 0, nothelpful: 0, minutes: 0.0d, first: at, last: at, iv: []]; days[k] = d }
   if (at < d.first) d.first = at
   if (at > d.last) d.last = at
   return d
@@ -46,7 +46,7 @@ for (Data a in rows) {  // `rows` = every tutoranswer, already sorted by datecre
   boolean ok = "true".equals(String.valueOf(a.get("iscorrect")))
   d.answers++; if (ok) d.correct++
   if (!ok && String.valueOf(a.get("answerconfidence")) in ["confident", "mostlysure"]) d.certainwrong++
-  d.times << at
+  d.iv << [at.time, at.time]
 }
 // Foreground spans from the app: a pause carries the seconds of its span.
 HitTracker ev = archive.query("usageevent").all().search(); ev.enableBulkOperations()
@@ -55,7 +55,9 @@ for (Data e in ev) {
   String user = e.get("user"); Date at = e.getDate("datecreated"); String type = e.get("type"); if (!user || !at) continue
   if (type == "iris_rate") { ratings.get(e.get("channel"), []) << [at: at, rating: e.get("rating"), user: user]; Map d = dayFor(user, at); d[e.get("rating") == "helpful" ? "helpful" : "nothelpful"]++; continue }
   Map d = dayFor(user, at)
-  if (type == "pause") { d.minutes += ((e.get("seconds") ?: "0") as Double) / 60d; d.spans++ }
+  double span = type == "pause" ? ((e.get("seconds") ?: "0") as Double) : 0d
+  d.minutes += span / 60d
+  d.iv << [at.time - (long) (span * 1000), at.time]  // a pause carries its foreground span; any other event is a point
 }
 
 // ---- Pass 3: tutorquestion from chatterbox (learner question rows + their reply), ratings joined by channel within 10 min after the reply.
@@ -86,7 +88,7 @@ for (Data m in asks) {
   Date rat = reply?.getDate("date") ?: at
   def r = (ratings[m.get("channel")] ?: []).find { it.user == user && it.at >= rat && it.at.time - rat.time <= 10 * 60 * 1000L }
   row.setValue("rating", r?.rating)   // unconditional: a full rebuild must not leave a stale rating behind
-  dayFor(user, at).questions++
+  Map qd = dayFor(user, at); qd.questions++; qd.iv << [at.time, at.time]
   qsave << row
 }
 if (qsave) tq.saveAllData(qsave, null)
@@ -127,10 +129,11 @@ for (Map d in days.values()) {
   row.setId(d.user + "_" + dayOf(d.day))
   row.setValue("user", d.user); row.setValue("day", d.day)
   ["answers", "correct", "certainwrong", "questions", "helpful", "nothelpful"].each { row.setValue(it, d[it]) }
-  // sessions: foreground spans when the app reported any that day, else answer bursts (gap > 30 min starts a new one)
-  int bursts = 0; Date prev = null
-  for (Date t in d.times.sort()) { if (prev == null || t.time - prev.time > 30 * 60 * 1000L) bursts++; prev = t }
-  row.setValue("sessions", d.spans > 0 ? d.spans : bursts)
+  // sessions: runs of activity (foreground spans, answers, questions, usage events) with no gap over 30 min.
+  // Not one per foreground span: a browser tab switch pauses and resumes the app, which inflated it (121 in a day).
+  int sessions = 0; long end = 0L
+  for (List iv in d.iv.sort { it[0] }) { if (iv[0] - end > 30 * 60 * 1000L) sessions++; end = Math.max(end, iv[1]) }
+  row.setValue("sessions", sessions)
   row.setValue("minutes", Math.round(d.minutes) as Integer)
   row.setValue("firstactivity", d.first); row.setValue("lastactivity", d.last); row.setValue("computedat", now)
   dsave << row
