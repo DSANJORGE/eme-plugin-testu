@@ -1,0 +1,4 @@
+<page>
+  <path-action name="TestUSocialModule.replyFlag"/>
+  <permission name="view"><user/></permission>
+</page>

@@ -5,4 +5,7 @@
   <learnernotificationtype id="reaction"><name><![CDATA[Reacción a tu comentario]]></name></learnernotificationtype>
   <learnernotificationtype id="tutorreply"><name><![CDATA[Respuesta del tutor]]></name></learnernotificationtype>
   <learnernotificationtype id="reminder"><name><![CDATA[Recordatorio diario]]></name></learnernotificationtype>
+  <learnernotificationtype id="flagreply"><name><![CDATA[Respuesta a tu reporte]]></name></learnernotificationtype>
+  <learnernotificationtype id="fixed"><name><![CDATA[Corrigieron la pregunta que reportaste]]></name></learnernotificationtype>
+  <learnernotificationtype id="reviewed"><name><![CDATA[Revisaron la pregunta que reportaste]]></name></learnernotificationtype>
 </learnernotificationtypes>

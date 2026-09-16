@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Pilot readiness C2: one row per question a learner reported from the app (services/testu/social/flag).
-     user comes from the session, never the body. status is open until a later console task resolves it.
+     user comes from the session, never the body. status is open until the console closes it (services/testu/social/resolveflag: resolved | dismissed, with
+     resolvedby/resolvedate, fixchips = JSON array of what changed, fixnote = one line for the reporter). replies = JSON array
+     [{by,name,date,text}] of staff replies to this report (replyflag); ponytail: a JSON column, not a table, a report gets a
+     handful of replies at most. All new fields index="true" for the same updateIndex reason as note.
      status needs indextype="not_analyzed" (as chatterbox does for channel/functionname) or eMe's exact()
      queries status.exact, a sub-field a not_analyzed mapping does not have. index="false" is not "stored but
      unsearchable": BaseElasticSearcher.updateIndex skips !isIndex() fields entirely, so note must stay index="true".
@@ -17,4 +20,9 @@
   <property id="reason" index="true" stored="true" editable="false" type="list" listid="questionflagreason"><name><language id="en">Reason</language><language id="es">Motivo</language></name></property>
   <property id="note" index="true" stored="true" editable="false" type="textarea"><name><language id="en">Note</language><language id="es">Nota</language></name></property>
   <property id="status" index="true" stored="true" editable="true" keyword="true" indextype="not_analyzed"><name><language id="en">Status</language><language id="es">Estado</language></name></property>
+  <property id="resolvedby" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Resolved by</language><language id="es">Resuelto por</language></name></property>
+  <property id="resolvedate" index="true" stored="true" editable="false" type="date"><name><language id="en">Resolved</language><language id="es">Resuelto el</language></name></property>
+  <property id="fixchips" index="true" stored="true" editable="false" type="textarea"><name><language id="en">What changed</language><language id="es">Qué se corrigió</language></name></property>
+  <property id="fixnote" index="true" stored="true" editable="false" type="textarea"><name><language id="en">Note to reporter</language><language id="es">Nota para quien reportó</language></name></property>
+  <property id="replies" index="true" stored="true" editable="false" type="textarea"><name><language id="en">Staff replies</language><language id="es">Respuestas del equipo</language></name></property>
 </properties>

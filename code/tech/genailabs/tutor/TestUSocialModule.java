@@ -916,7 +916,352 @@ public class TestUSocialModule extends TestUBaseModule
 		}, "testu-tutor-reply").start();
 	}
 
+	private static final String[] Q_FIELDS = {"question", "option_a", "option_b", "option_c", "option_d", "option_e", "option_f", "correctoption", "rationale", "sourcequote", "sourcecite", "sourcepage"};
+	private static final SimpleDateFormat ISO = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX");
+
+	static String trimmed(WebPageRequest inReq, String name)
+	{
+		String v = inReq.getRequestParameter(name);
+		return v == null ? "" : v.trim();
+	}
+
+	static String iso(Object stored)
+	{
+		Date d = DateStorageUtil.getStorageUtil().parseFromObject(stored);
+		synchronized (ISO)
+		{
+			return d != null ? ISO.format(d) : null;
+		}
+	}
+
+	/** "First Last" of a user, the tutor's name for the tutor, the id when unknown. ponytail: no cache, callers load a handful. */
+	String displayName(MediaArchive archive, String uid)
+	{
+		if (uid == null || uid.isEmpty())
+			return "";
+		if (TUTOR.equals(uid))
+			return tutorName(archive);
+		User u = archive.getUserManager() != null ? archive.getUserManager().getUser(uid) : null;
+		if (u == null)
+			return uid;
+		String fn = u.get("firstName");
+		String ln = u.get("lastName");
+		String n = ((fn != null ? fn : "") + " " + (ln != null ? ln : "")).trim();
+		return n.isEmpty() ? uid : n;
+	}
+
+	JSONObject flagJson(MediaArchive archive, Data f)
+	{
+		JSONObject o = new JSONObject();
+		o.put("id", f.getId());
+		o.put("entityquestion", f.get("entityquestion"));
+		o.put("entitytutorial", f.get("entitytutorial"));
+		o.put("reason", f.get("reason"));
+		o.put("note", f.get("note") != null ? f.get("note") : "");
+		o.put("userId", f.get("user"));
+		o.put("name", displayName(archive, f.get("user")));
+		o.put("date", iso(f.getValue("datecreated")));
+		o.put("status", f.get("status") != null ? f.get("status") : "open");
+		o.put("resolvedby", f.get("resolvedby"));
+		o.put("resolvedbyname", f.get("resolvedby") != null ? displayName(archive, f.get("resolvedby")) : null);
+		o.put("resolvedate", f.get("resolvedate") != null ? iso(f.getValue("resolvedate")) : null);
+		o.put("fixnote", f.get("fixnote") != null ? f.get("fixnote") : "");
+		Object chips = f.get("fixchips") != null ? JSONValue.parse(f.get("fixchips")) : null;
+		o.put("fixchips", chips instanceof JSONArray ? chips : new JSONArray());
+		Object replies = f.get("replies") != null ? JSONValue.parse(f.get("replies")) : null;
+		o.put("replies", replies instanceof JSONArray ? replies : new JSONArray());
+		return o;
+	}
+
+	/** question.json?id=: one question as the app renders it (fields, hosting content's image), how learners answered it
+	 *  (per option, correct, confident-and-wrong), every report on it open or closed with staff replies, and its change log
+	 *  (auditevent rows on the question, newest first). Console only: personas_view, reports narrowed to the caller's scope teams. */
+	public void loadQuestion(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		UserProfile userProfile = inReq.getUserProfile();
+		if (userProfile == null || !userProfile.hasPermission("personas_view"))
+		{
+			fail(inReq, 403, "not allowed");
+			return;
+		}
+		String id = trimmed(inReq, "id");
+		Data q = id.isEmpty() ? null : archive.getData("entityquestion", id);
+		if (q == null)
+		{
+			fail(inReq, 404, "no such question");
+			return;
+		}
+		JSONObject question = new JSONObject();
+		question.put("id", id);
+		for (String f : Q_FIELDS)
+			question.put(f, q.get(f) != null ? q.get(f) : "");
+		Data cc = (Data) archive.query("componentcontent").exact("questionid", id).searchOne();
+		String assetid = cc != null ? cc.get("assetid") : null;
+		if (assetid != null && !assetid.isEmpty())
+		{
+			question.put("assetid", assetid);
+			question.put("asseturl", inReq.getSiteRoot() + archive.asLinkToPreview(assetid, "image3000x3000"));
+		}
+		String tid = tutorialOfChannel(archive, "q-" + id);
+		question.put("entitytutorial", tid);
+		Data tut = tid.isEmpty() ? null : archive.getData("entitytutorial", tid);
+		question.put("tutorial", tut != null && tut.getName() != null ? tut.getName() : tid);
+
+		JSONObject byOption = new JSONObject();
+		int total = 0, correct = 0, certainWrong = 0;
+		HitTracker answers = archive.query("tutoranswer").exact("entityquestion", id).search();
+		if (answers != null)
+		{
+			answers.enableBulkOperations();
+			for (Object o : answers)
+			{
+				Data a = (Data) o;
+				String opt = a.get("selectedoption");
+				if (opt == null || opt.isEmpty())
+					continue;
+				total++;
+				opt = opt.toUpperCase();
+				Long n = (Long) byOption.get(opt);
+				byOption.put(opt, n == null ? 1L : n + 1);
+				boolean ok = "true".equals(String.valueOf(a.get("iscorrect")));
+				String conf = a.get("answerconfidence");
+				if (ok)
+					correct++;
+				else if ("confident".equals(conf) || "mostlysure".equals(conf))
+					certainWrong++;
+			}
+		}
+		JSONObject stats = new JSONObject();
+		stats.put("total", total);
+		stats.put("correct", correct);
+		stats.put("certainwrong", certainWrong);
+		stats.put("byoption", byOption);
+
+		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
+		UserManager um = archive.getUserManager();
+		JSONArray flags = new JSONArray();
+		HitTracker fl = archive.query("questionflag").exact("entityquestion", id).sort("datecreatedDown").search();
+		if (fl != null)
+		{
+			for (Object o : fl)
+			{
+				Data f = (Data) o;
+				if (scope != null)
+				{
+					User u = um != null ? um.getUser(f.get("user")) : null;
+					if (u == null || !scope.contains(u.get("team")))
+						continue;
+				}
+				flags.add(flagJson(archive, f));
+			}
+		}
+
+		JSONArray log = new JSONArray();
+		HitTracker ev = archive.query("auditevent").exact("targettype", "entityquestion").exact("targetid", id).sort("datecreatedDown").search();
+		if (ev != null)
+		{
+			for (Object o : ev)
+			{
+				Data e = (Data) o;
+				JSONObject row = new JSONObject();
+				row.put("id", e.getId());
+				row.put("date", iso(e.getValue("datecreated")));
+				row.put("actor", e.get("actor"));
+				row.put("actorname", displayName(archive, e.get("actor")));
+				row.put("action", e.get("action"));
+				Object before = e.get("before") != null && !e.get("before").isEmpty() ? JSONValue.parse(e.get("before")) : null;
+				Object after = e.get("after") != null && !e.get("after").isEmpty() ? JSONValue.parse(e.get("after")) : null;
+				row.put("before", before);
+				row.put("after", after);
+				log.add(row);
+			}
+		}
+
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("question", question);
+		resp.put("stats", stats);
+		resp.put("flags", flags);
+		resp.put("log", log);
+		reply(inReq, resp);
+	}
+
+	/** savequestion.json (POST id + any of Q_FIELDS): edits the question in place for everyone, the app reads it on its next
+	 *  tutorial.json. Only sent fields change; the merged question must still pass LearningEngine.contentProblem. One auditevent
+	 *  "question.edit" with before/after of the changed fields only: the change log the console shows and compliance reads.
+	 *  Open reports stay open, resolveflag closes them. correctoption is stored as the capital letter answer.json compares. */
+	public void saveQuestion(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		String id = trimmed(inReq, "id");
+		Data q = id.isEmpty() ? null : archive.getData("entityquestion", id);
+		if (q == null)
+		{
+			fail(inReq, 404, "no such question");
+			return;
+		}
+		Map<String, String> next = new LinkedHashMap<>();
+		for (String f : Q_FIELDS)
+		{
+			String v = inReq.getRequestParameter(f);
+			if (v == null)
+				continue;
+			v = v.trim();
+			if ("correctoption".equals(f))
+				v = v.toUpperCase().replaceFirst("^OPTION_", "");
+			next.put(f, v);
+		}
+		String bad = LearningEngine.contentProblem(f -> next.containsKey(f) ? next.get(f) : q.get(f));
+		if (bad != null)
+		{
+			fail(inReq, 400, bad);
+			return;
+		}
+		JSONObject before = new JSONObject();
+		JSONObject after = new JSONObject();
+		for (Map.Entry<String, String> e : next.entrySet())
+		{
+			String old = q.get(e.getKey()) != null ? q.get(e.getKey()) : "";
+			if (!old.equals(e.getValue()))
+			{
+				before.put(e.getKey(), old);
+				after.put(e.getKey(), e.getValue());
+				q.setValue(e.getKey(), e.getValue());
+			}
+		}
+		if (!after.isEmpty())
+		{
+			archive.getSearcher("entityquestion").saveData(q, inReq.getUser());
+			audit(inReq, archive, "question.edit", "entityquestion", id, before, after);
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("changed", new JSONArray() {{ addAll(after.keySet()); }});
+		reply(inReq, resp);
+	}
+
+	/** resolveflag.json (POST entityquestion, verdict fixed|dismissed, chips = comma list of what changed, note): closes every
+	 *  open report on the question (status resolved|dismissed + who/when/what), tells each reporter once in their bell
+	 *  (type fixed|reviewed, text = chips + note, so they can judge and re-report) and logs one auditevent
+	 *  "question.fixed"|"question.dismissed" with the same summary and the report ids it closed. */
+	public void resolveFlags(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		User user = inReq.getUser();
+		String me = user != null ? user.getId() : null;
+		if (me == null || me.isEmpty())
+		{
+			fail(inReq, 401, "not signed in");
+			return;
+		}
+		String qid = trimmed(inReq, "entityquestion");
+		String verdict = trimmed(inReq, "verdict");
+		if (qid.isEmpty() || !("fixed".equals(verdict) || "dismissed".equals(verdict)))
+		{
+			fail(inReq, 400, "entityquestion and verdict fixed|dismissed required");
+			return;
+		}
+		JSONArray chips = new JSONArray();
+		for (String c : trimmed(inReq, "chips").split(","))
+			if (!c.trim().isEmpty() && chips.size() < 12)
+				chips.add(c.trim());
+		String note = trimmed(inReq, "note");
+		if (note.length() > 1000)
+			note = note.substring(0, 1000);
+
+		HitTracker open = archive.query("questionflag").exact("entityquestion", qid).exact("status", "open").search();
+		List<Data> tosave = new ArrayList<>();
+		Set<String> reporters = new java.util.LinkedHashSet<>();
+		JSONArray ids = new JSONArray();
+		Date now = new Date();
+		if (open != null)
+		{
+			for (Object o : open)
+			{
+				Data f = (Data) o;
+				f.setValue("status", "fixed".equals(verdict) ? "resolved" : "dismissed");
+				f.setValue("resolvedby", me);
+				f.setValue("resolvedate", now);
+				f.setValue("fixchips", chips.toJSONString());
+				f.setValue("fixnote", note);
+				tosave.add(f);
+				reporters.add(f.get("user"));
+				ids.add(f.getId());
+			}
+		}
+		if (!tosave.isEmpty())
+		{
+			archive.getSearcher("questionflag").saveAllData(tosave, user);
+			String summary = String.join(" · ", (List<String>) (List<?>) chips) + (note.isEmpty() ? "" : (chips.isEmpty() ? "" : ". ") + note);
+			for (String r : reporters)
+				sendNotification(archive, r, me, "fixed".equals(verdict) ? "fixed" : "reviewed", "q-" + qid, summary, (String) ids.get(0), null);
+			JSONObject after = new JSONObject();
+			after.put("verdict", verdict);
+			after.put("chips", chips);
+			after.put("note", note);
+			after.put("flags", ids);
+			audit(inReq, archive, "question." + verdict, "entityquestion", qid, null, after);
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("closed", ids.size());
+		resp.put("notified", new JSONArray() {{ addAll(reporters); }});
+		reply(inReq, resp);
+	}
+
+	/** replyflag.json (POST flagid, text): a staff reply to one report, private to its reporter: appended to the report's
+	 *  replies and delivered to the reporter's bell (type flagreply, deep-links to the question). The report stays open. */
+	public void replyFlag(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		User user = inReq.getUser();
+		String me = user != null ? user.getId() : null;
+		if (me == null || me.isEmpty())
+		{
+			fail(inReq, 401, "not signed in");
+			return;
+		}
+		String flagid = trimmed(inReq, "flagid");
+		String text = trimmed(inReq, "text");
+		if (text.length() > 1000)
+			text = text.substring(0, 1000);
+		Searcher s = archive.getSearcher("questionflag");
+		Data f = flagid.isEmpty() ? null : (Data) s.searchById(flagid);
+		if (f == null)
+		{
+			fail(inReq, 404, "no such report");
+			return;
+		}
+		if (text.isEmpty())
+		{
+			fail(inReq, 400, "text required");
+			return;
+		}
+		Object parsed = f.get("replies") != null ? JSONValue.parse(f.get("replies")) : null;
+		JSONArray replies = parsed instanceof JSONArray ? (JSONArray) parsed : new JSONArray();
+		JSONObject r = new JSONObject();
+		r.put("by", me);
+		r.put("name", displayName(archive, me));
+		r.put("date", iso(new Date()));
+		r.put("text", text);
+		replies.add(r);
+		f.setValue("replies", replies.toJSONString());
+		s.saveData(f, user);
+		sendNotification(archive, f.get("user"), me, "flagreply", "q-" + f.get("entityquestion"), text, flagid, null);
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("reply", r);
+		reply(inReq, resp);
+	}
+
 	public void sendNotification(MediaArchive archive, String recipient, String actor, String type, Data msg, String id)
+	{
+		sendNotification(archive, recipient, actor, type, msg.get("channel") != null ? msg.get("channel").toString() : "",
+			msg.get("message") != null ? msg.get("message").toString() : "", msg.getId(), id);
+	}
+
+	public void sendNotification(MediaArchive archive, String recipient, String actor, String type, String channel, String message, String messageid, String id)
 	{
 		if (recipient == null || recipient.isEmpty() || recipient.equals(actor))
 		{
@@ -932,7 +1277,6 @@ public class TestUSocialModule extends TestUBaseModule
 				n.setId(id);
 			}
 		}
-		String channel = msg.get("channel") != null ? msg.get("channel").toString() : "";
 		String qid = channel.startsWith("q-") ? channel.substring(2) : "";
 		String tid = tutorialOfChannel(archive, channel);
 		Data a = TUTOR.equals(actor) ? null : (Data) archive.getSearcher("user").searchById(actor);
@@ -961,14 +1305,14 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 		n.setValue("actorname", actorName != null ? actorName : TUTOR.equals(actor) ? tutorName(archive) : actor);
 
-		String text = (msg.get("message") != null) ? msg.get("message").toString() : "";
+		String text = message != null ? message : "";
 		text = text.replaceAll("<[^>]*>", "").replaceAll("\\s+", " ").trim();
 		if (text.length() > 120)
 			text = text.substring(0, 120);
 		n.setValue("text", text);
 
 		n.setValue("channel", channel);
-		n.setValue("messageid", msg.getId());
+		n.setValue("messageid", messageid);
 		n.setValue("entityquestion", qid);
 		n.setValue("entitytutorial", tid);
 
