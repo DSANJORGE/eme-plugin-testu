@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Learning engine v1: required band per job role x topic; strictest wins across a user's job roles. Seeded by data. -->
+<!-- Learning engine v1: required band per job role x topic; strictest wins across a user's job roles.
+     Job profiles (spec 2026-09-16): one row per profile x topic, id <jobrole>_<entitytopic>. position = order in the profile (1-based),
+     mandatory (default true), requiresprevious = locked until the previous row of the same profile is finished, afterfinish keep|remove. -->
 <properties beanname="dataSearcher">
   <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
-  <property id="jobrole" index="true" stored="true" editable="true" type="list" listid="jobrole"><name><language id="en">Job role</language><language id="es">Puesto</language></name></property>
+  <property id="jobrole" index="true" stored="true" editable="true" type="list" listid="jobrole"><name><language id="en">Job profile</language><language id="es">Perfil de puesto</language></name></property>
   <property id="entitytopic" index="true" stored="true" editable="true" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
   <property id="requiredlevel" index="true" stored="true" editable="true" type="list" listid="masterylevel"><name><language id="en">Required level</language><language id="es">Nivel requerido</language></name></property>
+  <property id="position" index="true" stored="true" editable="true" type="number" datatype="number"><name><language id="en">Position</language><language id="es">Posición</language></name></property>
+  <property id="mandatory" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Mandatory</language><language id="es">Obligatorio</language></name></property>
+  <property id="requiresprevious" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Requires previous topic</language><language id="es">Requiere el tema anterior</language></name></property>
+  <property id="afterfinish" index="true" stored="true" editable="true" type="list" listid="afterfinish"><name><language id="en">After finish</language><language id="es">Al terminar</language></name></property>
 </properties>

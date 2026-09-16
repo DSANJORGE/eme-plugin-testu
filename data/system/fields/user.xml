@@ -10,4 +10,6 @@
   <property id="team" index="true" stored="true" editable="true" type="list" viewtype="list" datatype="list" listid="team" indextype="not_analyzed">Team</property>
   <!-- Learning engine v1: job roles drive topicrequirement (strictest wins). -->
   <property id="jobrole" index="true" stored="true" editable="true" type="list" viewtype="multiselect" datatype="list" listid="jobrole" indextype="not_analyzed">Job role</property>
+  <!-- Job profiles: the primary profile orders the learner's topics; must be one of jobrole. -->
+  <property id="primaryjobrole" index="true" stored="true" editable="true" type="list" viewtype="list" datatype="list" listid="jobrole" indextype="not_analyzed">Primary job profile</property>
 </properties>
