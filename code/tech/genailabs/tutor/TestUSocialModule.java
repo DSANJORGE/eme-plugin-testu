@@ -780,15 +780,36 @@ public class TestUSocialModule extends TestUBaseModule
 		if (all != null)
 			all.enableBulkOperations();
 		JSONArray recent = new JSONArray();
+		// Inbox stats over every comment in scope (the list itself stops at 50): per channel, newest first, whether the
+		// last word is a learner's (waiting) and, chronologically, how long each learner comment waited for staff.
+		final long DAY = 86400000L;
+		long today = (System.currentTimeMillis() / DAY) * DAY;
+		long since14 = today - 13 * DAY;
+		int[] dayComments = new int[14], dayStaff = new int[14], dayLearners = new int[14], dayReports = new int[14], dayReplies = new int[14];
+		double[] dayHours = new double[14];
+		Map<String, List<Object[]>> perChannel = new HashMap<>(); // channel -> [(millis, staff)] newest first
 		if (all != null)
 		{
 			for (Object o : all)
 			{
-				if (recent.size() >= 50)
-					break;
 				Data m = (Data) o;
 				String uid = m.get("user");
 				if (!inScope.test(uid))
+					continue;
+				boolean staffMsg = TUTOR.equals(uid) || STAFF_ROLES.contains(roleOf.apply(uid));
+				Date md = DateStorageUtil.getStorageUtil().parseFromObject(m.getValue("date"));
+				long ms = md != null ? md.getTime() : 0L;
+				perChannel.computeIfAbsent(String.valueOf(m.get("channel")), k -> new ArrayList<>()).add(new Object[] {ms, staffMsg});
+				int di = (int) ((ms - since14) / DAY);
+				if (di >= 0 && di < 14)
+				{
+					dayComments[di]++;
+					if (staffMsg)
+						dayStaff[di]++;
+					else
+						dayLearners[di]++;
+				}
+				if (recent.size() >= 50)
 					continue;
 				JSONObject c = new JSONObject();
 				c.put("id", m.getId());
@@ -811,7 +832,56 @@ public class TestUSocialModule extends TestUBaseModule
 			}
 		}
 
-		HitTracker fl = archive.query("questionflag").exact("status", "open").sort("datecreatedDown").search();
+		int waiting = 0;
+		long oldestWaiting = 0L;
+		double hours7 = 0, hoursPrev = 0;
+		int n7 = 0, nPrev = 0;
+		for (List<Object[]> msgs : perChannel.values())
+		{
+			if (!(Boolean) msgs.get(0)[1])
+			{
+				waiting++;
+				long at = (Long) msgs.get(0)[0];
+				if (oldestWaiting == 0L || at < oldestWaiting)
+					oldestWaiting = at;
+			}
+			long pendingSince = 0L;
+			for (int i = msgs.size() - 1; i >= 0; i--)
+			{
+				long at = (Long) msgs.get(i)[0];
+				boolean st = (Boolean) msgs.get(i)[1];
+				if (!st)
+				{
+					if (pendingSince == 0L)
+						pendingSince = at;
+					continue;
+				}
+				if (pendingSince == 0L)
+					continue;
+				double h = (at - pendingSince) / 3600000.0;
+				pendingSince = 0L;
+				int di = (int) ((at - since14) / DAY);
+				if (di >= 0 && di < 14)
+				{
+					dayReplies[di]++;
+					dayHours[di] += h;
+				}
+				if (di >= 7 && di < 14)
+				{
+					n7++;
+					hours7 += h;
+				}
+				else if (di >= 0 && di < 7)
+				{
+					nPrev++;
+					hoursPrev += h;
+				}
+			}
+		}
+
+		int openReports = 0;
+		Set<String> openQuestions = new HashSet<>();
+		HitTracker fl = archive.query("questionflag").sort("datecreatedDown").search();
 		if (fl != null)
 			fl.enableBulkOperations();
 		JSONArray flags = new JSONArray();
@@ -819,11 +889,19 @@ public class TestUSocialModule extends TestUBaseModule
 		{
 			for (Object o : fl)
 			{
-				if (flags.size() >= 50)
-					break;
 				Data f = (Data) o;
 				String uid = f.get("user");
 				if (!inScope.test(uid))
+					continue;
+				Date fd = DateStorageUtil.getStorageUtil().parseFromObject(f.getValue("datecreated"));
+				int di = fd != null ? (int) ((fd.getTime() - since14) / DAY) : -1;
+				if (di >= 0 && di < 14)
+					dayReports[di]++;
+				if (!"open".equals(f.get("status") != null ? f.get("status") : "open"))
+					continue;
+				openReports++;
+				openQuestions.add(String.valueOf(f.get("entityquestion")));
+				if (flags.size() >= 50)
 					continue;
 				JSONObject flagObj = new JSONObject();
 				flagObj.put("id", f.getId());
@@ -843,10 +921,42 @@ public class TestUSocialModule extends TestUBaseModule
 			}
 		}
 
+		JSONArray days = new JSONArray();
+		SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy-MM-dd");
+		dayFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+		int answered7 = 0, answeredPrev = 0;
+		for (int i = 0; i < 14; i++)
+		{
+			JSONObject dObj = new JSONObject();
+			dObj.put("day", dayFormat.format(new Date(since14 + i * DAY)));
+			dObj.put("comments", dayComments[i]);
+			dObj.put("staff", dayStaff[i]);
+			dObj.put("learners", dayLearners[i]);
+			dObj.put("reports", dayReports[i]);
+			dObj.put("replies", dayReplies[i]);
+			dObj.put("responsehours", dayReplies[i] == 0 ? null : Math.round(dayHours[i] / dayReplies[i] * 10) / 10.0);
+			days.add(dObj);
+			if (i >= 7)
+				answered7 += dayStaff[i];
+			else
+				answeredPrev += dayStaff[i];
+		}
+		JSONObject stats = new JSONObject();
+		stats.put("waiting", waiting);
+		stats.put("waitinghours", oldestWaiting == 0L ? null : Math.round((System.currentTimeMillis() - oldestWaiting) / 3600000.0 * 10) / 10.0);
+		stats.put("openreports", openReports);
+		stats.put("openquestions", openQuestions.size());
+		stats.put("answered7", answered7);
+		stats.put("answeredprev", answeredPrev);
+		stats.put("responsehours7", n7 == 0 ? null : Math.round(hours7 / n7 * 10) / 10.0);
+		stats.put("responsehoursprev", nPrev == 0 ? null : Math.round(hoursPrev / nPrev * 10) / 10.0);
+		stats.put("days", days);
+
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
 		resp.put("recent", recent);
 		resp.put("flags", flags);
+		resp.put("stats", stats);
 		reply(inReq, resp);
 	}
 
