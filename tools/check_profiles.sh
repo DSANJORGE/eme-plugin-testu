@@ -130,18 +130,17 @@ try:
     me = login(USER, PASSWORD)
     base = state()
     TOPICS = [t["id"] for t in base["topics"] if t["questions"] > 0]
-    if len(TOPICS) < 3:
-        sys.exit("need at least 3 learner-visible topics with questions")
-    T1, T2, T3 = TOPICS[:3]
+    if len(TOPICS) < 2:
+        sys.exit("need at least 2 learner-visible topics with questions")
+    T1, T2 = TOPICS[:2]
     ok("no profile: no position, no locks, no profiles", all(t.get("position") is None and not t.get("locked") for t in base["topics"]) and base.get("profiles") == [] and base.get("removedtopics") == [], base.get("profiles"))
 
     put_row("jobrole", P1, {"name": "Pcheck Pilot"})
     put_row("jobrole", P2, {"name": "Pcheck Safety"})
     for rid, role, tid, pos, lvl, mand, prev, after in (
-        ("pcheck-r1", P1, T3, 1, "", "true", "false", "remove"),
-        ("pcheck-r2", P1, T1, 2, "competent", "true", "true", "keep"),
+        ("pcheck-r1", P1, T1, 1, "", "true", "false", "remove"),
+        ("pcheck-r2", P1, T2, 2, "competent", "true", "true", "keep"),
         ("pcheck-r3", P2, T2, 1, "expert", "false", "false", "keep"),
-        ("pcheck-r4", P2, T1, 2, "expert", "true", "false", "keep"),
     ):
         put_row("topicrequirement", rid, {"jobrole": role, "entitytopic": tid, "position": str(pos), "requiredlevel": lvl, "mandatory": mand, "requiresprevious": prev, "afterfinish": after})
         ROWS.append(rid)
@@ -152,49 +151,49 @@ try:
     # ---- state.json
     st = state()
     ids = [t["id"] for t in st["topics"]]
-    ok("state: assignment order T3, T1, T2 then the rest", ids[:3] == [T3, T1, T2], ids[:4])
-    t1, t2, t3 = topic_of(st, T1), topic_of(st, T2), topic_of(st, T3)
-    ok("state: positions 1..3, profile ids and names", (t3["position"], t1["position"], t2["position"]) == (1, 2, 3) and t3["profile"] == P1 and t3["profilename"] == "Pcheck Pilot" and t2["profile"] == P2, (t3, t2))
-    ok("state: T1 locked behind T3 with reason and previoustopic", t1["locked"] is True and t1["lockreason"] == "previous_topic_incomplete" and t1["previoustopic"] == T3, t1)
-    ok("state: strictest level on shared T1 (expert) and mandatory", t1["requiredlevel"] == "expert" and t1["mandatory"] is True, t1)
-    ok("state: T2 optional, not locked, no level -> requiredlevel expert from row", t2["mandatory"] is False and t2["locked"] is False, t2)
-    ok("state: afterfinish/finished present", t3["afterfinish"] == "remove" and t3["finished"] is False and t1["afterfinish"] == "keep", t3)
+    ok("state: assignment order T1, T2", ids[:2] == [T1, T2], ids[:2])
+    t1, t2 = topic_of(st, T1), topic_of(st, T2)
+    ok("state: positions 1..2, profile ids and names", (t1["position"], t2["position"]) == (1, 2) and t1["profile"] == P1 and t1["profilename"] == "Pcheck Pilot" and t2["profile"] == P1, (t1, t2))
+    ok("state: T2 locked behind T1 with reason and previoustopic", t2["locked"] is True and t2["lockreason"] == "previous_topic_incomplete" and t2["previoustopic"] == T1, t2)
+    ok("state: strictest level on shared T2 (expert) and mandatory", t2["requiredlevel"] == "expert" and t2["mandatory"] is True, t2)
+    ok("state: T1 mandatory, not locked", t1["mandatory"] is True and t1["locked"] is False, t1)
+    ok("state: afterfinish/finished present", t1["afterfinish"] == "remove" and t1["finished"] is False and t2["afterfinish"] == "keep", t1)
     ok("state: profiles primary first", [p["id"] for p in st["profiles"]] == [P1, P2] and st["profiles"][0]["primary"] is True and st["profiles"][0]["name"] == "Pcheck Pilot", st["profiles"])
-    ok("state: unassigned topics have null position", all(t.get("position") is None for t in st["topics"][3:]), st["topics"][3:4])
+    ok("state: every visible topic assigned (2-topic catalog)", all(t.get("position") is not None for t in st["topics"]), [t.get("position") for t in st["topics"]])
 
     # ---- locks on next/answer/exposure
-    stc, body = nxt(mode="learn", topicid=T1)
-    ok("next: learn on a locked topic = 409 topic_locked with previoustopic", stc == 409 and body["error"] == "topic_locked" and body["topic"] == T1 and body["previoustopic"] == T3, (stc, body))
-    stc, body = nxt(mode="improve", topicid=T1)
+    stc, body = nxt(mode="learn", topicid=T2)
+    ok("next: learn on a locked topic = 409 topic_locked with previoustopic", stc == 409 and body["error"] == "topic_locked" and body["topic"] == T2 and body["previoustopic"] == T1, (stc, body))
+    stc, body = nxt(mode="improve", topicid=T2)
     ok("next: improve on a locked topic = 409 topic_locked", stc == 409 and body["error"] == "topic_locked", (stc, body))
-    ln = must("learn T3", nxt(mode="learn", topicid=T3))
-    # T1 is locked and we have no session for it (next.json refuses with topic_locked); post an exposure only the
-    # topic lock can reject: same topic, a real question of T1 (state.json's nextquestionid, unaffected by the topic
+    ln = must("learn T1", nxt(mode="learn", topicid=T1))
+    # T2 is locked and we have no session for it (next.json refuses with topic_locked); post an exposure only the
+    # topic lock can reject: same topic, a real question of T2 (state.json's nextquestionid, unaffected by the topic
     # lock), no session. resolve() checks topic_locked right after scope_mismatch and before the session checks, so
     # topic_locked is the error actually returned; scope_mismatch/missing_sessionid are listed only as a defensive fallback.
-    r = call(me, "POST", "/services/testu/learn/exposure.json", form={"mode": "learn", "scopetype": "topic", "scopeid": T1, "questionid": t1["nextquestionid"]})
+    r = call(me, "POST", "/services/testu/learn/exposure.json", form={"mode": "learn", "scopetype": "topic", "scopeid": T2, "questionid": t2["nextquestionid"]})
     ok("exposure: locked topic never accepted (409)", r[0] == 409 and r[1]["error"] in ("topic_locked", "missing_sessionid", "scope_mismatch"), r)
     dc = must("dailychallenge", nxt(mode="dailychallenge"))
-    ok("dailychallenge: no question of the locked topic, first new from T3", all(i["topicid"] != T1 for i in dc["items"]) and any(i["topicid"] == T3 for i in dc["items"]), [i["topicid"] for i in dc["items"]])
+    ok("dailychallenge: no question of the locked topic, first new from T1", all(i["topicid"] != T2 for i in dc["items"]) and any(i["topicid"] == T1 for i in dc["items"]), [i["topicid"] for i in dc["items"]])
 
-    # ---- finish T3 (all correct, confident) -> removed; T1 unlocks
+    # ---- finish T1 (all correct, confident) -> removed; T2 unlocks
     batch = ln
     while True:
         items = batch["items"]
         for i in items:
             qid = i["questionid"]
             must("answer", call(me, "POST", "/services/testu/learn/answer.json", form={
-                "mode": "learn", "scopetype": "topic", "scopeid": T3, "questionid": qid, "sessionid": batch["sessionid"],
+                "mode": "learn", "scopetype": "topic", "scopeid": T1, "questionid": qid, "sessionid": batch["sessionid"],
                 "selectedoption": fid(QROW[qid].get("correctoption")), "confidence": "confident", "hintlevel": "0",
                 "attemptid": "pc" + secrets.token_hex(8)}))
         if batch["complete"] or not items:
             break
-        batch = must("learn T3 next batch", nxt(mode="learn", topicid=T3))
+        batch = must("learn T1 next batch", nxt(mode="learn", topicid=T1))
     refresh()
     st2 = state()
-    ok("finish: T3 removed (absent from topics, listed in removedtopics)", T3 not in [t["id"] for t in st2["topics"]] and st2["removedtopics"] == [T3], st2["removedtopics"])
-    ok("finish: T1 unlocked, keeps position 2", topic_of(st2, T1)["locked"] is False and topic_of(st2, T1)["position"] == 2, topic_of(st2, T1))
-    stc, body = call(me, "GET", f"/services/testu/learn/state.json?topicid={T3}")
+    ok("finish: T1 removed (absent from topics, listed in removedtopics)", T1 not in [t["id"] for t in st2["topics"]] and st2["removedtopics"] == [T1], st2["removedtopics"])
+    ok("finish: T2 unlocked, keeps position 2", topic_of(st2, T2)["locked"] is False and topic_of(st2, T2)["position"] == 2, topic_of(st2, T2))
+    stc, body = call(me, "GET", f"/services/testu/learn/state.json?topicid={T1}")
     ok("state: removed topic by id = 404 unknown_topic", stc == 404 and body["error"] == "unknown_topic", (stc, body))
 
     # ---- endpoints (Task 4)
@@ -227,7 +226,7 @@ try:
     mine = next(p for p in lst["profiles"] if p["id"] == NEW)
     ok("profiles.json: lists the new profile with 0 members and every topic", mine["members"] == 0 and any(t["id"] == T1 for t in lst["topics"]), mine)
     pil = next(p for p in lst["profiles"] if p["id"] == P1)
-    ok("profiles.json: seeded rows read back (position, gate, afterfinish)", [x["topic"] for x in pil["rows"]] == [T3, T1] and pil["rows"][1]["requiresprevious"] is True and pil["rows"][0]["afterfinish"] == "remove" and pil["members"] == 1, pil)
+    ok("profiles.json: seeded rows read back (position, gate, afterfinish)", [x["topic"] for x in pil["rows"]] == [T1, T2] and pil["rows"][1]["requiresprevious"] is True and pil["rows"][0]["afterfinish"] == "remove" and pil["members"] == 1, pil)
 
     saved = must("saveprofile reorder", call(admin, "POST", PP + "saveprofile.json", form={"id": NEW, "name": "Pcheck New 2", "rows": rows((T1, "", True, False, "keep"))}))
     refresh()
@@ -287,7 +286,7 @@ try:
     # ---- analytics person.json in profile order
     pj = must("person.json", call(admin, "GET", f"/services/testu/analytics/person.json?user={quote(USER)}"))
     req = pj["risk"]["requiredtopics"]
-    ok("person: required topics in profile order, T3 excluded (removed), profile/position present", [x["id"] for x in req] == [T1, T2] and req[0]["profile"] == P1 and req[0]["position"] == 2, req)
+    ok("person: required topics in profile order, T1 excluded (removed), profile/position present", [x["id"] for x in req] == [T2] and req[0]["profile"] == P1 and req[0]["position"] == 2, req)
 finally:
     delete_rows("topicrequirement", ROWS)
     call(admin, "POST", "/services/authentication/usersave.json", form={"username": USER, "field": "jobrole", "jobrolevalue": ""})
