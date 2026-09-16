@@ -197,7 +197,10 @@ try:
                 "attemptid": "pc" + secrets.token_hex(8)}))
         if batch["complete"] or not items:
             break
-        batch = must("learn T1 next batch", nxt(mode="learn", topicid=T1))
+        stc, body = nxt(mode="learn", topicid=T1)
+        if stc == 404 and body.get("error") == "unknown_topic":
+            break  # topic removed = done
+        batch = must("learn T1 next batch", (stc, body))
     refresh()
     st2 = state()
     ok("finish: T1 removed (absent from topics, listed in removedtopics)", T1 not in [t["id"] for t in st2["topics"]] and st2["removedtopics"] == [T1], st2["removedtopics"])
