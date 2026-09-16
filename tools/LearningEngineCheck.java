@@ -157,9 +157,165 @@ public class LearningEngineCheck
 		configChecks(c);
 		progressionChecks();
 		contentAndRetentionChecks();
+		profileChecks();
 
 		System.out.println(failures == 0 ? "ok: LearningEngineCheck all passed" : "FAIL: " + failures + " LearningEngineCheck assertion(s)");
 		System.exit(failures == 0 ? 0 : 1);
+	}
+
+	// ---- job profiles (spec 2026-09-16): pure assignment on a 4-topic fixture
+
+	static LearningEngine.Profiles profiles(LearningEngine.ProfileRow... rows)
+	{
+		LearningEngine.Profiles p = new LearningEngine.Profiles();
+		p.names.put("pilot", "Pilot");
+		p.names.put("safety", "Safety lead");
+		p.names.put("alpha", "Alpha");
+		for (LearningEngine.ProfileRow r : rows)
+		{
+			p.rows.add(r);
+		}
+		return p;
+	}
+
+	static LearningEngine.ProfileRow row(String profile, String topic, int pos, String level, boolean mandatory, boolean reqPrev, String after)
+	{
+		LearningEngine.ProfileRow r = new LearningEngine.ProfileRow();
+		r.jobrole = profile;
+		r.topicid = topic;
+		r.position = pos;
+		r.requiredlevel = level;
+		r.mandatory = mandatory;
+		r.requiresprevious = reqPrev;
+		r.afterfinish = after;
+		return r;
+	}
+
+	static Learner withProfiles(List<Attempt> at, String primary, String... all)
+	{
+		Learner l = learner(at);
+		l.primaryjobrole = primary;
+		l.jobroles = new ArrayList<>(List.of(all));
+		return l;
+	}
+
+	static List<String> order(Content c)
+	{
+		return new ArrayList<>(c.topics.keySet());
+	}
+
+	static List<Attempt> allCorrect(Content c, String topic)
+	{
+		List<Attempt> at = new ArrayList<>();
+		for (Question q : c.topics.get(topic).questions)
+		{
+			at.add(attempt(q.id, "learn", true, "confident", 0, 10 + q.position));
+		}
+		return at;
+	}
+
+	static void profileChecks()
+	{
+		// pilot: t1 (remove after finish), t2 requires previous, t3, t4 optional; safety: t3 expert, t2 keep
+		LearningEngine.Profiles p = profiles(
+			row("pilot", "t1", 1, "competent", true, false, "remove"),
+			row("pilot", "t2", 2, "competent", true, true, "keep"),
+			row("pilot", "t3", 3, null, true, false, "keep"),
+			row("pilot", "t4", 4, null, false, false, "keep"),
+			row("safety", "t3", 1, "expert", true, false, "keep"),
+			row("safety", "t2", 2, "beginner", false, true, "remove"));
+
+		Content c = content(4, 3);
+		Learner l = withProfiles(new ArrayList<>(), "pilot", "pilot", "safety");
+		LearningEngine.applyProfiles(c, l, p);
+		ok("profiles: assignment order = primary rows then extras", order(c).equals(List.of("t1", "t2", "t3", "t4")), order(c));
+		ok("profiles: positions renumbered 1..n", c.topics.get("t1").position == 1 && c.topics.get("t4").position == 4, c.topics.get("t4").position);
+		ok("profiles: shared topic keeps first occurrence's profile", "pilot".equals(c.topics.get("t3").profile) && "Pilot".equals(c.topics.get("t3").profilename), c.topics.get("t3").profile);
+		ok("profiles: strictest level across profiles", "expert".equals(c.topics.get("t3").assignedlevel) && "competent".equals(c.topics.get("t2").assignedlevel), c.topics.get("t3").assignedlevel);
+		ok("profiles: mandatory if any, keep beats remove", c.topics.get("t2").mandatory && "keep".equals(c.topics.get("t2").afterfinish), c.topics.get("t2").afterfinish);
+		ok("profiles: optional topic stays optional", !c.topics.get("t4").mandatory, c.topics.get("t4").mandatory);
+		ok("profiles: t2 locked behind unfinished t1 (previous_topic_incomplete)", c.topics.get("t2").locked && "t1".equals(c.topics.get("t2").previoustopic), c.topics.get("t2").previoustopic);
+		ok("profiles: t1 not locked (no gate), t3 not locked", !c.topics.get("t1").locked && !c.topics.get("t3").locked, "");
+		ok("profiles: nothing finished, nothing removed", !c.topics.get("t1").finished && c.removedtopics.isEmpty(), c.removedtopics);
+		ok("profiles: profiles json primary first", c.profiles.size() == 2 && "pilot".equals(c.profiles.get(0).get("id")) && Boolean.TRUE.equals(c.profiles.get(0).get("primary")), c.profiles);
+
+		// extras order by name: alpha (name "Alpha") before safety; primary still first
+		Content c2 = content(4, 3);
+		LearningEngine.Profiles p2 = profiles(row("safety", "t2", 1, null, true, false, "keep"), row("alpha", "t3", 1, null, true, false, "keep"), row("pilot", "t1", 1, null, true, false, "keep"));
+		LearningEngine.applyProfiles(c2, withProfiles(new ArrayList<>(), "pilot", "safety", "alpha", "pilot"), p2);
+		ok("profiles: extras sorted by name after primary", order(c2).subList(0, 3).equals(List.of("t1", "t3", "t2")), order(c2));
+
+		// finished = learn complete + level; t1 all correct confident -> competent (100%) -> finished -> removed; t2 unlocks
+		Content c3 = content(4, 3);
+		LearningEngine.applyProfiles(c3, withProfiles(allCorrect(c, "t1"), "pilot", "pilot", "safety"), p);
+		ok("profiles: finished t1 with remove is stripped and listed", !c3.topics.containsKey("t1") && c3.removedtopics.equals(List.of("t1")) && !c3.questions.containsKey("t1q1"), c3.removedtopics);
+		ok("profiles: t2 unlocked once t1 finished", !c3.topics.get("t2").locked, c3.topics.get("t2").locked);
+		ok("profiles: order after removal starts at t2 with position 2 kept", order(c3).get(0).equals("t2") && c3.topics.get("t2").position == 2, order(c3));
+
+		// learn complete but below level -> not finished (t1 answered all, wrong) -> still present, t2 locked
+		List<Attempt> wrong = new ArrayList<>();
+		for (Question q : content(4, 3).topics.get("t1").questions)
+		{
+			wrong.add(attempt(q.id, "learn", false, "confident", 0, 5));
+		}
+		Content c4 = content(4, 3);
+		LearningEngine.applyProfiles(c4, withProfiles(wrong, "pilot", "pilot", "safety"), p);
+		ok("profiles: learn complete below required level is not finished", c4.topics.containsKey("t1") && !c4.topics.get("t1").finished && c4.topics.get("t2").locked, c4.topics.get("t1").finished);
+
+		// started never relocks: one learn answer in t2 while t1 unfinished
+		List<Attempt> startedT2 = new ArrayList<>();
+		startedT2.add(attempt("t2q1", "learn", false, "notsure", 0, 2));
+		Content c5 = content(4, 3);
+		LearningEngine.applyProfiles(c5, withProfiles(startedT2, "pilot", "pilot", "safety"), p);
+		ok("profiles: a started topic is never locked", !c5.topics.get("t2").locked, c5.topics.get("t2").locked);
+
+		// an evaluation-only answer does not count as started
+		List<Attempt> evalT2 = new ArrayList<>();
+		evalT2.add(attempt("t2q1", "evaluation", true, "confident", 0, 2));
+		Content c6 = content(4, 3);
+		LearningEngine.applyProfiles(c6, withProfiles(evalT2, "pilot", "pilot", "safety"), p);
+		ok("profiles: evaluation answer does not start a topic", c6.topics.get("t2").locked, c6.topics.get("t2").locked);
+
+		// rows on unknown topics are skipped; gate uses the previous *visible* row
+		Content c7 = content(2, 3);
+		LearningEngine.Profiles p7 = profiles(row("pilot", "t1", 1, null, true, false, "keep"), row("pilot", "ghost", 2, null, true, false, "keep"), row("pilot", "t2", 3, null, true, true, "keep"));
+		LearningEngine.applyProfiles(c7, withProfiles(new ArrayList<>(), "pilot", "pilot"), p7);
+		ok("profiles: unknown topic skipped, gate falls back to previous visible row", c7.topics.get("t2").locked && "t1".equals(c7.topics.get("t2").previoustopic) && c7.topics.size() == 2, c7.topics.get("t2").previoustopic);
+
+		// requiresprevious on the first row is ignored
+		Content c8 = content(2, 3);
+		LearningEngine.applyProfiles(c8, withProfiles(new ArrayList<>(), "pilot", "pilot"), profiles(row("pilot", "t1", 1, null, true, true, "keep")));
+		ok("profiles: requiresprevious ignored on the first row", !c8.topics.get("t1").locked && !c8.topics.get("t1").requiresprevious, "");
+
+		// no rows -> untouched (fallback path)
+		Content c9 = content(2, 3);
+		LearningEngine.applyProfiles(c9, withProfiles(new ArrayList<>(), null, "pilot"), profiles());
+		ok("profiles: no rows leaves content untouched", order(c9).equals(List.of("t1", "t2")) && c9.topics.get("t1").position == null && c9.removedtopics.isEmpty(), order(c9));
+
+		// unassigned topics follow in catalog order
+		Content c10 = content(3, 3);
+		LearningEngine.applyProfiles(c10, withProfiles(new ArrayList<>(), "pilot", "pilot"), profiles(row("pilot", "t3", 1, null, true, false, "keep")));
+		ok("profiles: unassigned topics follow in catalog order", order(c10).equals(List.of("t3", "t1", "t2")) && c10.topics.get("t1").position == null, order(c10));
+
+		// Daily Challenge: required = mandatory assigned; locked topic's sections excluded from the new pool
+		Content c11 = content(4, 3);
+		Learner l11 = withProfiles(new ArrayList<>(), "pilot", "pilot", "safety");
+		LearningEngine.applyProfiles(c11, l11, p);
+		Map<String, Boolean> req = new HashMap<>();
+		for (Topic t : c11.topics.values())
+		{
+			req.put(t.id, t.position != null && t.mandatory);
+		}
+		ok("profiles: required = mandatory assigned (t4 optional)", Boolean.TRUE.equals(req.get("t1")) && Boolean.TRUE.equals(req.get("t3")) && !Boolean.TRUE.equals(req.get("t4")), req);
+		JSONObject dc = LearningEngine.buildDailyChallenge(c11, l11, NOW, req, false, 5, 20, LearningEngine.lockedTopicSections(c11));
+		boolean anyT2 = false;
+		for (Object o : items(dc))
+		{
+			anyT2 |= String.valueOf(((JSONObject) o).get("questionid")).startsWith("t2q");
+		}
+		ok("profiles: locked topic never enters the Daily Challenge", !anyT2, dc);
+		String first = String.valueOf(((JSONObject) items(dc).get(0)).get("questionid"));
+		ok("profiles: Daily Challenge new fill starts with the first assigned topic", first.startsWith("t1q"), first);
 	}
 
 	/** Unservable content is never put in a session; expired sessions are kept 30 days, then purged. */

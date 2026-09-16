@@ -72,6 +72,10 @@ public class LearningEngine
 		public int policyversion; // highest stored version; 0 = never configured
 		public List<Section> sections = new ArrayList<>();
 		public List<Question> questions = new ArrayList<>();
+		// Job profiles (spec 2026-09-16), set by applyProfiles; position null = not assigned by any profile of the learner.
+		public Integer position;
+		public String profile, profilename, previoustopic, afterfinish = "keep", assignedlevel;
+		public boolean mandatory, requiresprevious, locked, finished, removed;
 	}
 
 	public static class Content
@@ -80,6 +84,8 @@ public class LearningEngine
 		public Map<String, Section> sections = new HashMap<>();
 		public Map<String, Question> questions = new HashMap<>();
 		public String thresholdsreason; // why the org boundaries fell back to defaults; null when valid
+		public List<String> removedtopics = new ArrayList<>(); // assigned topics finished with afterfinish=remove (stripped from topics/sections/questions)
+		public List<JSONObject> profiles = new ArrayList<>(); // [{id, name, primary}] of the learner, primary first
 	}
 
 	/** Topics (with tutorials) in topic-service order -> tutorials -> sections by ordering -> mcq slots by ordering; evaluation-reserved excluded. */
@@ -432,6 +438,7 @@ public class LearningEngine
 		public Map<String, Integer> incorrectLearning = new HashMap<>();
 		public Set<String> unresolvedHci = new HashSet<>();
 		public Collection<String> jobroles = new ArrayList<>();
+		public String primaryjobrole; // orders the assignment; null = none (extras alone, by name)
 	}
 
 	/** learn | dailychallenge | improve. Legacy (unverified) and evaluation attempts are not learning attempts. */
@@ -492,6 +499,13 @@ public class LearningEngine
 		{
 			l.jobroles = inJobroles;
 		}
+		return l;
+	}
+
+	public Learner loadLearner(String inUserid, Collection<String> inJobroles, String inPrimary)
+	{
+		Learner l = loadLearner(inUserid, inJobroles);
+		l.primaryjobrole = inPrimary;
 		return l;
 	}
 
@@ -571,6 +585,17 @@ public class LearningEngine
 			}
 		}
 		return out;
+	}
+
+	/** The user's primary job profile id, or null when unset. */
+	public static String primaryJobroleOf(Data inUser)
+	{
+		if (inUser == null)
+		{
+			return null;
+		}
+		String v = inUser.get("primaryjobrole");
+		return v == null || v.isEmpty() ? null : v;
 	}
 
 	// ---------------------------------------------------------------- mastery
@@ -689,6 +714,269 @@ public class LearningEngine
 			}
 		}
 		return strictest;
+	}
+
+	// ---------------------------------------------------------------- job profiles (spec 2026-09-16)
+
+	/** One topicrequirement row: profile x topic. */
+	public static class ProfileRow
+	{
+		public String jobrole, topicid, requiredlevel, afterfinish = "keep";
+		public int position;
+		public boolean mandatory = true, requiresprevious;
+	}
+
+	/** Every row of the learner's profiles, and profile id -> name. */
+	public static class Profiles
+	{
+		public List<ProfileRow> rows = new ArrayList<>();
+		public Map<String, String> names = new LinkedHashMap<>();
+	}
+
+	public static ProfileRow rowOf(Data d)
+	{
+		ProfileRow r = new ProfileRow();
+		r.jobrole = d.get("jobrole");
+		r.topicid = d.get("entitytopic");
+		String lvl = d.get("requiredlevel");
+		r.requiredlevel = lvl == null || lvl.isEmpty() ? null : lvl;
+		r.position = intOr(d.get("position"), 0);
+		r.mandatory = !"false".equals(String.valueOf(d.get("mandatory")));
+		r.requiresprevious = "true".equals(String.valueOf(d.get("requiresprevious")));
+		r.afterfinish = "remove".equals(d.get("afterfinish")) ? "remove" : "keep";
+		return r;
+	}
+
+	public Profiles loadProfiles(Collection<String> inJobroles)
+	{
+		Profiles p = new Profiles();
+		if (inJobroles == null || inJobroles.isEmpty())
+		{
+			return p;
+		}
+		for (String id : inJobroles)
+		{
+			Data d = fieldArchive.getCachedData("jobrole", id);
+			p.names.put(id, d == null || d.getName() == null ? id : d.getName());
+		}
+		for (Object o : fieldArchive.query("topicrequirement").orgroup("jobrole", inJobroles).search())
+		{
+			p.rows.add(rowOf((Data) o));
+		}
+		return p;
+	}
+
+	/** Primary first, then the other profiles by name (ties by id). Ids the learner does not hold are ignored. */
+	public static List<String> profileOrder(Learner l, Map<String, String> inNames)
+	{
+		List<String> out = new ArrayList<>();
+		if (l.primaryjobrole != null && l.jobroles.contains(l.primaryjobrole))
+		{
+			out.add(l.primaryjobrole);
+		}
+		List<String> rest = new ArrayList<>();
+		for (String id : l.jobroles)
+		{
+			if (!out.contains(id) && !rest.contains(id))
+			{
+				rest.add(id);
+			}
+		}
+		rest.sort(Comparator.comparing((String id) -> inNames.getOrDefault(id, id)).thenComparing(id -> id));
+		out.addAll(rest);
+		return out;
+	}
+
+	/** Learn complete AND (no level, or band >= assignedlevel with expert evidence when expert). */
+	public static boolean finished(Topic t, Learner l)
+	{
+		Mastery m = mastery(t.questions, l, t.competentmin, t.expertmin);
+		if (m.questions == 0 || m.answered < m.questions)
+		{
+			return false;
+		}
+		if (t.assignedlevel == null)
+		{
+			return true;
+		}
+		return levelIndex(m.band) >= levelIndex(t.assignedlevel) && (!"expert".equals(t.assignedlevel) || m.evidence);
+	}
+
+	/** Any learn/dailychallenge answer or exposure on a question of t. */
+	public static boolean started(Topic t, Learner l)
+	{
+		for (Question q : t.questions)
+		{
+			if (l.answeredInSequence.contains(q.id) || l.exposedInSequence.contains(q.id))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** loadProfiles + applyProfiles for the learner's own profiles. */
+	public void applyProfiles(Content c, Learner l)
+	{
+		applyProfiles(c, l, loadProfiles(l.jobroles));
+	}
+
+	/**
+	 * Pure. Reorders c.topics: the learner's assignment first (primary profile rows by position, then each extra profile by name), then
+	 * the rest in catalog order. A topic in several profiles keeps its first occurrence for order, gate and previous topic; level =
+	 * strictest, mandatory if any, keep beats remove. Rows on topics not in c or without questions are skipped (the gate then points at
+	 * the previous visible row of that profile). Sets position (renumbered 1..n over the merged list), finished, locked (requiresprevious
+	 * AND previous not finished AND not started), removed (afterfinish=remove AND finished; stripped from c and listed in c.removedtopics).
+	 * No rows -> c untouched apart from c.profiles.
+	 */
+	public static void applyProfiles(Content c, Learner l, Profiles inProfiles)
+	{
+		List<String> order = profileOrder(l, inProfiles.names);
+		c.profiles = new ArrayList<>();
+		for (String id : order)
+		{
+			JSONObject p = new JSONObject();
+			p.put("id", id);
+			p.put("name", inProfiles.names.getOrDefault(id, id));
+			p.put("primary", id.equals(l.primaryjobrole));
+			c.profiles.add(p);
+		}
+		if (inProfiles.rows.isEmpty())
+		{
+			return;
+		}
+		Map<String, List<ProfileRow>> byProfile = new HashMap<>();
+		for (ProfileRow r : inProfiles.rows)
+		{
+			byProfile.computeIfAbsent(r.jobrole, k -> new ArrayList<>()).add(r);
+		}
+		Map<String, Topic> assigned = new LinkedHashMap<>();
+		for (String pid : order)
+		{
+			List<ProfileRow> rows = new ArrayList<>(byProfile.getOrDefault(pid, Collections.emptyList()));
+			rows.sort(Comparator.comparingInt((ProfileRow r) -> r.position).thenComparing(r -> r.topicid));
+			String prev = null; // previous visible row of this profile
+			for (ProfileRow r : rows)
+			{
+				Topic t = c.topics.get(r.topicid);
+				if (t == null || t.questions.isEmpty())
+				{
+					continue;
+				}
+				if (assigned.containsKey(t.id))
+				{
+					if (levelIndex(r.requiredlevel) > levelIndex(t.assignedlevel))
+					{
+						t.assignedlevel = r.requiredlevel;
+					}
+					t.mandatory |= r.mandatory;
+					if ("keep".equals(r.afterfinish))
+					{
+						t.afterfinish = "keep";
+					}
+				}
+				else
+				{
+					t.position = assigned.size() + 1;
+					t.profile = pid;
+					t.profilename = inProfiles.names.getOrDefault(pid, pid);
+					t.assignedlevel = r.requiredlevel;
+					t.mandatory = r.mandatory;
+					t.afterfinish = r.afterfinish;
+					t.requiresprevious = r.requiresprevious && prev != null;
+					t.previoustopic = t.requiresprevious ? prev : null;
+					assigned.put(t.id, t);
+				}
+				prev = t.id;
+			}
+		}
+		if (assigned.isEmpty())
+		{
+			return;
+		}
+		for (Topic t : assigned.values())
+		{
+			t.finished = finished(t, l);
+		}
+		for (Topic t : assigned.values())
+		{
+			Topic p = t.previoustopic == null ? null : c.topics.get(t.previoustopic);
+			t.locked = t.requiresprevious && p != null && !p.finished && !started(t, l);
+			t.removed = "remove".equals(t.afterfinish) && t.finished;
+		}
+		Map<String, Topic> reordered = new LinkedHashMap<>();
+		for (Topic t : assigned.values())
+		{
+			if (t.removed)
+			{
+				c.removedtopics.add(t.id);
+				for (Section s : t.sections)
+				{
+					c.sections.remove(s.id);
+				}
+				for (Question q : t.questions)
+				{
+					c.questions.remove(q.id);
+				}
+			}
+			else
+			{
+				reordered.put(t.id, t);
+			}
+		}
+		for (Topic t : c.topics.values())
+		{
+			if (!assigned.containsKey(t.id))
+			{
+				reordered.put(t.id, t);
+			}
+		}
+		c.topics = reordered;
+	}
+
+	/**
+	 * Daily Challenge required map: assigned topics -> mandatory; no assignment for the learner -> topicrequirement by job role (v1);
+	 * none at all -> every topic with questions (assignment_data_unavailable). inReason (nullable, 1 slot) receives the reason or null.
+	 */
+	public Map<String, Boolean> requiredTopics(Content c, Learner l, String[] inReason)
+	{
+		Map<String, Boolean> required = new HashMap<>();
+		boolean any = false;
+		for (Topic t : c.topics.values())
+		{
+			boolean r = t.position != null ? t.mandatory : requiredLevel(t.id, l.jobroles) != null;
+			required.put(t.id, r);
+			any |= r;
+		}
+		if (!any)
+		{
+			for (Topic t : c.topics.values())
+			{
+				required.put(t.id, !t.questions.isEmpty());
+			}
+			if (inReason != null)
+			{
+				inReason[0] = "assignment_data_unavailable";
+			}
+		}
+		return required;
+	}
+
+	/** Section ids of locked topics: excluded from the Daily Challenge new pool like locked subtopics. */
+	public static Set<String> lockedTopicSections(Content c)
+	{
+		Set<String> out = new HashSet<>();
+		for (Topic t : c.topics.values())
+		{
+			if (t.locked)
+			{
+				for (Section s : t.sections)
+				{
+					out.add(s.id);
+				}
+			}
+		}
+		return out;
 	}
 
 	// ---------------------------------------------------------------- subtopic progression
@@ -1491,26 +1779,12 @@ public class LearningEngine
 			}
 			else
 			{
-				Map<String, Boolean> required = new HashMap<>();
-				boolean any = false;
-				for (Topic t : c.topics.values())
-				{
-					boolean r = requiredLevel(t.id, l.jobroles) != null;
-					required.put(t.id, r);
-					any |= r;
-				}
-				if (!any)
-				{
-					// No role-topic assignment data for this user: every learner-visible topic with eligible questions is required.
-					// (c holds only visible topics; there is no status/published field on entitytopic to filter on.)
-					for (Topic t : c.topics.values())
-					{
-						required.put(t.id, !t.questions.isEmpty());
-					}
-				}
+				String[] reason = new String[1];
+				Map<String, Boolean> required = requiredTopics(c, l, reason);
 				Object[] sizes = dcSizes(setting("testu_dailychallenge_min"), setting("testu_dailychallenge_max"));
 				boolean enrichment = "true".equals(setting("testu_dailychallenge_enrichment"));
-				Set<String> locked = locked(subtopicStates(c, l));
+				Set<String> locked = new HashSet<>(locked(subtopicStates(c, l)));
+				locked.addAll(lockedTopicSections(c));
 				JSONObject built = buildDailyChallenge(c, l, now, required, enrichment, (Integer) sizes[0], (Integer) sizes[1], locked);
 				JSONObject inputs = (JSONObject) built.get("inputs");
 				inputs.put("lockedsubtopics", locked.size());
@@ -1528,7 +1802,7 @@ public class LearningEngine
 				JSONArray lockedIds = new JSONArray();
 				lockedIds.addAll(new java.util.TreeSet<>(locked));
 				inputs.put("lockedsubtopicids", lockedIds);
-				inputs.put("topicsreason", any ? null : "assignment_data_unavailable");
+				inputs.put("topicsreason", reason[0]);
 				inputs.put("min", sizes[0]);
 				inputs.put("max", sizes[1]);
 				inputs.put("sizesreason", sizes[2]);
