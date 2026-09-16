@@ -194,11 +194,13 @@ try:
     st2 = state()
     ok("finish: T3 removed (absent from topics, listed in removedtopics)", T3 not in [t["id"] for t in st2["topics"]] and st2["removedtopics"] == [T3], st2["removedtopics"])
     ok("finish: T1 unlocked, keeps position 2", topic_of(st2, T1)["locked"] is False and topic_of(st2, T1)["position"] == 2, topic_of(st2, T1))
+    stc, body = call(me, "GET", f"/services/testu/learn/state.json?topicid={T3}")
+    ok("state: removed topic by id = 404 unknown_topic", stc == 404 and body["error"] == "unknown_topic", (stc, body))
 
     # ---- analytics person.json in profile order
     pj = must("person.json", call(admin, "GET", f"/services/testu/analytics/person.json?user={quote(USER)}"))
     req = pj["risk"]["requiredtopics"]
-    ok("person: required topics in profile order, T3 excluded (removed), profile/position present", [x["id"] for x in req][:2] == [T1, T2] and req[0]["profile"] == P1 and req[0]["position"] == 2, req)
+    ok("person: required topics in profile order, T3 excluded (removed), profile/position present", [x["id"] for x in req] == [T1, T2] and req[0]["profile"] == P1 and req[0]["position"] == 2, req)
 finally:
     delete_rows("topicrequirement", ROWS)
     call(admin, "POST", "/services/authentication/usersave.json", form={"username": USER, "field": "jobrole", "jobrolevalue": ""})
