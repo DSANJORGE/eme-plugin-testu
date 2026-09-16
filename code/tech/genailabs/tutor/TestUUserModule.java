@@ -29,6 +29,8 @@ import org.openedit.util.DateStorageUtil;
 
 public class TestUUserModule extends TestUBaseModule
 {
+	private static final org.apache.commons.logging.Log log = org.apache.commons.logging.LogFactory.getLog(TestUUserModule.class);
+
 	private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 	private static final Set<String> VALID_ROLES = new HashSet<>(Arrays.asList("users", "manager", "training", "orgadmin"));
 
@@ -424,13 +426,19 @@ public class TestUUserModule extends TestUBaseModule
 
 		boolean was = !"false".equals(String.valueOf(u.get("enabled")));
 		u.setValue("enabled", enabled ? "true" : "false");
+		// Timed: the console saw this call take 15-20 s. The two writes are the
+		// only candidates, so each one is measured until the cause is known.
+		long t0 = System.currentTimeMillis();
 		users.saveData(u, currentUser);
+		long t1 = System.currentTimeMillis();
 
 		JSONObject before = new JSONObject();
 		before.put("enabled", Boolean.valueOf(was));
 		JSONObject after = new JSONObject();
 		after.put("enabled", Boolean.valueOf(enabled));
 		audit(inReq, archive, enabled ? "user.enable" : "user.disable", "user", userid, before, after);
+		long t2 = System.currentTimeMillis();
+		log.info("setEnabled " + userid + "=" + enabled + " user.saveData " + (t1 - t0) + " ms, audit " + (t2 - t1) + " ms");
 
 		JSONObject replyObj = new JSONObject();
 		replyObj.put("ok", Boolean.TRUE);
