@@ -316,6 +316,27 @@ public class LearningEngineCheck
 		ok("profiles: locked topic never enters the Daily Challenge", !anyT2, dc);
 		String first = String.valueOf(((JSONObject) items(dc).get(0)).get("questionid"));
 		ok("profiles: Daily Challenge new fill starts with the first assigned topic", first.startsWith("t1q"), first);
+
+		// requiredTopics falls back only for a learner with no rows at all, not whenever nothing came out required.
+		// c.assigned is true in both cases below, so requiredTopics never reaches storage and the stub's null archive is fine.
+		Content c12 = content(2, 3);
+		Learner l12 = withProfiles(new ArrayList<>(), "pilot", "pilot");
+		LearningEngine.applyProfiles(c12, l12, profiles(row("pilot", "t1", 1, null, false, false, "keep"), row("pilot", "t2", 2, null, false, false, "keep")));
+		String[] reason12 = new String[1];
+		Map<String, Boolean> req12 = stubEngine().requiredTopics(c12, l12, reason12);
+		ok("profiles: an all-optional assignment requires nothing and does not fall back", c12.assigned && !req12.containsValue(Boolean.TRUE) && reason12[0] == null, req12 + " " + reason12[0]);
+
+		// every row afterfinish=remove and finished: the topics are stripped, but the learner still has an assignment
+		Content base13 = content(2, 3);
+		List<Attempt> done13 = allCorrect(base13, "t1");
+		done13.addAll(allCorrect(base13, "t2"));
+		Content c13 = content(2, 3);
+		Learner l13 = withProfiles(done13, "pilot", "pilot");
+		LearningEngine.applyProfiles(c13, l13, profiles(row("pilot", "t1", 1, null, true, false, "remove"), row("pilot", "t2", 2, null, true, false, "remove")));
+		String[] reason13 = new String[1];
+		Map<String, Boolean> req13 = stubEngine().requiredTopics(c13, l13, reason13);
+		ok("profiles: a fully removed assignment stays assigned and does not fall back", c13.topics.isEmpty() && c13.removedtopics.equals(List.of("t1", "t2")) && c13.assigned
+			&& req13.isEmpty() && reason13[0] == null, c13.removedtopics + " " + reason13[0]);
 	}
 
 	/** Unservable content is never put in a session; expired sessions are kept 30 days, then purged. */
@@ -392,6 +413,14 @@ public class LearningEngineCheck
 		at = new ArrayList<>();
 		at.add(attempt("t1q4", "learn", true, "confident", 0, 1));
 		ok("topic aggregation weights by difficulty: 4 / (1+1+1+4) = 57%", LearningEngine.percent(t.questions, learner(at)) == 57, LearningEngine.percent(t.questions, learner(at)));
+		// rounding is on the exact value: 2 x 0.6375 / 3 = 42.5 -> 43 (double accumulation gives 42.49999999999999)
+		Content half = content(1, 2);
+		Topic ht = half.topics.get("t1");
+		ht.questions.get(1).difficulty = "competent";
+		ht.questions.get(1).weight = 2;
+		List<Attempt> hat = new ArrayList<>();
+		hat.add(attempt("t1q2", "learn", true, "mostlysure", 1, 1));
+		ok("percent rounds the exact half up: 42.5 -> 43", LearningEngine.percent(ht.questions, learner(hat)) == 43, LearningEngine.percent(ht.questions, learner(hat)));
 		// expert evidence: >= expertmin on expert questions and >= min(3, count) latest-correct
 		ok("expert evidence with one expert question correct", LearningEngine.mastery(t.questions, learner(at), 60, 85).evidence, "");
 		ok("expert evidence reason no_expert_questions", "no_expert_questions".equals(LearningEngine.mastery(c.topics.get("t2").questions, learner(at), 60, 85).evidencereason), "");

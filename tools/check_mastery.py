@@ -10,10 +10,11 @@ Expert evidence and live band/percent are checked against state.json when EME_CH
 Users with an answer newer than their rows' computedat (live activity) are skipped, not failed. Read-only. Exit 1 on mismatch.
 Usage: EME_USER=... EME_PASSWORD=... python3 tools/check_mastery.py [BASE]   (no default credentials)"""
 import json, math, os, sys, urllib.request, http.cookiejar
+from fractions import Fraction
 from urllib.parse import quote
 
 B = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("EME_BASE", "http://localhost:8080/site/mediadb")
-CONF = {"confident": 1.0, "mostlysure": 0.85, "notsure": 0.6, "noidea": 0.4}
+CONF = {"confident": Fraction(1), "mostlysure": Fraction(85, 100), "notsure": Fraction(6, 10), "noidea": Fraction(4, 10)}  # exact: 42.5 must round to 43
 WEIGHT = {"beginner": 1, "competent": 2, "expert": 4}
 
 
@@ -84,8 +85,8 @@ def thresholds(tid):
 
 def score(a):
     if not a or not a["correct"]:
-        return 0.0
-    return CONF.get(a["conf"], 1.0) * (1 - 0.25 * max(0, min(3, a["hint"])))
+        return Fraction(0)
+    return CONF.get(a["conf"], Fraction(1)) * (1 - Fraction(1, 4) * max(0, min(3, a["hint"])))
 
 
 def pct(qs, latest):

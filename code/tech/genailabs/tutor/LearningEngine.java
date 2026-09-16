@@ -86,6 +86,7 @@ public class LearningEngine
 		public String thresholdsreason; // why the org boundaries fell back to defaults; null when valid
 		public List<String> removedtopics = new ArrayList<>(); // assigned topics finished with afterfinish=remove (stripped from topics/sections/questions)
 		public List<JSONObject> profiles = new ArrayList<>(); // [{id, name, primary}] of the learner, primary first
+		public boolean assigned; // the learner had at least one usable profile row, before removed topics were stripped
 	}
 
 	/** Topics (with tutorials) in topic-service order -> tutorials -> sections by ordering -> mcq slots by ordering; evaluation-reserved excluded. */
@@ -682,13 +683,15 @@ public class LearningEngine
 	 */
 	public static int percent(Collection<Question> inScope, Learner inLearner)
 	{
-		double w = 0, ws = 0;
+		// Every score is a multiple of 1/400 (confidence x hint); sum in integers so an exact .5 rounds up (42.5 -> 43),
+		// which a double running sum can miss (42.49999999999999).
+		long w = 0, ws400 = 0;
 		for (Question q : inScope)
 		{
 			w += q.weight;
-			ws += q.weight * score(inLearner.latest.get(q.id));
+			ws400 += q.weight * Math.round(400 * score(inLearner.latest.get(q.id)));
 		}
-		return w == 0 ? 0 : (int) Math.round(100.0 * ws / w);
+		return w == 0 ? 0 : (int) Math.round(ws400 / (4.0 * w)); // 100 x (ws400 / 400) / w
 	}
 
 	public static int levelIndex(String inLevel)
@@ -898,6 +901,7 @@ public class LearningEngine
 		{
 			return;
 		}
+		c.assigned = true;
 		for (Topic t : assigned.values())
 		{
 			t.finished = finished(t, l);
@@ -944,24 +948,17 @@ public class LearningEngine
 	 */
 	public Map<String, Boolean> requiredTopics(Content c, Learner l, String[] inReason)
 	{
-		boolean anyAssigned = false;
-		for (Topic t : c.topics.values())
-		{
-			if (t.position != null)
-			{
-				anyAssigned = true;
-				break;
-			}
-		}
+		// c.assigned, not "something came out required": a learner whose rows are all optional, or who finished every
+		// afterfinish=remove topic, legitimately has nothing required. Only a learner with no profile rows at all falls back.
 		Map<String, Boolean> required = new HashMap<>();
 		boolean any = false;
 		for (Topic t : c.topics.values())
 		{
-			boolean r = anyAssigned ? (t.position != null && t.mandatory) : requiredLevel(t.id, l.jobroles) != null;
+			boolean r = c.assigned ? (t.position != null && t.mandatory) : requiredLevel(t.id, l.jobroles) != null;
 			required.put(t.id, r);
 			any |= r;
 		}
-		if (!any)
+		if (!any && !c.assigned)
 		{
 			for (Topic t : c.topics.values())
 			{
