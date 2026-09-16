@@ -314,7 +314,7 @@ try:
        and fid(exrows[0].get("entitytopic")) == T and int(exrows[0].get("position")) == it0["position"] and fid(exrows[0].get("mode")) == "dailychallenge" and not exrows[0].get("scopetype"), exrows)
     REJECTS = [
         ({"questionid": q0}, 400, "missing_mode"),
-        ({"questionid": q0, "mode": "evaluation"}, 400, "bad_mode"),
+        ({"questionid": q0, "mode": "quiz"}, 400, "bad_mode"),  # evaluation is an accepted mode now (2026-09-16-evaluation-mode)
         ({"questionid": q0, "mode": "dailychallenge", "tutorialid": "not-" + it0["tutorialid"]}, 409, "hierarchy_mismatch"),
         ({"questionid": q0, "mode": "dailychallenge", "componentid": "not-" + it0["componentid"]}, 409, "hierarchy_mismatch"),
         ({"questionid": q0, "mode": "dailychallenge", "scopetype": "topic", "scopeid": T}, 400, "scope_not_allowed"),
@@ -424,7 +424,7 @@ try:
         (dict(base, hintlevel="-1"), 400, "bad_hintlevel"),
         (dict(base, hintlevel="1.5"), 400, "bad_hintlevel"),
         (dict(base, mode=None), 400, "missing_mode"),
-        (dict(base, mode="evaluation"), 400, "bad_mode"),
+        (dict(base, mode="quiz"), 400, "bad_mode"),  # evaluation is an accepted mode now (2026-09-16-evaluation-mode)
         (dict(base, scopetype=None, scopeid=None), 400, "missing_scope"),
         (dict(base, scopetype="topic", scopeid=T2), 409, "scope_mismatch"),
         (dict(base, scopeid=S2), 409, "scope_mismatch"),

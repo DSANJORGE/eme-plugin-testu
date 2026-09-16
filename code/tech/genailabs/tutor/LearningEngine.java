@@ -200,6 +200,16 @@ public class LearningEngine
 				policies.put(p.get("entitytopic"), p);
 			}
 		}
+		Map<String, Data> blueprints = new HashMap<>();
+		for (Object o : fieldArchive.query("evaluationblueprint").orgroup("entitytopic", topicData.keySet()).search())
+		{
+			Data p = (Data) o;
+			Data prev = blueprints.get(p.get("entitytopic"));
+			if (prev == null || intOr(p.get("blueprintversion"), 0) > intOr(prev.get("blueprintversion"), 0))
+			{
+				blueprints.put(p.get("entitytopic"), p);
+			}
+		}
 		for (Map.Entry<String, List<String>> e : tutorialsByTopic.entrySet())
 		{
 			Data td = topicData.get(e.getKey());
@@ -213,6 +223,7 @@ public class LearningEngine
 			topic.requiredlevel = effective[1];
 			topic.policyreason = effective[2];
 			topic.policyversion = policy == null ? 0 : intOr(policy.get("policyversion"), 0);
+			topic.blueprint = blueprintOf(blueprints.get(topic.id), topic.id);
 			// Blank = org default. eMe stores a cleared number field as 0, so <= 0 also means "no override".
 			// The resulting pair must still satisfy 1 <= competentmin < expertmin <= 100, else the org pair is used.
 			int[] pair = {positiveOr(td.get("competentmin"), defaults[0]), positiveOr(td.get("expertmin"), defaults[1])};
@@ -235,7 +246,7 @@ public class LearningEngine
 					for (Data slot : slotsBySection.getOrDefault(sd.getId(), Collections.emptyList()))
 					{
 						Data qd = questionData.get(slot.get("questionid"));
-						if (qd == null || "true".equals(qd.get("evaluationreserved")) || c.questions.containsKey(qd.getId()))
+						if (qd == null || c.questions.containsKey(qd.getId()) || c.reserved.containsKey(qd.getId()))
 						{
 							continue; // ponytail: a question in two slots/topics counts once, at its first position
 						}
@@ -249,6 +260,13 @@ public class LearningEngine
 						q.difficulty = difficultyOf(qd.get("mcqcognitivelevel"));
 						q.weight = weightOf(q.difficulty);
 						q.topicindex = topic.index;
+						if ("true".equals(qd.get("evaluationreserved")))
+						{
+							q.position = 0; // outside the learning sequence: the Evaluation pool only (spec 2026-09-16-evaluation-mode)
+							topic.reserved.add(q);
+							c.reserved.put(q.id, q);
+							continue;
+						}
 						q.position = topic.questions.size() + 1;
 						section.questions.add(q);
 						topic.questions.add(q);
@@ -302,6 +320,10 @@ public class LearningEngine
 		{
 			Map item = (Map) o;
 			Question q = c.questions.get(item.get("questionid"));
+			if (q == null)
+			{
+				q = c.reserved.get(item.get("questionid"));
+			}
 			String problem = q == null ? "unknown_question" : q.contentproblem;
 			if (problem != null && !Boolean.TRUE.equals(item.get("done")))
 			{
@@ -514,6 +536,13 @@ public class LearningEngine
 				touch(l.lastShown, d.get("entityquestion"), DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("datecreated")));
 			}
 		}
+		HitTracker ev = fieldArchive.query("evaluationattempt").exact("user", inUserid).search();
+		ev.enableBulkOperations();
+		for (Object o : ev)
+		{
+			l.evaluations.add(evalAttemptOf((Data) o));
+		}
+		l.evaluations.sort(Comparator.comparing(a -> a.created == null ? new Date(0) : a.created));
 		if (inJobroles != null)
 		{
 			l.jobroles = inJobroles;
@@ -1592,6 +1621,382 @@ public class LearningEngine
 		return o;
 	}
 
+	/** The stored blueprint row as a Blueprint (settled); null row = not configured for inTopicid. */
+	public static Blueprint blueprintOf(Data d, String inTopicid)
+	{
+		Blueprint b = new Blueprint();
+		b.topicid = inTopicid;
+		if (d == null)
+		{
+			b.reason = "not_configured";
+			return b;
+		}
+		b.version = intOr(d.get("blueprintversion"), 0);
+		b.active = "true".equals(String.valueOf(d.get("active")));
+		b.strategy = d.get("strategy") == null ? "" : d.get("strategy");
+		b.mix = d.get("difficultymix") == null ? "" : d.get("difficultymix");
+		b.maxquestions = intOr(d.get("maxquestions"), 0);
+		b.minpersubtopic = intOr(d.get("minpersubtopic"), 0);
+		b.passpercent = intOr(d.get("passpercent"), 0);
+		b.subtopicminpercent = intOr(d.get("subtopicminpercent"), 0);
+		b.timerminutes = intOr(d.get("timerminutes"), 0);
+		b.retakewaithours = intOr(d.get("retakewaithours"), 0);
+		b.maxattempts = intOr(d.get("maxattempts"), 0);
+		b.requirelearncomplete = !"false".equals(String.valueOf(d.get("requirelearncomplete")));
+		Object ex = JSONValue.parse(String.valueOf(d.get("excludedsections")));
+		if (ex instanceof List)
+		{
+			for (Object o : (List) ex)
+			{
+				b.excludedsections.add(String.valueOf(o));
+			}
+		}
+		b.user = d.get("user");
+		b.created = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("datecreated"));
+		return settle(b);
+	}
+
+	/** The exact blueprint version an attempt was built with (null when the row is gone). */
+	protected Blueprint loadBlueprintVersion(String inTopicid, int inVersion)
+	{
+		Data d = (Data) fieldArchive.getSearcher("evaluationblueprint").searchById(inTopicid + "_v" + inVersion);
+		return d == null ? null : blueprintOf(d, inTopicid);
+	}
+
+	public static EvalAttempt evalAttemptOf(Data d)
+	{
+		EvalAttempt a = new EvalAttempt();
+		a.id = d.getId();
+		a.user = d.get("user");
+		a.topicid = d.get("entitytopic");
+		a.strategy = d.get("strategy");
+		a.status = d.get("status") == null || d.get("status").isEmpty() ? "inprogress" : d.get("status");
+		a.finalizedby = d.get("finalizedby");
+		a.version = intOr(d.get("blueprintversion"), 0);
+		a.number = intOr(d.get("attemptnumber"), 0);
+		a.total = intOr(d.get("total"), 0);
+		a.answered = intOr(d.get("answered"), 0);
+		a.correct = intOr(d.get("correct"), 0);
+		a.scorepercent = intOr(d.get("scorepercent"), 0);
+		a.exposed = intOr(d.get("exposed"), 0);
+		a.reused = intOr(d.get("reused"), 0);
+		a.passed = "true".equals(String.valueOf(d.get("passed")));
+		Object list = JSONValue.parse(String.valueOf(d.get("questionlist")));
+		if (list instanceof List)
+		{
+			for (Object o : (List) list)
+			{
+				if (o instanceof Map)
+				{
+					String q = String.valueOf(((Map) o).get("questionid"));
+					a.questions.add(q);
+					a.sectionOf.put(q, String.valueOf(((Map) o).get("sectionid")));
+				}
+			}
+		}
+		Object ans = JSONValue.parse(String.valueOf(d.get("answermap")));
+		if (ans instanceof Map)
+		{
+			for (Object e : ((Map) ans).entrySet())
+			{
+				Map.Entry en = (Map.Entry) e;
+				a.answers.put(String.valueOf(en.getKey()), Boolean.TRUE.equals(en.getValue()));
+			}
+		}
+		Object subs = JSONValue.parse(String.valueOf(d.get("subtopicresults")));
+		if (subs instanceof JSONArray)
+		{
+			a.subtopicresults = (JSONArray) subs;
+		}
+		Object in = JSONValue.parse(String.valueOf(d.get("inputs")));
+		if (in instanceof JSONObject)
+		{
+			a.inputs = (JSONObject) in;
+		}
+		a.created = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("datecreated"));
+		a.expires = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("expiresat"));
+		a.submitted = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("submitted"));
+		return a;
+	}
+
+	/** Realtime get by id; null when no such attempt. */
+	public EvalAttempt loadEvalAttempt(String inId)
+	{
+		if (inId == null)
+		{
+			return null;
+		}
+		Data d = (Data) fieldArchive.getSearcher("evaluationattempt").searchById(inId);
+		return d == null ? null : evalAttemptOf(d);
+	}
+
+	protected void saveEvalAttempt(EvalAttempt a)
+	{
+		Searcher searcher = fieldArchive.getSearcher("evaluationattempt");
+		Data d = (Data) searcher.searchById(a.id);
+		if (d == null)
+		{
+			d = searcher.createNewData();
+			d.setId(a.id);
+		}
+		d.setValue("user", a.user);
+		d.setValue("entitytopic", a.topicid);
+		d.setValue("blueprintversion", a.version);
+		d.setValue("strategy", a.strategy);
+		d.setValue("attemptnumber", a.number);
+		JSONArray list = new JSONArray();
+		int pos = 0;
+		for (String q : a.questions)
+		{
+			JSONObject i = new JSONObject();
+			i.put("questionid", q);
+			i.put("sectionid", a.sectionOf.get(q));
+			i.put("position", ++pos);
+			list.add(i);
+		}
+		d.setValue("questionlist", list.toJSONString());
+		d.setValue("total", a.total);
+		d.setValue("answermap", JSONObject.toJSONString(a.answers)); // not "answers": that name is a number field on tutordaily (one shared index)
+		d.setValue("status", a.status);
+		d.setValue("datecreated", a.created);
+		d.setValue("expiresat", a.expires);
+		d.setValue("submitted", a.submitted);
+		d.setValue("finalizedby", a.finalizedby);
+		d.setValue("answered", a.answered);
+		d.setValue("correct", a.correct);
+		d.setValue("scorepercent", a.scorepercent);
+		d.setValue("passed", a.passed);
+		d.setValue("subtopicresults", a.subtopicresults.toJSONString());
+		d.setValue("exposed", a.exposed);
+		d.setValue("reused", a.reused);
+		d.setValue("exposurerisk", a.exposed + a.reused > 0);
+		d.setValue("inputs", a.inputs.toJSONString());
+		searcher.saveData(d, null);
+	}
+
+	/** l.evaluations with inAttempt replacing the row of the same id (or appended). */
+	public static void replaceAttempt(Learner l, EvalAttempt inAttempt)
+	{
+		for (int i = 0; i < l.evaluations.size(); i++)
+		{
+			if (l.evaluations.get(i).id.equals(inAttempt.id))
+			{
+				l.evaluations.set(i, inAttempt);
+				return;
+			}
+		}
+		l.evaluations.add(inAttempt);
+	}
+
+	/**
+	 * The learner's attempt to serve: under the write lock, probes the next attempt ids (<user>_<topic>_a<n>) with realtime gets past
+	 * what l knows; the newest one is resumed when still open, finalized by the timer when past its window; otherwise a new attempt is
+	 * built (buildEvaluation, seed = id hash) and stored with expiresat = now + timer (or UNTIMED_WINDOW_MS). Returns null when the
+	 * built evaluation has no items (the caller answers pool_insufficient). The caller decides eligibility (evaluationStatus) first.
+	 */
+	public EvalAttempt startEvaluation(Topic t, Learner l, Content c, Date inNow)
+	{
+		synchronized (WRITE_LOCK)
+		{
+			Searcher searcher = fieldArchive.getSearcher("evaluationattempt");
+			int n = 0;
+			for (EvalAttempt a : l.evaluations)
+			{
+				if (t.id.equals(a.topicid))
+				{
+					n = Math.max(n, a.number);
+				}
+			}
+			EvalAttempt latest = null;
+			for (EvalAttempt a : l.evaluations)
+			{
+				if (t.id.equals(a.topicid) && a.number == n)
+				{
+					latest = a;
+				}
+			}
+			while (true)
+			{
+				Data d = (Data) searcher.searchById(l.userid + "_" + t.id + "_a" + (n + 1));
+				if (d == null)
+				{
+					break;
+				}
+				latest = evalAttemptOf(d);
+				n++;
+			}
+			if (latest != null && latest.open(inNow))
+			{
+				return latest;
+			}
+			if (latest != null && !latest.finalized())
+			{
+				finalizeEvaluation(latest, c, "timer");
+			}
+			Blueprint b = t.blueprint;
+			EvalAttempt a = new EvalAttempt();
+			a.id = l.userid + "_" + t.id + "_a" + (n + 1);
+			a.number = n + 1;
+			a.user = l.userid;
+			a.topicid = t.id;
+			a.strategy = b.strategy;
+			a.version = b.version;
+			JSONObject built = buildEvaluation(t, b, l, a.id.hashCode());
+			for (Object o : (JSONArray) built.get("items"))
+			{
+				JSONObject i = (JSONObject) o;
+				a.questions.add((String) i.get("questionid"));
+				a.sectionOf.put((String) i.get("questionid"), (String) i.get("sectionid"));
+			}
+			if (a.questions.isEmpty())
+			{
+				return null; // empty pool: no attempt row, the endpoint fails with pool_insufficient
+			}
+			a.total = a.questions.size();
+			a.exposed = ((Number) built.get("exposed")).intValue();
+			a.reused = ((Number) built.get("reused")).intValue();
+			a.inputs = (JSONObject) built.get("inputs");
+			a.created = inNow;
+			a.expires = new Date(inNow.getTime() + (b.timerminutes > 0 ? b.timerminutes * 60_000L : UNTIMED_WINDOW_MS));
+			saveEvalAttempt(a);
+			return a;
+		}
+	}
+
+	/** Records an accepted evaluation answer on its attempt (realtime re-read under the lock; a closed attempt is left alone). */
+	public void recordEvaluationAnswer(EvalAttempt inAttempt, String inQuestionid, boolean inCorrect)
+	{
+		synchronized (WRITE_LOCK)
+		{
+			EvalAttempt a = loadEvalAttempt(inAttempt.id);
+			if (a == null || a.finalized())
+			{
+				return;
+			}
+			a.answers.put(inQuestionid, inCorrect);
+			saveEvalAttempt(a);
+		}
+	}
+
+	/**
+	 * Scores and closes inAttempt unless already finalized (realtime re-read under the lock; idempotent). inBy = learner | timer
+	 * (status submitted | expired). The blueprint used is the version the attempt started with. Returns the stored attempt.
+	 */
+	public EvalAttempt finalizeEvaluation(EvalAttempt inAttempt, Content c, String inBy)
+	{
+		synchronized (WRITE_LOCK)
+		{
+			EvalAttempt a = loadEvalAttempt(inAttempt.id);
+			if (a == null)
+			{
+				a = inAttempt;
+			}
+			if (a.finalized())
+			{
+				return a;
+			}
+			Topic t = c == null ? null : c.topics.get(a.topicid);
+			Blueprint b = loadBlueprintVersion(a.topicid, a.version);
+			if (b == null)
+			{
+				b = t != null && t.blueprint != null ? t.blueprint : settle(new Blueprint());
+			}
+			Map<String, String> titles = new HashMap<>();
+			if (c != null)
+			{
+				for (Section s : c.sections.values())
+				{
+					titles.put(s.id, s.title);
+				}
+			}
+			JSONObject r = scoreEvaluation(a, b, titles);
+			a.answered = ((Number) r.get("answered")).intValue();
+			a.correct = ((Number) r.get("correct")).intValue();
+			a.scorepercent = ((Number) r.get("scorepercent")).intValue();
+			a.passed = Boolean.TRUE.equals(r.get("passed"));
+			a.subtopicresults = (JSONArray) r.get("subtopics");
+			a.inputs.put("failedrule", r.get("failedrule"));
+			a.inputs.put("weakest", r.get("weakest"));
+			a.inputs.put("passpercent", b.passpercent);
+			a.inputs.put("subtopicminpercent", b.subtopicminpercent);
+			a.status = "timer".equals(inBy) ? "expired" : "submitted";
+			a.finalizedby = inBy;
+			a.submitted = new Date();
+			saveEvalAttempt(a);
+			return a;
+		}
+	}
+
+	/** Lazy finalization for one learner: every attempt in l past its window is scored by the timer; l.evaluations updated. */
+	public void expireStale(Learner l, Content c)
+	{
+		Date now = new Date();
+		for (int i = 0; i < l.evaluations.size(); i++)
+		{
+			EvalAttempt a = l.evaluations.get(i);
+			if (!a.finalized() && a.expires != null && a.expires.before(now))
+			{
+				l.evaluations.set(i, finalizeEvaluation(a, c, "timer"));
+			}
+		}
+	}
+
+	/** Idempotent sweep for the computemastery event: scores every in-progress attempt past its expiresat. Returns rows finalized. */
+	public int expireEvaluations(Date inNow)
+	{
+		HitTracker hits = fieldArchive.query("evaluationattempt").exact("status", "inprogress").before("expiresat", inNow).search();
+		hits.enableBulkOperations();
+		List<EvalAttempt> stale = new ArrayList<>();
+		for (Object o : hits)
+		{
+			stale.add(evalAttemptOf((Data) o));
+		}
+		if (stale.isEmpty())
+		{
+			return 0;
+		}
+		Content c = loadContent();
+		int n = 0;
+		for (EvalAttempt a : stale)
+		{
+			if (finalizeEvaluation(a, c, "timer").finalized())
+			{
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** next.json-shaped response for attempt a: {ok, mode: evaluation, sessionid, total, expiresat, timerminutes?, attemptnumber, answered, items[done]}. */
+	public static JSONObject evaluationItems(EvalAttempt a, Content c)
+	{
+		JSONArray items = new JSONArray();
+		int pos = 0;
+		for (String qid : a.questions)
+		{
+			Question q = c.questions.get(qid);
+			if (q == null)
+			{
+				q = c.reserved.get(qid);
+			}
+			JSONObject i = new JSONObject();
+			i.put("questionid", qid);
+			i.put("componentid", q == null ? null : q.componentid);
+			i.put("sectionid", q == null ? a.sectionOf.get(qid) : q.sectionid);
+			i.put("tutorialid", q == null ? null : q.tutorialid);
+			i.put("topicid", a.topicid);
+			i.put("position", ++pos);
+			i.put("done", a.answers.containsKey(qid));
+			items.add(i);
+		}
+		JSONObject o = next(EVALUATION, false, items);
+		o.put("sessionid", a.id);
+		o.put("expiresat", iso(a.expires));
+		o.put("attemptnumber", a.number);
+		o.put("answered", a.answers.size());
+		return o;
+	}
+
 	// ---------------------------------------------------------------- subtopic progression
 
 	/**
@@ -2051,6 +2456,8 @@ public class LearningEngine
 			touch(out.lastShown, e.getKey(), e.getValue());
 		}
 		out.jobroles = l.jobroles;
+		out.primaryjobrole = l.primaryjobrole;
+		out.evaluations = l.evaluations;
 		return out;
 	}
 
@@ -2062,6 +2469,7 @@ public class LearningEngine
 		public String error;
 		public Content content; // what the question was resolved against (set by callers that need it afterwards)
 		public Learner learner;
+		public EvalAttempt attempt; // mode evaluation: the open attempt the question belongs to
 
 		static Resolved fail(int inStatus, String inError)
 		{
@@ -2090,7 +2498,7 @@ public class LearningEngine
 		{
 			return Resolved.fail(400, "missing_mode");
 		}
-		if (!MODES.contains(inMode))
+		if (!ACCEPTED_MODES.contains(inMode))
 		{
 			return Resolved.fail(400, "bad_mode");
 		}
@@ -2099,6 +2507,10 @@ public class LearningEngine
 			return Resolved.fail(400, "missing_questionid");
 		}
 		Question q = c.questions.get(inQuestionid);
+		if (q == null && EVALUATION.equals(inMode))
+		{
+			q = c.reserved.get(inQuestionid); // reserved questions exist for Evaluation only
+		}
 		if (q == null)
 		{
 			return Resolved.fail(404, "unknown_question");
@@ -2111,6 +2523,58 @@ public class LearningEngine
 			{
 				return Resolved.fail(409, "hierarchy_mismatch");
 			}
+		}
+		if (EVALUATION.equals(inMode))
+		{
+			// Evaluation: scope = the question's topic, session = the learner's open attempt; any order; one answer per question; no hints
+			// (the module rejects hintlevel > 0 before calling). Correctness is never sent back during the attempt.
+			if (inScopetype == null || inScopeid == null)
+			{
+				return Resolved.fail(400, "missing_scope");
+			}
+			if (!"topic".equals(inScopetype))
+			{
+				return Resolved.fail(400, "bad_scopetype");
+			}
+			if (!inScopeid.equals(q.topicid))
+			{
+				return Resolved.fail(409, "scope_mismatch");
+			}
+			if (inSessionid == null)
+			{
+				return Resolved.fail(400, "missing_sessionid");
+			}
+			EvalAttempt a = loadEvalAttempt(inSessionid);
+			if (a == null)
+			{
+				return Resolved.fail(404, "unknown_session");
+			}
+			if (!l.userid.equals(a.user) || !q.topicid.equals(a.topicid))
+			{
+				return Resolved.fail(409, "session_mismatch");
+			}
+			if (a.finalized())
+			{
+				return Resolved.fail(409, "attempt_closed");
+			}
+			if (a.expires != null && a.expires.before(new Date()))
+			{
+				finalizeEvaluation(a, c, "timer");
+				return Resolved.fail(409, "session_expired");
+			}
+			if (!a.questions.contains(q.id))
+			{
+				return Resolved.fail(409, "not_in_session");
+			}
+			if (inAnswer && a.answers.containsKey(q.id))
+			{
+				return Resolved.fail(409, "already_answered");
+			}
+			Resolved r = new Resolved();
+			r.question = q;
+			r.status = 200;
+			r.attempt = a;
+			return r;
 		}
 		if ("dailychallenge".equals(inMode))
 		{
@@ -2865,6 +3329,7 @@ public class LearningEngine
 		o.put("lockreason", t.locked ? "previous_topic_incomplete" : null);
 		o.put("afterfinish", t.position == null ? null : t.afterfinish);
 		o.put("finished", t.position == null ? null : Boolean.valueOf(t.finished));
+		o.put("evaluation", evaluationStatus(t, l, new Date()));
 		String nextid = null;
 		Date last = null;
 		for (Question q : t.questions)

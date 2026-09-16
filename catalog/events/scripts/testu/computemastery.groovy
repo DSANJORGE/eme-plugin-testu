@@ -23,6 +23,9 @@ int[] mastery = new tech.genailabs.tutor.LearningEngine(archive).recomputeMaster
 Date now = new Date()
 // learningsession retention: 7 days usable + 30 days kept for diagnostics, then deleted (idempotent)
 int purgedSessions = new tech.genailabs.tutor.LearningEngine(archive).purgeSessions(now)
+// Evaluation attempts past expiresat are scored by the timer (idempotent; spec 2026-09-16-evaluation-mode).
+int expiredEvaluations = new tech.genailabs.tutor.LearningEngine(archive).expireEvaluations(now)
+if (expiredEvaluations > 0) log.info("testu computemastery: " + expiredEvaluations + " evaluation attempts expired")
 
 // ---- Pass 2: tutordaily (user x calendar day in the organisation's zone). Full rebuild, same ceiling as tutormastery.
 // Helpers are closures, not script methods: a script-level method cannot see typed script locals (tz, days).

@@ -252,6 +252,11 @@ public class TestULearningModule extends TestUBaseModule
 			return;
 		}
 		int hintlevel = Integer.parseInt(hint);
+		if (LearningEngine.EVALUATION.equals(mode) && hintlevel > 0)
+		{
+			fail(inReq, 400, "hints_not_allowed");
+			return;
+		}
 		MediaArchive archive = getMediaArchive(inReq);
 		Searcher searcher = archive.getSearcher("tutoranswer");
 		String id = user.getId() + "_" + attemptid;
@@ -308,9 +313,197 @@ public class TestULearningModule extends TestUBaseModule
 		TestUAnalyticsModule.scheduleRefresh(archive); // admin analytics see the answer within ~a minute, not at the 15 min sweep
 		LearningEngine.Attempt attempt = LearningEngine.attemptOf(answer);
 		attempt.at = now;
-		engine.recordUnlocks(r.content.topics.get(r.question.topicid), LearningEngine.withAttempt(r.learner, attempt));
-		notifyUser(user.getId(), "progress", null);
+		if (r.attempt != null)
+		{
+			// Evaluation: the attempt keeps its own answer map (scored on submit); no unlocks, no progress event, no verdict in the reply.
+			engine.recordEvaluationAnswer(r.attempt, r.question.id, correct);
+		}
+		else
+		{
+			engine.recordUnlocks(r.content.topics.get(r.question.topicid), LearningEngine.withAttempt(r.learner, attempt));
+			notifyUser(user.getId(), "progress", null);
+		}
 		reply(inReq, answerReply(answer, false, r.question));
+	}
+
+	/** Content + learner + profiles for the signed-in user, as state.json builds them (null user already failed the request). */
+	private Object[] load(WebPageRequest inReq, User inUser)
+	{
+		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
+		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
+		Data urec = freshUser(getMediaArchive(inReq), inUser);
+		LearningEngine.Learner learner = engine.loadLearner(inUser.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
+		engine.applyProfiles(content, learner);
+		return new Object[] {engine, content, learner};
+	}
+
+	/**
+	 * services/testu/learn/evaluation.json?topicid= -- the learner's evaluation status on the topic (LearningEngine.evaluationStatus), the
+	 * usable blueprint (null when not offered) and the attempt history. Read-only apart from finalizing an attempt past its window.
+	 */
+	public void evaluation(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		Object[] ctx = load(inReq, user);
+		LearningEngine engine = (LearningEngine) ctx[0];
+		LearningEngine.Content content = (LearningEngine.Content) ctx[1];
+		LearningEngine.Learner learner = (LearningEngine.Learner) ctx[2];
+		String topicid = param(inReq, "topicid");
+		LearningEngine.Topic topic = topicid == null ? null : content.topics.get(topicid);
+		if (topic == null)
+		{
+			fail(inReq, topicid == null ? 400 : 404, topicid == null ? "missing_topicid" : "unknown_topic");
+			return;
+		}
+		engine.expireStale(learner, content);
+		JSONObject resp = LearningEngine.evaluationStatus(topic, learner, new Date());
+		resp.put("ok", Boolean.TRUE);
+		resp.put("topic", topic.id);
+		resp.put("blueprint", topic.blueprint.usable() ? topic.blueprint.toJson() : null);
+		JSONArray attempts = new JSONArray();
+		for (LearningEngine.EvalAttempt a : learner.evaluations)
+		{
+			if (topic.id.equals(a.topicid))
+			{
+				attempts.add(a.toResultJson());
+			}
+		}
+		resp.put("attempts", attempts);
+		reply(inReq, resp);
+	}
+
+	/**
+	 * services/testu/learn/startevaluation.json (POST topicid) -- resumes the open attempt or creates one when evaluationStatus says
+	 * canstart; replies in next.json shape (mode evaluation, sessionid = attempt id, expiresat, items with done). 409
+	 * evaluation_not_available {status, reason, nextallowedat} otherwise, 409 pool_insufficient when the blueprint selects no question.
+	 * A new attempt writes an auditevent evaluation.start.
+	 */
+	public void startEvaluation(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		Object[] ctx = load(inReq, user);
+		LearningEngine engine = (LearningEngine) ctx[0];
+		LearningEngine.Content content = (LearningEngine.Content) ctx[1];
+		LearningEngine.Learner learner = (LearningEngine.Learner) ctx[2];
+		String topicid = param(inReq, "topicid");
+		LearningEngine.Topic topic = topicid == null ? null : content.topics.get(topicid);
+		if (topic == null)
+		{
+			fail(inReq, topicid == null ? 400 : 404, topicid == null ? "missing_topicid" : "unknown_topic");
+			return;
+		}
+		engine.expireStale(learner, content);
+		Date now = new Date();
+		JSONObject status = LearningEngine.evaluationStatus(topic, learner, now);
+		if (!"in_progress".equals(status.get("status")) && !Boolean.TRUE.equals(status.get("canstart")))
+		{
+			JSONObject err = new JSONObject();
+			err.put("ok", Boolean.FALSE);
+			err.put("error", "evaluation_not_available");
+			err.put("status", status.get("status"));
+			err.put("reason", status.get("reason"));
+			err.put("nextallowedat", status.get("nextallowedat"));
+			if (inReq.getResponse() != null)
+			{
+				inReq.getResponse().setStatus(409);
+			}
+			reply(inReq, err);
+			inReq.setCancelActions(true);
+			return;
+		}
+		LearningEngine.EvalAttempt a = engine.startEvaluation(topic, learner, content, now);
+		if (a == null)
+		{
+			fail(inReq, 409, "pool_insufficient"); // the blueprint selects no question from this topic; nothing was created
+			return;
+		}
+		boolean isNew = true;
+		for (LearningEngine.EvalAttempt known : learner.evaluations)
+		{
+			if (known.id.equals(a.id))
+			{
+				isNew = false;
+			}
+		}
+		if (isNew)
+		{
+			JSONObject after = new JSONObject();
+			after.put("topic", topic.id);
+			after.put("number", a.number);
+			after.put("total", a.total);
+			after.put("strategy", a.strategy);
+			after.put("blueprintversion", a.version);
+			after.put("expiresat", LearningEngine.iso(a.expires));
+			after.put("exposed", a.exposed);
+			after.put("reused", a.reused);
+			audit(inReq, getMediaArchive(inReq), "evaluation.start", "evaluationattempt", a.id, null, after);
+		}
+		JSONObject resp = LearningEngine.evaluationItems(a, content);
+		resp.put("timerminutes", topic.blueprint.timerminutes);
+		reply(inReq, resp);
+	}
+
+	/**
+	 * services/testu/learn/submitevaluation.json (POST sessionid) -- finalizes the learner's attempt (idempotent: an attempt already
+	 * closed returns the same result with duplicate true) and replies the result, the topic's new evaluation status and Finished.
+	 */
+	public void submitEvaluation(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		String sessionid = param(inReq, "sessionid");
+		if (sessionid == null)
+		{
+			fail(inReq, 400, "missing_sessionid");
+			return;
+		}
+		Object[] ctx = load(inReq, user);
+		LearningEngine engine = (LearningEngine) ctx[0];
+		LearningEngine.Content content = (LearningEngine.Content) ctx[1];
+		LearningEngine.Learner learner = (LearningEngine.Learner) ctx[2];
+		LearningEngine.EvalAttempt a = engine.loadEvalAttempt(sessionid);
+		if (a == null || !user.getId().equals(a.user))
+		{
+			fail(inReq, 404, "unknown_session");
+			return;
+		}
+		boolean duplicate = a.finalized();
+		a = engine.finalizeEvaluation(a, content, "learner");
+		LearningEngine.replaceAttempt(learner, a);
+		LearningEngine.Topic topic = content.topics.get(a.topicid);
+		JSONObject resp = a.toResultJson();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("duplicate", duplicate);
+		resp.put("failedrule", a.inputs.get("failedrule"));
+		resp.put("weakest", a.inputs.get("weakest"));
+		resp.put("passpercent", a.inputs.get("passpercent"));
+		resp.put("subtopicminpercent", a.inputs.get("subtopicminpercent"));
+		if (topic != null)
+		{
+			topic.finished = LearningEngine.finished(topic, learner);
+			JSONObject st = LearningEngine.evaluationStatus(topic, learner, new Date());
+			resp.put("evaluationstatus", st.get("status"));
+			resp.put("nextallowedat", st.get("nextallowedat"));
+			resp.put("attemptsleft", st.get("attemptsleft"));
+			resp.put("finished", topic.position == null ? null : Boolean.valueOf(topic.finished));
+		}
+		if (!duplicate)
+		{
+			audit(inReq, getMediaArchive(inReq), "evaluation.submit", "evaluationattempt", a.id, null, a.toResultJson());
+			notifyUser(user.getId(), "progress", null);
+		}
+		reply(inReq, resp);
 	}
 
 	/**
@@ -592,6 +785,11 @@ public class TestULearningModule extends TestUBaseModule
 		o.put("scopetype", inAnswer.get("scopetype"));
 		o.put("scopeid", inAnswer.get("scopeid"));
 		o.put("hintlevel", LearningEngine.intOr(inAnswer.get("hintlevel"), 0));
+		if (LearningEngine.EVALUATION.equals(inAnswer.get("mode")))
+		{
+			o.remove("iscorrect"); // withheld until the attempt is submitted
+			o.put("deferred", Boolean.TRUE);
+		}
 		return o;
 	}
 

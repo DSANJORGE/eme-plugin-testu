@@ -463,7 +463,8 @@ public class LearningEngineCheck
 		ok("resolve learn topic scope ok (exposure)", engine.resolve(c, none, "learn", "topic", "t1", "t1q2", claims, lt, false).question != null, "");
 		ok("resolve learn subtopic scope ok (exposure)", engine.resolve(c, none, "learn", "subtopic", "s1", "t1q2", claims, ls, false).question != null, "");
 		expectReject(engine.resolve(c, none, null, "topic", "t1", "t1q2", claims, lt, true), 400, "missing_mode");
-		expectReject(engine.resolve(c, none, "evaluation", "topic", "t1", "t1q2", claims, lt, true), 400, "bad_mode");
+		expectReject(engine.resolve(c, none, "quiz", "topic", "t1", "t1q2", claims, lt, true), 400, "bad_mode"); // evaluation is accepted now (2026-09-16-evaluation-mode)
+		expectReject(engine.resolve(c, none, "evaluation", "subtopic", "s1", "t1q2", claims, lt, true), 400, "bad_scopetype"); // evaluation is scoped to the topic
 		expectReject(engine.resolve(c, none, "learn", "topic", "t1", "nope", claims, lt, true), 404, "unknown_question");
 		expectReject(engine.resolve(c, none, "learn", null, null, "t1q2", claims, lt, true), 400, "missing_scope");
 		expectReject(engine.resolve(c, none, "learn", "topic", "t2", "t1q2", claims, lt, true), 409, "scope_mismatch");

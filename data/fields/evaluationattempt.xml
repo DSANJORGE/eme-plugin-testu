@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Evaluation Mode (spec 2026-09-16-evaluation-mode): one row per evaluation attempt (id = <user>_<uuid>). Created by
-     services/testu/learn/startevaluation.json; answers = JSON {questionid: correct} appended by answer.json (mode evaluation) under the
+     services/testu/learn/startevaluation.json; answermap = JSON {questionid: correct} appended by answer.json (mode evaluation) under the
      engine write lock; finalized once (status submitted | expired, score fields) by submitevaluation.json, by an answer past expiresat,
      or by the computemastery event. questionlist = JSON [{questionid, sectionid, difficulty, position}] in served order. -->
 <properties beanname="dataSearcher">
@@ -12,7 +12,7 @@
   <property id="attemptnumber" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Attempt number</language><language id="es">Número de intento</language></name></property>
   <property id="questionlist" index="true" stored="true" editable="false" type="text"><name><language id="en">Questions (JSON)</language><language id="es">Preguntas (JSON)</language></name></property>
   <property id="total" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Questions</language><language id="es">Preguntas</language></name></property>
-  <property id="answers" index="true" stored="true" editable="false" type="text"><name><language id="en">Answers (JSON)</language><language id="es">Respuestas (JSON)</language></name></property>
+  <property id="answermap" index="true" stored="true" editable="false" type="text"><name><language id="en">Answers (JSON)</language><language id="es">Respuestas (JSON)</language></name></property>
   <property id="status" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Status</language><language id="es">Estado</language></name></property>
   <property id="datecreated" index="true" stored="true" editable="false" type="date"><name><language id="en">Started</language><language id="es">Iniciado</language></name></property>
   <property id="expiresat" index="true" stored="true" editable="false" type="date"><name><language id="en">Expires</language><language id="es">Vence</language></name></property>
