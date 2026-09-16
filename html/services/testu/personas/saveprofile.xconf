@@ -1,0 +1,4 @@
+<page>
+  <path-action name="TestUProfileModule.saveProfile"/>
+  <permission name="view"><userprofile property="personas_manage" equals="true"/></permission>
+</page>

@@ -197,6 +197,93 @@ try:
     stc, body = call(me, "GET", f"/services/testu/learn/state.json?topicid={T3}")
     ok("state: removed topic by id = 404 unknown_topic", stc == 404 and body["error"] == "unknown_topic", (stc, body))
 
+    # ---- endpoints (Task 4)
+    PP = "/services/testu/personas/"
+    r = call(me, "GET", PP + "profiles.json")
+    ok("profiles.json: learner gets 403", r[0] == 403, r)
+    for ep in ("saveprofile", "deleteprofile", "setprofiles"):
+        r = call(me, "POST", PP + ep + ".json", form={"id": "x"})
+        ok(f"{ep}.json: learner gets 403", r[0] == 403, r)
+
+    def rows(*specs):
+        return json.dumps([{"topic": t, "requiredlevel": lvl, "mandatory": m, "requiresprevious": rp, "afterfinish": af} for t, lvl, m, rp, af in specs])
+
+    r = call(admin, "POST", PP + "saveprofile.json", form={"id": "", "name": "", "rows": rows()})
+    ok("saveprofile: blank name = 400 missing_name", r[0] == 400 and r[1]["error"] == "missing_name", r)
+    r = call(admin, "POST", PP + "saveprofile.json", form={"id": "", "name": "Pcheck New", "rows": rows((T1, "", True, True, "keep"))})
+    ok("saveprofile: requiresprevious on the first row = 400 first_row_gate", r[0] == 400 and r[1]["error"] == "first_row_gate", r)
+    r = call(admin, "POST", PP + "saveprofile.json", form={"id": "", "name": "Pcheck New", "rows": rows((T1, "", True, False, "keep"), (T1, "", True, False, "keep"))})
+    ok("saveprofile: duplicate topic = 400 duplicate_topic", r[0] == 400 and r[1]["error"] == "duplicate_topic", r)
+    r = call(admin, "POST", PP + "saveprofile.json", form={"id": "", "name": "Pcheck New", "rows": rows((T1, "guru", True, False, "keep"))})
+    ok("saveprofile: bad level = 400 bad_level", r[0] == 400 and r[1]["error"] == "bad_level", r)
+    r = call(admin, "POST", PP + "saveprofile.json", form={"id": "", "name": "pcheck pilot", "rows": rows()})
+    ok("saveprofile: duplicate name (case-insensitive) = 400 duplicate_name", r[0] == 400 and r[1]["error"] == "duplicate_name", r)
+
+    created = must("saveprofile create", call(admin, "POST", PP + "saveprofile.json", form={"id": "", "name": "Pcheck New", "rows": rows((T2, "competent", True, False, "keep"), (T1, "", False, True, "remove"))}))
+    NEW = created["profile"]["id"]
+    ROWS.extend([f"{NEW}_{T2}", f"{NEW}_{T1}"])
+    ok("saveprofile: id is a slug of the name, rows renumbered 1..n with titles and question counts", NEW == "pcheck-new" and [x["position"] for x in created["profile"]["rows"]] == [1, 2] and created["profile"]["rows"][0]["topic"] == T2 and created["profile"]["rows"][0]["questions"] > 0 and created["profile"]["rows"][0]["topictitle"], created["profile"])
+    lst = must("profiles.json", call(admin, "GET", PP + "profiles.json"))
+    mine = next(p for p in lst["profiles"] if p["id"] == NEW)
+    ok("profiles.json: lists the new profile with 0 members and every topic", mine["members"] == 0 and any(t["id"] == T1 for t in lst["topics"]), mine)
+    pil = next(p for p in lst["profiles"] if p["id"] == P1)
+    ok("profiles.json: seeded rows read back (position, gate, afterfinish)", [x["topic"] for x in pil["rows"]] == [T3, T1] and pil["rows"][1]["requiresprevious"] is True and pil["rows"][0]["afterfinish"] == "remove" and pil["members"] == 1, pil)
+
+    saved = must("saveprofile reorder", call(admin, "POST", PP + "saveprofile.json", form={"id": NEW, "name": "Pcheck New 2", "rows": rows((T1, "", True, False, "keep"))}))
+    refresh()
+    ok("saveprofile: replaces the row set (T2 row gone), renames", [x["topic"] for x in saved["profile"]["rows"]] == [T1] and saved["profile"]["name"] == "Pcheck New 2" and not es_ids("topicrequirement", {"term": {"_id": f"{NEW}_{T2}"}}), saved["profile"])
+
+    r = call(admin, "POST", PP + "setprofiles.json", form={"user": USER, "primary": NEW, "extras": json.dumps([NEW])})
+    ok("setprofiles: primary in extras = 400 primary_in_extras", r[0] == 400 and r[1]["error"] == "primary_in_extras", r)
+    r = call(admin, "POST", PP + "setprofiles.json", form={"user": USER, "primary": "", "extras": json.dumps([P2])})
+    ok("setprofiles: extras without primary = 400 missing_primary", r[0] == 400 and r[1]["error"] == "missing_primary", r)
+    r = call(admin, "POST", PP + "setprofiles.json", form={"user": "nobody@x", "primary": NEW, "extras": "[]"})
+    ok("setprofiles: unknown user = 404", r[0] == 404, r)
+    sp = must("setprofiles", call(admin, "POST", PP + "setprofiles.json", form={"user": USER, "primary": NEW, "extras": json.dumps([P1])}))
+    ok("setprofiles: stores primary + list", sp["primaryjobrole"] == NEW and sorted(sp["jobroles"]) == sorted([NEW, P1]), sp)
+    ulist = must("users.json", call(admin, "GET", PP + "users.json"))["users"]
+    u = next(x for x in ulist if x["id"] == USER)
+    ok("users.json: primaryjobrole and jobroles", u["primaryjobrole"] == NEW and sorted(u["jobroles"]) == sorted([NEW, P1]), u)
+    mj = must("me.json", call(me, "GET", PP + "me.json"))
+    ok("me.json: primaryjobrole and jobroles", mj["user"]["primaryjobrole"] == NEW and NEW in mj["user"]["jobroles"], mj["user"])
+
+    r = call(admin, "POST", PP + "deleteprofile.json", form={"id": NEW})
+    ok("deleteprofile: in use = 409 profile_in_use with members", r[0] == 409 and r[1]["error"] == "profile_in_use" and r[1]["members"] == 1, r)
+    must("setprofiles back", call(admin, "POST", PP + "setprofiles.json", form={"user": USER, "primary": P1, "extras": json.dumps([P2])}))
+    must("deleteprofile", call(admin, "POST", PP + "deleteprofile.json", form={"id": NEW}))
+    refresh()
+    ok("deleteprofile: rows and list entry gone", not es_ids("topicrequirement", {"term": {"jobrole": NEW}}) and call(admin, "GET", f"/services/lists/data/jobrole/{NEW}.json")[0] in (404, 200) and NEW not in [p["id"] for p in must("profiles.json", call(admin, "GET", PP + "profiles.json"))["profiles"]], NEW)
+    r = call(admin, "POST", PP + "deleteprofile.json", form={"id": NEW})
+    ok("deleteprofile: unknown = 404", r[0] == 404, r)
+    refresh()
+    aud = es_ids("auditevent", {"bool": {"must": [{"term": {"action": "jobprofile.save"}}, {"term": {"targetid": NEW}}]}})
+    ok("audit: jobprofile.save rows written", len(aud) >= 2, aud)
+
+    # CSV import with profile columns (names and ids)
+    csv = f"email,firstName,lastName,primaryjobrole,jobrole\npcheck-import@testu.local,Imp,Ort,Pcheck Pilot,{P1}|Pcheck Safety\n"
+    boundary = "----pcheck" + secrets.token_hex(6)
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"users.csv\"\r\nContent-Type: text/csv\r\n\r\n{csv}\r\n--{boundary}--\r\n").encode()
+    req = urllib.request.Request(B + PP + "importusers.json", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with admin.open(req, timeout=120) as rr:
+            imp = (rr.status, json.loads(rr.read()))
+    except urllib.error.HTTPError as e:
+        imp = (e.code, e.read())
+    ok("import: profile columns accepted", imp[0] == 200 and imp[1].get("imported") == 1, imp)
+    refresh()
+    ulist = must("users.json", call(admin, "GET", PP + "users.json"))["users"]
+    iu = next((x for x in ulist if x["id"] == "pcheck-import@testu.local"), None)
+    ok("import: names resolved to ids, primary set", iu is not None and iu["primaryjobrole"] == P1 and sorted(iu["jobroles"]) == sorted([P1, P2]), iu)
+    csv_bad = "email,firstName,lastName,primaryjobrole\npcheck-import2@testu.local,A,B,No Such Profile\n"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"users.csv\"\r\nContent-Type: text/csv\r\n\r\n{csv_bad}\r\n--{boundary}--\r\n").encode()
+    req = urllib.request.Request(B + PP + "importusers.json", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with admin.open(req, timeout=120) as rr:
+            imp = (rr.status, json.loads(rr.read()))
+    except urllib.error.HTTPError as e:
+        imp = (e.code, e.read())
+    ok("import: unknown profile name = 400", imp[0] == 400, imp)
+
     # ---- analytics person.json in profile order
     pj = must("person.json", call(admin, "GET", f"/services/testu/analytics/person.json?user={quote(USER)}"))
     req = pj["risk"]["requiredtopics"]
@@ -208,6 +295,9 @@ finally:
     delete_rows("jobrole", [P1, P2])
     wipe_user_rows()
     call(admin, "POST", "/services/testu/personas/disableuser.json", form={"userid": USER})
+    call(admin, "POST", "/services/testu/personas/deleteuser.json", form={"userid": "pcheck-import@testu.local"})
+    call(admin, "POST", "/services/testu/personas/deleteuser.json", form={"userid": "pcheck-import2@testu.local"})
+    delete_rows("jobrole", ["pcheck-new"])
     print("cleanup done")
 
 print("PASS" if not FAILS else f"FAIL ({len(FAILS)}): " + "; ".join(FAILS))

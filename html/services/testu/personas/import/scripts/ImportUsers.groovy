@@ -9,7 +9,7 @@ import groovy.json.JsonOutput
 
 // Only these headers may reach the user table; BaseImporter would auto-create a field for anything else.
 class UsersImporter extends BaseImporter {
-  static final ALLOWED = ["id", "email", "firstName", "lastName", "team"] as Set
+  static final ALLOWED = ["id", "email", "firstName", "lastName", "team", "primaryjobrole", "jobrole"] as Set
   int count = 0
   protected void addProperties(Row inRow, Data inData) {
     List names = inRow.getHeader().getHeaderNames()
@@ -25,11 +25,26 @@ class UsersImporter extends BaseImporter {
     if (!(email ==~ /[^@\s]+@[^@\s]+\.[^@\s]+/)) throw new IllegalArgumentException("invalid email: " + email)
     String team = inRow.get("team")
     if (team && getMediaArchive().getCachedData("team", team) == null) throw new IllegalArgumentException("unknown team: " + team)
+    // Job profiles: primaryjobrole (one) and jobrole (a|b|c), each an id or a name of the jobrole list; primary is added to jobrole.
+    def resolve = { String v ->
+      String s = (v ?: "").trim()
+      if (!s) return null
+      if (getMediaArchive().getCachedData("jobrole", s) != null) return s
+      def hit = getMediaArchive().query("jobrole").all().search().find { it.getName()?.equalsIgnoreCase(s) }
+      if (hit == null) throw new IllegalArgumentException("unknown job profile: " + s)
+      return hit.getId()
+    }
+    String primary = resolve(inRow.get("primaryjobrole"))
+    List roles = []
+    for (String part : ((inRow.get("jobrole") ?: "") as String).split(/\s*[|,]\s*/)) { def r = resolve(part); if (r && !(r in roles)) roles << r }
+    if (primary && !(primary in roles)) roles.add(0, primary)
     super.addProperties(inRow, inData)
     inData.setValue("email", email)
     inData.setValue("enabled", "true")
     // Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
     inData.setValue("password", UUID.randomUUID().toString())
+    inData.setValue("primaryjobrole", primary)
+    inData.setValue("jobrole", roles ? roles : null)
     count++
   }
 }

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
@@ -102,6 +103,8 @@ public class TestUUserModule extends TestUBaseModule
 			userObj.put("email", u.get("email"));
 			userObj.put("firstName", u.get("firstName"));
 			userObj.put("lastName", u.get("lastName"));
+			userObj.put("primaryjobrole", LearningEngine.primaryJobroleOf(u));
+			userObj.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(u)));
 			String avatar = avatarVersion(avatarFile(archive, u.getId()));
 			userObj.put("avatarversion", avatar);
 			userObj.put("avatarurl", avatar == null ? null : "services/testu/personas/avatar.json?v=" + avatar);
@@ -286,6 +289,8 @@ public class TestUUserModule extends TestUBaseModule
 				userObj.put("firstName", u.get("firstName"));
 				userObj.put("lastName", u.get("lastName"));
 				userObj.put("team", team);
+				userObj.put("primaryjobrole", LearningEngine.primaryJobroleOf(u));
+				userObj.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(u)));
 				String role = roles.get(u.getId());
 				userObj.put("role", (role != null && !role.isEmpty()) ? role : "users");
 				userObj.put("enabled", Boolean.valueOf(!"false".equals(String.valueOf(u.get("enabled")))));

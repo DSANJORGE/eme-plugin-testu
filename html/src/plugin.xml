@@ -10,6 +10,11 @@
 			<ref bean="moduleManager" />
 		</property>
 	</bean>
+	<bean id="TestUProfileModule" class="tech.genailabs.tutor.TestUProfileModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
 	<bean id="TestUSocialModule" class="tech.genailabs.tutor.TestUSocialModule" scope="prototype">
 		<property name="moduleManager">
 			<ref bean="moduleManager" />
