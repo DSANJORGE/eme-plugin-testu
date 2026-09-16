@@ -761,7 +761,11 @@ public class LearningEngine
 		}
 		for (Object o : fieldArchive.query("topicrequirement").orgroup("jobrole", inJobroles).search())
 		{
-			p.rows.add(rowOf((Data) o));
+			ProfileRow r = rowOf((Data) o);
+			if (r.position > 0) // v1 rows (no position) are job requirements, not profile rows: requiredTopics keeps reading them
+			{
+				p.rows.add(r);
+			}
 		}
 		return p;
 	}
