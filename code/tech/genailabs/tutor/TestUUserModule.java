@@ -104,6 +104,8 @@ public class TestUUserModule extends TestUBaseModule
 			userObj.put("firstName", u.get("firstName"));
 			userObj.put("lastName", u.get("lastName"));
 			Data urec = freshUser(archive, u);
+			// Support accounts: the app tells the person their activity is not in the org's reports.
+			userObj.put("internal", Boolean.valueOf(urec != null && TestUAnalyticsModule.isInternal(urec)));
 			userObj.put("primaryjobrole", LearningEngine.primaryJobroleOf(urec));
 			userObj.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(urec)));
 			String avatar = avatarVersion(avatarFile(archive, u.getId()));
@@ -299,6 +301,7 @@ public class TestUUserModule extends TestUBaseModule
 				String role = roles.get(u.getId());
 				userObj.put("role", (role != null && !role.isEmpty()) ? role : "users");
 				userObj.put("enabled", Boolean.valueOf(!"false".equals(String.valueOf(u.get("enabled")))));
+				userObj.put("internal", Boolean.valueOf(TestUAnalyticsModule.isInternal(u)));
 				Date lastDate = last.get(u.getId());
 				userObj.put("lastactivity", lastDate != null ? isoFormat.format(lastDate) : null);
 				out.add(userObj);
@@ -367,6 +370,8 @@ public class TestUUserModule extends TestUBaseModule
 		String lastName = inReq.getRequestParameter("lastName");
 		u.setValue("lastName", lastName != null ? lastName : "");
 		u.setValue("enabled", "true");
+		boolean internal = internalByDomain(archive, email);
+		u.setValue("internal", internal ? "true" : "false");
 		// Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
 		u.setValue("password", UUID.randomUUID().toString());
 		if (!team.isEmpty())
@@ -390,6 +395,7 @@ public class TestUUserModule extends TestUBaseModule
 		after.put("email", email);
 		after.put("team", team);
 		after.put("role", role);
+		after.put("internal", Boolean.valueOf(internal));
 		audit(inReq, archive, "user.create", "user", email, null, after);
 
 		JSONObject replyObj = new JSONObject();
@@ -401,6 +407,65 @@ public class TestUUserModule extends TestUBaseModule
 	public void disableUser(WebPageRequest inReq)
 	{
 		setEnabled(inReq, false);
+	}
+
+	/**
+	 * True when the email's domain is listed in the catalog setting testu_internaldomains (comma-separated, e.g.
+	 * "genailabs.com, testu.co"): such accounts are created as internal (support) so nobody has to remember to flag them.
+	 */
+	public static boolean internalByDomain(MediaArchive inArchive, String inEmail)
+	{
+		String domains = inArchive.getCatalogSettingValue("testu_internaldomains");
+		if (domains == null || inEmail == null || inEmail.indexOf('@') < 0)
+		{
+			return false;
+		}
+		String mine = inEmail.substring(inEmail.lastIndexOf('@') + 1).trim().toLowerCase();
+		for (String d : domains.split(","))
+		{
+			if (!d.trim().isEmpty() && mine.equals(d.trim().toLowerCase()))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * setinternal.json: userid, internal=true|false. An internal (support) account keeps learning and keeps its records;
+	 * analytics simply leave it out (TestUAnalyticsModule.countsAsPerson). Same gate as setenabled: personas_operate.
+	 */
+	public void setInternal(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		String userid = inReq.getRequestParameter("userid");
+		userid = (userid != null) ? userid.trim() : "";
+		boolean internal = "true".equals(inReq.getRequestParameter("internal"));
+
+		Searcher users = archive.getSearcher("user");
+		Data u = (Data) users.searchById(userid);
+		if (u == null)
+		{
+			fail(inReq, 404, "no user");
+			return;
+		}
+		if (!canTouch(inReq, archive, userid))
+		{
+			return;
+		}
+		boolean was = TestUAnalyticsModule.isInternal(u);
+		u.setValue("internal", internal ? "true" : "false");
+		users.saveData(u, inReq.getUser());
+
+		JSONObject before = new JSONObject();
+		before.put("internal", Boolean.valueOf(was));
+		JSONObject after = new JSONObject();
+		after.put("internal", Boolean.valueOf(internal));
+		audit(inReq, archive, internal ? "user.internal" : "user.external", "user", userid, before, after);
+
+		JSONObject replyObj = new JSONObject();
+		replyObj.put("ok", Boolean.TRUE);
+		reply(inReq, replyObj);
 	}
 
 	/** setenabled.json: enabled=true|false. Re-enabling is the undo of Desactivar. */

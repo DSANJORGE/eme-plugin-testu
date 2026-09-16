@@ -13,7 +13,7 @@ import groovy.json.JsonOutput
 // profiles_need_manage unless the actor has it. Applied assignments are audited as jobprofile.assign,
 // same action and before/after shape as TestUProfileModule.setProfiles, after the import commits.
 class UsersImporter extends BaseImporter {
-  static final ALLOWED = ["id", "email", "firstName", "lastName", "team", "primaryjobrole", "jobrole"] as Set
+  static final ALLOWED = ["id", "email", "firstName", "lastName", "team", "primaryjobrole", "jobrole", "internal"] as Set
   int count = 0
   boolean canmanage = false
   List assigned = []
@@ -49,6 +49,10 @@ class UsersImporter extends BaseImporter {
     super.addProperties(inRow, inData)
     inData.setValue("email", email)
     inData.setValue("enabled", "true")
+    // Support account: the `internal` column (true/1/yes) or the org's testu_internaldomains rule; analytics leave it out.
+    String internalcol = ((inRow.get("internal") ?: "") as String).trim().toLowerCase()
+    boolean internal = internalcol in ["true", "1", "yes", "si", "sí"] || tech.genailabs.tutor.TestUUserModule.internalByDomain(getMediaArchive(), email)
+    inData.setValue("internal", internal ? "true" : "false")
     // Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
     inData.setValue("password", UUID.randomUUID().toString())
     inData.setValue("primaryjobrole", primary)

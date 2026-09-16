@@ -12,4 +12,9 @@
   <property id="jobrole" index="true" stored="true" editable="true" type="list" viewtype="multiselect" datatype="list" listid="jobrole" indextype="not_analyzed">Job role</property>
   <!-- Job profiles: the primary profile orders the learner's topics; must be one of jobrole. -->
   <property id="primaryjobrole" index="true" stored="true" editable="true" type="list" viewtype="list" datatype="list" listid="jobrole" indextype="not_analyzed">Primary job profile</property>
+  <!-- Support / internal account (TestU staff inside a client org): learns like anyone, records are written as usual,
+       but every analytics screen, report and forecast leaves it out (TestUAnalyticsModule.countsAsPerson). Set by hand
+       (personas/setinternal.json), by the users CSV `internal` column, or on creation when the email domain is in the
+       catalog setting testu_internaldomains (comma-separated). -->
+  <property id="internal" index="true" stored="true" editable="true" type="boolean" datatype="boolean">Internal (support) account</property>
 </properties>

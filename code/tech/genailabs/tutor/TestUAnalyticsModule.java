@@ -185,6 +185,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 
 		Map<String, Data> users = new HashMap<>();
+		int internalCount = 0; // in-scope support accounts left out, so the console can say so instead of showing a silent gap
 		for (Map.Entry<String, Data> entry : allUsers.entrySet())
 		{
 			Data u = entry.getValue();
@@ -195,6 +196,10 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			if (isLearner && inScope)
 			{
 				users.put(id, u);
+			}
+			else if (inScope && isInternal(u) && !"false".equals(String.valueOf(u.get("enabled"))))
+			{
+				internalCount++;
 			}
 		}
 
@@ -404,6 +409,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		cohort.put("activated", activatedIds.size());
 		cohort.put("active7d", active7dUsers.size());
 		cohort.put("active30d", active30dUsers.size());
+		cohort.put("internal", internalCount);
 
 		Map<String, Object> previous = new HashMap<>();
 		int prevAnswers = 0, prevMinutes = 0, prevCw = 0, prevQuestions = 0;
@@ -2048,7 +2054,10 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			for (Object o : uh)
 			{
 				Data u = (Data) o;
-				users.put(u.getId(), u);
+				if (countsAsPerson(u.getId(), u)) // same population as every other screen: no agent, disabled or internal
+				{
+					users.put(u.getId(), u);
+				}
 			}
 		}
 
@@ -2198,10 +2207,18 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 	// ---------------- Helper Methods ----------------
 
-	/** An enabled account other than the system agent. Administrators count too: an administrator can also be a learner. */
+	/**
+	 * An enabled, non-internal account other than the system agent. Administrators count too: an administrator can also
+	 * be a learner. Internal (support) accounts learn like anyone but never reach an org's numbers (user.internal).
+	 */
 	static boolean countsAsPerson(String inId, Data inUser)
 	{
-		return !"agent".equals(inId) && !"false".equals(String.valueOf(inUser.get("enabled")));
+		return !"agent".equals(inId) && !"false".equals(String.valueOf(inUser.get("enabled"))) && !isInternal(inUser);
+	}
+
+	static boolean isInternal(Data inUser)
+	{
+		return "true".equals(String.valueOf(inUser.get("internal")));
 	}
 
 	private static int getInt(Data d, String field)
