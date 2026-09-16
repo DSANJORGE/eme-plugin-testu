@@ -40,6 +40,15 @@ public class LearningEngine
 	public static final int MAX_HINTLEVEL = 3;
 	public static final int[] DEFAULT_THRESHOLDS = {60, 85};
 
+	// Evaluation Mode (spec 2026-09-16-evaluation-mode-design)
+	public static final String EVALUATION = "evaluation";
+	/** Modes answer.json / exposure.json accept: the learning modes plus evaluation. */
+	public static final Set<String> ACCEPTED_MODES = Set.of("learn", "dailychallenge", "improve", EVALUATION);
+	public static final Set<String> STRATEGIES = Set.of("random", "reserved");
+	public static final Set<String> MIXES = Set.of("proportional", "balanced");
+	/** An attempt without a timer stays open this long: one sitting = one bounded window. ponytail: a catalog setting if an org asks. */
+	public static final long UNTIMED_WINDOW_MS = 24L * 3600 * 1000;
+
 	protected final MediaArchive fieldArchive;
 
 	public LearningEngine(MediaArchive inArchive)
@@ -76,6 +85,11 @@ public class LearningEngine
 		public Integer position;
 		public String profile, profilename, previoustopic, afterfinish = "keep", assignedlevel;
 		public boolean mandatory, requiresprevious, locked, finished, removed;
+		// Evaluation Mode: the topic's current blueprint (null before loadContent / in pure fixtures = not configured), whether the
+		// learner's merged profile row requires the pass, and the evaluation-reserved questions (outside the learning sequence).
+		public Blueprint blueprint;
+		public boolean evaluationrequired;
+		public List<Question> reserved = new ArrayList<>();
 	}
 
 	public static class Content
@@ -83,6 +97,7 @@ public class LearningEngine
 		public Map<String, Topic> topics = new LinkedHashMap<>();
 		public Map<String, Section> sections = new HashMap<>();
 		public Map<String, Question> questions = new HashMap<>();
+		public Map<String, Question> reserved = new HashMap<>(); // evaluation-reserved questions by id (never in questions/sections)
 		public String thresholdsreason; // why the org boundaries fell back to defaults; null when valid
 		public List<String> removedtopics = new ArrayList<>(); // assigned topics finished with afterfinish=remove (stripped from topics/sections/questions)
 		public List<JSONObject> profiles = new ArrayList<>(); // [{id, name, primary}] of the learner, primary first
@@ -424,6 +439,7 @@ public class LearningEngine
 		public String questionid, mode, confidence;
 		public boolean correct;
 		public int hintlevel;
+		public String session; // learningsession id (an evaluationattempt id for mode evaluation); null on legacy rows
 		public Date at;
 	}
 
@@ -440,6 +456,7 @@ public class LearningEngine
 		public Set<String> unresolvedHci = new HashSet<>();
 		public Collection<String> jobroles = new ArrayList<>();
 		public String primaryjobrole; // orders the assignment; null = none (extras alone, by name)
+		public List<EvalAttempt> evaluations = new ArrayList<>(); // the learner's evaluation attempts, oldest first (loadLearner)
 	}
 
 	/** learn | dailychallenge | improve. Legacy (unverified) and evaluation attempts are not learning attempts. */
@@ -468,6 +485,7 @@ public class LearningEngine
 		t.confidence = a.get("answerconfidence");
 		t.correct = "true".equals(String.valueOf(a.get("iscorrect")));
 		t.hintlevel = Math.max(0, Math.min(3, intOr(a.get("hintlevel"), 0)));
+		t.session = a.get("learningsession");
 		t.at = DateStorageUtil.getStorageUtil().parseFromObject(a.getValue("datecreated"));
 		return t;
 	}
@@ -726,7 +744,7 @@ public class LearningEngine
 	{
 		public String jobrole, topicid, requiredlevel, afterfinish = "keep";
 		public int position;
-		public boolean mandatory = true, requiresprevious;
+		public boolean mandatory = true, requiresprevious, evaluationrequired;
 	}
 
 	/** Every row of the learner's profiles, and profile id -> name. */
@@ -747,6 +765,7 @@ public class LearningEngine
 		r.mandatory = !"false".equals(String.valueOf(d.get("mandatory")));
 		r.requiresprevious = "true".equals(String.valueOf(d.get("requiresprevious")));
 		r.afterfinish = "remove".equals(d.get("afterfinish")) ? "remove" : "keep";
+		r.evaluationrequired = "true".equals(String.valueOf(d.get("evaluationrequired")));
 		return r;
 	}
 
@@ -794,9 +813,13 @@ public class LearningEngine
 		return out;
 	}
 
-	/** Learn complete AND (no level, or band >= assignedlevel with expert evidence when expert). */
+	/** Learn complete AND (no level, or band >= assignedlevel with expert evidence when expert) AND (evaluation not required, or passed). */
 	public static boolean finished(Topic t, Learner l)
 	{
+		if (t.evaluationrequired && !evaluationPassed(l, t.id))
+		{
+			return false;
+		}
 		Mastery m = mastery(t.questions, l, t.competentmin, t.expertmin);
 		if (m.questions == 0 || m.answered < m.questions)
 		{
@@ -877,6 +900,7 @@ public class LearningEngine
 						t.assignedlevel = r.requiredlevel;
 					}
 					t.mandatory |= r.mandatory;
+					t.evaluationrequired |= r.evaluationrequired;
 					if ("keep".equals(r.afterfinish))
 					{
 						t.afterfinish = "keep";
@@ -890,6 +914,7 @@ public class LearningEngine
 					t.assignedlevel = r.requiredlevel;
 					t.mandatory = r.mandatory;
 					t.afterfinish = r.afterfinish;
+					t.evaluationrequired = r.evaluationrequired;
 					t.requiresprevious = r.requiresprevious && prev != null;
 					t.previoustopic = t.requiresprevious ? prev : null;
 					assigned.put(t.id, t);
@@ -987,6 +1012,584 @@ public class LearningEngine
 			}
 		}
 		return out;
+	}
+
+	// ---------------------------------------------------------------- evaluation (spec 2026-09-16-evaluation-mode-design)
+
+	/** A topic's evaluation blueprint = its highest evaluationblueprint version. reason null = active and valid (usable). */
+	public static class Blueprint
+	{
+		public String topicid, strategy = "random", mix = "proportional", user;
+		/** not_configured | inactive | invalid_<field>; null = usable. */
+		public String reason = "not_configured";
+		public int version, maxquestions = 20, minpersubtopic, passpercent = 70, subtopicminpercent, timerminutes, retakewaithours, maxattempts;
+		public boolean active, requirelearncomplete = true;
+		public Set<String> excludedsections = new HashSet<>();
+		public Date created;
+
+		public boolean usable()
+		{
+			return reason == null;
+		}
+
+		public JSONObject toJson()
+		{
+			JSONObject o = new JSONObject();
+			o.put("version", version);
+			o.put("active", active);
+			o.put("strategy", strategy);
+			o.put("maxquestions", maxquestions);
+			o.put("minpersubtopic", minpersubtopic);
+			o.put("difficultymix", mix);
+			o.put("passpercent", passpercent);
+			o.put("subtopicminpercent", subtopicminpercent);
+			o.put("timerminutes", timerminutes);
+			o.put("retakewaithours", retakewaithours);
+			o.put("maxattempts", maxattempts);
+			o.put("requirelearncomplete", requirelearncomplete);
+			JSONArray ex = new JSONArray();
+			ex.addAll(new java.util.TreeSet<>(excludedsections));
+			o.put("excludedsections", ex);
+			o.put("reason", reason);
+			return o;
+		}
+	}
+
+	/** The first field of b outside its allowed range or list, or null when every value is allowed. */
+	public static String invalidField(Blueprint b)
+	{
+		if (!STRATEGIES.contains(b.strategy))
+		{
+			return "strategy";
+		}
+		if (!MIXES.contains(b.mix))
+		{
+			return "difficultymix";
+		}
+		if (b.maxquestions < 1 || b.maxquestions > 100)
+		{
+			return "maxquestions";
+		}
+		if (b.minpersubtopic < 0)
+		{
+			return "minpersubtopic";
+		}
+		if (b.passpercent < 1 || b.passpercent > 100)
+		{
+			return "passpercent";
+		}
+		if (b.subtopicminpercent < 0 || b.subtopicminpercent > 100)
+		{
+			return "subtopicminpercent";
+		}
+		if (b.timerminutes < 0 || b.timerminutes > 480)
+		{
+			return "timerminutes";
+		}
+		if (b.retakewaithours < 0)
+		{
+			return "retakewaithours";
+		}
+		if (b.maxattempts < 0)
+		{
+			return "maxattempts";
+		}
+		return null;
+	}
+
+	/** Sets b.reason from its values: invalid_<field> (stored data the endpoint would refuse), inactive, or null = usable. */
+	public static Blueprint settle(Blueprint b)
+	{
+		String bad = invalidField(b);
+		b.reason = bad != null ? "invalid_" + bad : !b.active ? "inactive" : null;
+		return b;
+	}
+
+	/** One evaluation attempt (table evaluationattempt). answers = question -> correct, as accepted by answer.json. */
+	public static class EvalAttempt
+	{
+		public String id, user, topicid, strategy, status = "inprogress", finalizedby;
+		public int version, number, total, answered, correct, scorepercent, exposed, reused;
+		public boolean passed;
+		public List<String> questions = new ArrayList<>(); // served order
+		public Map<String, String> sectionOf = new HashMap<>(); // question -> section, as resolved at start
+		public Map<String, Boolean> answers = new LinkedHashMap<>();
+		public Date created, expires, submitted;
+		public JSONArray subtopicresults = new JSONArray();
+		public JSONObject inputs = new JSONObject();
+
+		public boolean finalized()
+		{
+			return !"inprogress".equals(status);
+		}
+
+		/** Still answerable at inNow. */
+		public boolean open(Date inNow)
+		{
+			return !finalized() && (expires == null || !expires.before(inNow));
+		}
+
+		/** {attemptid, number, status, datecreated, submitted, scorepercent, passed, correct, answered, total, subtopics}. */
+		public JSONObject toResultJson()
+		{
+			JSONObject o = new JSONObject();
+			o.put("attemptid", id);
+			o.put("number", number);
+			o.put("status", status);
+			o.put("datecreated", iso(created));
+			o.put("submitted", iso(submitted));
+			o.put("scorepercent", scorepercent);
+			o.put("passed", passed);
+			o.put("correct", correct);
+			o.put("answered", answered);
+			o.put("total", total);
+			o.put("subtopics", subtopicresults);
+			return o;
+		}
+	}
+
+	/** Questions b may draw from: the sequence (random) or the reserved set (reserved), renderable, in a covered subtopic. */
+	public static List<Question> evaluationPool(Topic t, Blueprint b)
+	{
+		List<Question> out = new ArrayList<>();
+		for (Question q : "reserved".equals(b.strategy) ? t.reserved : t.questions)
+		{
+			if (q.contentproblem == null && !b.excludedsections.contains(q.sectionid))
+			{
+				out.add(q);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Pure. {size, sufficient, shortfall, bysection:[{id, title, position, covered, sequence, reserved, inpool}], bydifficulty:{beginner,
+	 * competent, expert}}. Sufficient = size >= maxquestions, every covered subtopic with pool questions has >= minpersubtopic of them,
+	 * and the per-subtopic minimums fit in maxquestions. shortfall names the first failed rule (pool_below_max | subtopic_below_min |
+	 * minimums_exceed_max) or is null.
+	 */
+	public static JSONObject poolReport(Topic t, Blueprint b)
+	{
+		List<Question> pool = evaluationPool(t, b);
+		JSONObject o = new JSONObject();
+		o.put("size", pool.size());
+		String shortfall = pool.size() >= b.maxquestions ? null : "pool_below_max";
+		JSONArray sections = new JSONArray();
+		int minsum = 0, pos = 0;
+		for (Section s : t.sections)
+		{
+			int seq = 0, res = 0, inpool = 0;
+			for (Question q : s.questions)
+			{
+				if (q.contentproblem == null)
+				{
+					seq++;
+				}
+			}
+			for (Question q : t.reserved)
+			{
+				if (s.id.equals(q.sectionid) && q.contentproblem == null)
+				{
+					res++;
+				}
+			}
+			for (Question q : pool)
+			{
+				if (s.id.equals(q.sectionid))
+				{
+					inpool++;
+				}
+			}
+			JSONObject so = new JSONObject();
+			so.put("id", s.id);
+			so.put("title", s.title);
+			so.put("position", ++pos);
+			so.put("covered", !b.excludedsections.contains(s.id));
+			so.put("sequence", seq);
+			so.put("reserved", res);
+			so.put("inpool", inpool);
+			sections.add(so);
+			if (b.minpersubtopic > 0 && inpool > 0)
+			{
+				minsum += Math.min(b.minpersubtopic, inpool);
+				if (inpool < b.minpersubtopic && shortfall == null)
+				{
+					shortfall = "subtopic_below_min";
+				}
+			}
+		}
+		if (minsum > b.maxquestions && shortfall == null)
+		{
+			shortfall = "minimums_exceed_max";
+		}
+		JSONObject diff = new JSONObject();
+		for (String d : LEVELS)
+		{
+			int n = 0;
+			for (Question q : pool)
+			{
+				if (d.equals(q.difficulty))
+				{
+					n++;
+				}
+			}
+			diff.put(d, n);
+		}
+		o.put("bysection", sections);
+		o.put("bydifficulty", diff);
+		o.put("sufficient", shortfall == null);
+		o.put("shortfall", shortfall);
+		return o;
+	}
+
+	/**
+	 * Pure. Draws an attempt's questions for t under b for l: n = min(maxquestions, pool); coverage first (minpersubtopic per covered
+	 * subtopic, subtopics in content order), then the difficulty mix over the remaining slots (proportional = shuffled pool order,
+	 * balanced = round-robin beginner/competent/expert). Rank 0 (never in one of l's earlier attempts of t) always precedes rank 1;
+	 * ties follow a shuffle seeded with inSeed, so the same seed gives the same list. Presentation order = subtopic content order,
+	 * then pick order. Returns {items:[{questionid, sectionid, componentid, tutorialid, topicid, difficulty, position}], inputs:{n,
+	 * pool, seed, relaxations, coverage, mix}, exposed, reused}.
+	 */
+	public static JSONObject buildEvaluation(Topic t, Blueprint b, Learner l, long inSeed)
+	{
+		List<Question> pool = evaluationPool(t, b);
+		Collections.shuffle(pool, new java.util.Random(inSeed));
+		Set<String> usedBefore = new HashSet<>();
+		for (EvalAttempt a : l.evaluations)
+		{
+			if (t.id.equals(a.topicid))
+			{
+				usedBefore.addAll(a.questions);
+			}
+		}
+		pool.sort(Comparator.comparingInt(q -> usedBefore.contains(q.id) ? 1 : 0)); // stable: the shuffle decides ties
+		int n = Math.min(b.maxquestions, pool.size());
+		List<Question> picked = new ArrayList<>();
+		JSONArray relax = new JSONArray();
+		JSONObject coverage = new JSONObject();
+		if (b.minpersubtopic > 0)
+		{
+			for (Section s : t.sections)
+			{
+				int taken = 0, available = 0;
+				for (Question q : pool)
+				{
+					if (s.id.equals(q.sectionid))
+					{
+						available++;
+						if (taken < b.minpersubtopic && picked.size() < n)
+						{
+							picked.add(q);
+							taken++;
+						}
+					}
+				}
+				coverage.put(s.id, taken);
+				if (available > 0 && taken < b.minpersubtopic && !relax.contains("minpersubtopic_short"))
+				{
+					relax.add("minpersubtopic_short");
+				}
+			}
+		}
+		List<Question> rest = new ArrayList<>();
+		for (Question q : pool)
+		{
+			if (!picked.contains(q))
+			{
+				rest.add(q);
+			}
+		}
+		int remaining = n - picked.size();
+		if ("balanced".equals(b.mix))
+		{
+			Map<String, List<Question>> buckets = new LinkedHashMap<>();
+			for (String d : LEVELS)
+			{
+				buckets.put(d, new ArrayList<>());
+			}
+			for (Question q : rest)
+			{
+				buckets.get(LEVELS.contains(q.difficulty) ? q.difficulty : "beginner").add(q);
+			}
+			for (List<Question> bk : buckets.values())
+			{
+				if (bk.size() < remaining / 3 && !relax.contains("mix_short"))
+				{
+					relax.add("mix_short");
+				}
+			}
+			boolean any = true;
+			while (picked.size() < n && any)
+			{
+				any = false;
+				for (String d : LEVELS)
+				{
+					List<Question> bk = buckets.get(d);
+					if (!bk.isEmpty() && picked.size() < n)
+					{
+						picked.add(bk.remove(0));
+						any = true;
+					}
+				}
+			}
+		}
+		else
+		{
+			for (Question q : rest)
+			{
+				if (picked.size() >= n)
+				{
+					break;
+				}
+				picked.add(q);
+			}
+		}
+		Map<String, Integer> sectionIndex = new HashMap<>();
+		for (Section s : t.sections)
+		{
+			sectionIndex.put(s.id, sectionIndex.size());
+		}
+		picked.sort(Comparator.comparingInt(q -> sectionIndex.getOrDefault(q.sectionid, Integer.MAX_VALUE))); // stable
+		JSONArray items = new JSONArray();
+		int exposed = 0, reused = 0, pos = 0;
+		for (Question q : picked)
+		{
+			JSONObject i = new JSONObject();
+			i.put("questionid", q.id);
+			i.put("sectionid", q.sectionid);
+			i.put("componentid", q.componentid);
+			i.put("tutorialid", q.tutorialid);
+			i.put("topicid", q.topicid);
+			i.put("difficulty", q.difficulty);
+			i.put("position", ++pos);
+			items.add(i);
+			if (l.lastShown.containsKey(q.id))
+			{
+				exposed++;
+			}
+			if (usedBefore.contains(q.id))
+			{
+				reused++;
+			}
+		}
+		if (reused > 0)
+		{
+			relax.add("reused");
+		}
+		JSONObject inputs = new JSONObject();
+		inputs.put("n", n);
+		inputs.put("pool", pool.size());
+		inputs.put("seed", inSeed);
+		inputs.put("relaxations", relax);
+		inputs.put("coverage", coverage);
+		inputs.put("mix", b.mix);
+		inputs.put("strategy", b.strategy);
+		JSONObject out = new JSONObject();
+		out.put("items", items);
+		out.put("inputs", inputs);
+		out.put("exposed", exposed);
+		out.put("reused", reused);
+		return out;
+	}
+
+	private static int percentOf(int inCorrect, int inTotal)
+	{
+		return inTotal == 0 ? 0 : (int) Math.floor(100.0 * inCorrect / inTotal + 0.5);
+	}
+
+	/**
+	 * Pure strict scoring of a: one point per served question, unanswered = wrong, confidence ignored. passed = score >= passpercent
+	 * AND (subtopicminpercent == 0 or every served subtopic >= it). Returns {total, answered, correct, scorepercent, passed, failedrule
+	 * (overall | subtopic | null), subtopics:[{id, title, questions, correct, percent, met}], weakest:[section ids, lowest first, max 3]}.
+	 */
+	public static JSONObject scoreEvaluation(EvalAttempt a, Blueprint b, Map<String, String> inSectionTitles)
+	{
+		int correct = 0, answered = 0;
+		Map<String, int[]> bySection = new LinkedHashMap<>(); // section -> {questions, correct}
+		for (String qid : a.questions)
+		{
+			int[] c = bySection.computeIfAbsent(a.sectionOf.getOrDefault(qid, ""), k -> new int[2]);
+			c[0]++;
+			Boolean ok = a.answers.get(qid);
+			if (ok != null)
+			{
+				answered++;
+				if (ok)
+				{
+					correct++;
+					c[1]++;
+				}
+			}
+		}
+		int total = a.questions.size();
+		int score = percentOf(correct, total);
+		boolean passed = score >= b.passpercent;
+		String failedrule = passed ? null : "overall";
+		JSONArray subs = new JSONArray();
+		List<JSONObject> order = new ArrayList<>();
+		for (Map.Entry<String, int[]> e : bySection.entrySet())
+		{
+			int[] c = e.getValue();
+			int pct = percentOf(c[1], c[0]);
+			boolean met = b.subtopicminpercent == 0 || pct >= b.subtopicminpercent;
+			if (!met && passed)
+			{
+				passed = false;
+				failedrule = "subtopic";
+			}
+			JSONObject so = new JSONObject();
+			so.put("id", e.getKey());
+			so.put("title", inSectionTitles.getOrDefault(e.getKey(), e.getKey()));
+			so.put("questions", c[0]);
+			so.put("correct", c[1]);
+			so.put("percent", pct);
+			so.put("met", met);
+			subs.add(so);
+			order.add(so);
+		}
+		order.sort(Comparator.comparingInt(o -> (Integer) o.get("percent")));
+		JSONArray weakest = new JSONArray();
+		for (JSONObject o : order)
+		{
+			if (weakest.size() < 3)
+			{
+				weakest.add(o.get("id"));
+			}
+		}
+		JSONObject r = new JSONObject();
+		r.put("total", total);
+		r.put("answered", answered);
+		r.put("correct", correct);
+		r.put("scorepercent", score);
+		r.put("passed", passed);
+		r.put("failedrule", failedrule);
+		r.put("subtopics", subs);
+		r.put("weakest", weakest);
+		return r;
+	}
+
+	/** The learner's newest finalized attempt of the topic, or null. */
+	public static EvalAttempt latestFinalized(Learner l, String inTopicid)
+	{
+		EvalAttempt out = null;
+		for (EvalAttempt a : l.evaluations)
+		{
+			if (inTopicid.equals(a.topicid) && a.finalized())
+			{
+				out = a; // oldest first: the last match wins
+			}
+		}
+		return out;
+	}
+
+	/** The learner's resumable attempt of the topic at inNow (in progress, not past expiresat), or null. */
+	public static EvalAttempt openAttempt(Learner l, String inTopicid, Date inNow)
+	{
+		for (EvalAttempt a : l.evaluations)
+		{
+			if (inTopicid.equals(a.topicid) && a.open(inNow))
+			{
+				return a;
+			}
+		}
+		return null;
+	}
+
+	public static boolean evaluationPassed(Learner l, String inTopicid)
+	{
+		EvalAttempt a = latestFinalized(l, inTopicid);
+		return a != null && a.passed;
+	}
+
+	/** Every sequence question of t answered in learn or dailychallenge. */
+	public static boolean learnComplete(Topic t, Learner l)
+	{
+		for (Question q : t.questions)
+		{
+			if (!l.answeredInSequence.contains(q.id))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Pure. The learner's evaluation status on t at inNow, precedence: not_available (no usable blueprint), in_progress (open attempt),
+	 * passed (terminal in v1), locked (topic_locked | learn_incomplete), waiting (retakewaithours after a failed attempt), exhausted
+	 * (maxattempts reached), available. Returns {status, reason, canstart, required, passed, passedat, scorepercent, attempts,
+	 * attemptsleft, nextallowedat, inprogress:{attemptid, expiresat, total, answered} | null, lastresult | null}.
+	 */
+	public static JSONObject evaluationStatus(Topic t, Learner l, Date inNow)
+	{
+		Blueprint b = t.blueprint;
+		JSONObject o = new JSONObject();
+		o.put("required", t.evaluationrequired);
+		int finalized = 0;
+		for (EvalAttempt a : l.evaluations)
+		{
+			if (t.id.equals(a.topicid) && a.finalized())
+			{
+				finalized++;
+			}
+		}
+		EvalAttempt last = latestFinalized(l, t.id);
+		o.put("attempts", finalized);
+		o.put("passed", last != null && last.passed);
+		o.put("passedat", last != null && last.passed ? iso(last.submitted) : null);
+		o.put("scorepercent", last == null ? null : Integer.valueOf(last.scorepercent));
+		o.put("lastresult", last == null ? null : last.toResultJson());
+		o.put("attemptsleft", b == null || b.maxattempts == 0 ? null : Integer.valueOf(Math.max(0, b.maxattempts - finalized)));
+		o.put("nextallowedat", null);
+		o.put("inprogress", null);
+		EvalAttempt open = openAttempt(l, t.id, inNow);
+		String status, reason = null;
+		if (b == null || !b.usable())
+		{
+			status = "not_available";
+			reason = b == null ? "not_configured" : b.reason;
+		}
+		else if (open != null)
+		{
+			status = "in_progress";
+			JSONObject ip = new JSONObject();
+			ip.put("attemptid", open.id);
+			ip.put("expiresat", iso(open.expires));
+			ip.put("total", open.total);
+			ip.put("answered", open.answers.size());
+			o.put("inprogress", ip);
+		}
+		else if (last != null && last.passed)
+		{
+			status = "passed";
+		}
+		else if (t.locked)
+		{
+			status = "locked";
+			reason = "topic_locked";
+		}
+		else if (b.requirelearncomplete && !learnComplete(t, l))
+		{
+			status = "locked";
+			reason = "learn_incomplete";
+		}
+		else if (last != null && last.submitted != null && b.retakewaithours > 0 && inNow.before(new Date(last.submitted.getTime() + b.retakewaithours * 3600_000L)))
+		{
+			status = "waiting";
+			o.put("nextallowedat", iso(new Date(last.submitted.getTime() + b.retakewaithours * 3600_000L)));
+		}
+		else if (b.maxattempts > 0 && finalized >= b.maxattempts)
+		{
+			status = "exhausted";
+		}
+		else
+		{
+			status = "available";
+		}
+		o.put("status", status);
+		o.put("reason", reason);
+		o.put("canstart", "available".equals(status));
+		return o;
 	}
 
 	// ---------------------------------------------------------------- subtopic progression

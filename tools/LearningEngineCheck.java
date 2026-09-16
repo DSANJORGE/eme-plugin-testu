@@ -7,6 +7,8 @@ import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import tech.genailabs.tutor.LearningEngine;
 import tech.genailabs.tutor.LearningEngine.Attempt;
+import tech.genailabs.tutor.LearningEngine.Blueprint;
+import tech.genailabs.tutor.LearningEngine.EvalAttempt;
 import tech.genailabs.tutor.LearningEngine.Content;
 import tech.genailabs.tutor.LearningEngine.Learner;
 import tech.genailabs.tutor.LearningEngine.Question;
@@ -158,6 +160,7 @@ public class LearningEngineCheck
 		progressionChecks();
 		contentAndRetentionChecks();
 		profileChecks();
+		evaluationChecks();
 
 		System.out.println(failures == 0 ? "ok: LearningEngineCheck all passed" : "FAIL: " + failures + " LearningEngineCheck assertion(s)");
 		System.exit(failures == 0 ? 0 : 1);
@@ -868,6 +871,333 @@ public class LearningEngineCheck
 			at.add(i < h ? attempt("t1q1", "learn", false, "confident", 0, 300 - i) : attempt("t1q" + (2 + (i - h) % 9), "learn", true, "confident", 0, 300 - i));
 		}
 		return at;
+	}
+
+	// ---- Evaluation Mode (spec 2026-09-16-evaluation-mode-design): pool, sufficiency, selection, scoring, status, Finished conjunct
+
+	static void evaluationChecks()
+	{
+		Topic t = evalTopic();
+		Blueprint b = bp("random", 9, 2, "balanced", 70, 0, 0, 0, 0, true);
+
+		// pool
+		ok("eval pool random = renderable sequence questions minus excluded subtopics", LearningEngine.evaluationPool(t, b).size() == 17, LearningEngine.evaluationPool(t, b).size());
+		Blueprint ex = bp("random", 9, 2, "balanced", 70, 0, 0, 0, 0, true);
+		ex.excludedsections.add("es3");
+		ok("eval pool drops an excluded subtopic", LearningEngine.evaluationPool(t, ex).size() == 11, LearningEngine.evaluationPool(t, ex).size());
+		ok("eval pool reserved = reserved questions only", LearningEngine.evaluationPool(t, bp("reserved", 5, 0, "proportional", 70, 0, 0, 0, 0, true)).size() == 6, "");
+
+		// sufficiency
+		ok("eval pool sufficient", Boolean.TRUE.equals(LearningEngine.poolReport(t, b).get("sufficient")) && LearningEngine.poolReport(t, b).get("shortfall") == null, LearningEngine.poolReport(t, b));
+		ok("eval pool below max -> pool_below_max", "pool_below_max".equals(LearningEngine.poolReport(t, bp("random", 40, 0, "proportional", 70, 0, 0, 0, 0, true)).get("shortfall")), "");
+		ok("eval subtopic below min -> subtopic_below_min", "subtopic_below_min".equals(LearningEngine.poolReport(t, bp("random", 17, 6, "proportional", 70, 0, 0, 0, 0, true)).get("shortfall")), "");
+		ok("eval minimums exceed max -> minimums_exceed_max", "minimums_exceed_max".equals(LearningEngine.poolReport(t, bp("random", 9, 5, "proportional", 70, 0, 0, 0, 0, true)).get("shortfall")), "");
+		JSONArray bys = (JSONArray) LearningEngine.poolReport(t, b).get("bysection");
+		ok("eval pool report per subtopic (sequence 5, reserved 2, inpool 5 for es1)", bys.size() == 3 && ((JSONObject) bys.get(0)).get("sequence").equals(5) && ((JSONObject) bys.get(0)).get("reserved").equals(2) && ((JSONObject) bys.get(0)).get("inpool").equals(5), bys);
+
+		// selection
+		JSONObject e1 = LearningEngine.buildEvaluation(t, b, learner(), 42L);
+		ok("eval selection n = maxquestions", items(e1).size() == 9, items(e1).size());
+		ok("eval selection min per subtopic honoured", perSection(e1, "es1") >= 2 && perSection(e1, "es2") >= 2 && perSection(e1, "es3") >= 2, sectionsOf(e1));
+		ok("eval selection presented in subtopic order", sectionsOf(e1).equals(sortedSections(e1)), sectionsOf(e1));
+		ok("eval selection deterministic per seed", qids(items(e1)).equals(qids(items(LearningEngine.buildEvaluation(t, b, learner(), 42L)))), "");
+		boolean differs = false;
+		for (long s = 1; s <= 5 && !differs; s++)
+		{
+			differs = !qids(items(LearningEngine.buildEvaluation(t, b, learner(), s))).equals(qids(items(e1)));
+		}
+		ok("eval selection varies with the seed", differs, "");
+		JSONObject bal = LearningEngine.buildEvaluation(t, bp("random", 9, 0, "balanced", 70, 0, 0, 0, 0, true), learner(), 7L);
+		ok("eval balanced mix 3/3/3 when every level has enough", perDifficulty(bal, "beginner") == 3 && perDifficulty(bal, "competent") == 3 && perDifficulty(bal, "expert") == 3, difficultiesOf(bal));
+		ok("eval no relaxation on a sufficient pool", ((JSONArray) inputs(bal).get("relaxations")).isEmpty(), inputs(bal));
+		JSONObject shortMix = LearningEngine.buildEvaluation(t, bp("reserved", 6, 0, "balanced", 70, 0, 0, 0, 0, true), learner(), 7L);
+		ok("eval balanced mix over an all-competent reserved pool -> mix_short, still fills n", ((JSONArray) inputs(shortMix).get("relaxations")).contains("mix_short") && items(shortMix).size() == 6, inputs(shortMix));
+		JSONObject shortCov = LearningEngine.buildEvaluation(t, bp("random", 17, 6, "proportional", 70, 0, 0, 0, 0, true), learner(), 7L);
+		ok("eval coverage short -> minpersubtopic_short", ((JSONArray) inputs(shortCov).get("relaxations")).contains("minpersubtopic_short"), inputs(shortCov));
+
+		// retake avoids earlier questions; exposure counted
+		Learner l = learner();
+		EvalAttempt prev = new EvalAttempt();
+		prev.topicid = "e1";
+		prev.status = "submitted";
+		prev.questions.addAll(qids(items(e1)));
+		l.evaluations.add(prev);
+		JSONObject e2 = LearningEngine.buildEvaluation(t, b, l, 43L);
+		int overlap = 0;
+		for (String id : qids(items(e2)))
+		{
+			if (prev.questions.contains(id))
+			{
+				overlap++;
+			}
+		}
+		// 17 in pool, 9 used before, 9 drawn: at least 1 reused; coverage (2 per subtopic) can force up to 2 more when a subtopic was fully used
+		ok("eval retake reuses only what the pool and coverage force (1..3 of 9), counted and flagged", overlap >= 1 && overlap <= 3 && e2.get("reused").equals(overlap) && ((JSONArray) inputs(e2).get("relaxations")).contains("reused"), overlap);
+		Learner seen = learner(List.of(attempt("e1q1", "learn", true, "confident", 0, 5), attempt("e1q2", "improve", false, "notsure", 0, 4)));
+		JSONObject e3 = LearningEngine.buildEvaluation(t, bp("random", 17, 0, "proportional", 70, 0, 0, 0, 0, true), seen, 1L);
+		ok("eval exposed counts questions seen in learning modes", e3.get("exposed").equals(2), e3.get("exposed"));
+		JSONObject e4 = LearningEngine.buildEvaluation(t, bp("reserved", 6, 0, "proportional", 70, 0, 0, 0, 0, true), seen, 1L);
+		ok("eval reserved strategy: exposed 0", e4.get("exposed").equals(0) && items(e4).size() == 6, e4);
+
+		// scoring
+		EvalAttempt a = attemptOf(t, e1);
+		int i = 0;
+		for (String q : a.questions)
+		{
+			if (i < 7)
+			{
+				a.answers.put(q, true);
+			}
+			else if (i < 9)
+			{
+				a.answers.put(q, false);
+			}
+			i++;
+		}
+		a.answers.remove(a.questions.get(8)); // one unanswered
+		JSONObject r = LearningEngine.scoreEvaluation(a, b, Map.of());
+		ok("eval score 7/9 -> 78, answered 8, passed at 70", r.get("scorepercent").equals(78) && r.get("answered").equals(8) && Boolean.TRUE.equals(r.get("passed")) && r.get("failedrule") == null, r);
+		ok("eval score fails at 80 -> failedrule overall", "overall".equals(LearningEngine.scoreEvaluation(a, bp("random", 9, 2, "balanced", 80, 0, 0, 0, 0, true), Map.of()).get("failedrule")), "");
+		EvalAttempt sub = attemptOf(t, e1);
+		for (String q : sub.questions)
+		{
+			sub.answers.put(q, !sub.sectionOf.get(q).equals("es3")); // every es3 question wrong
+		}
+		JSONObject rs = LearningEngine.scoreEvaluation(sub, bp("random", 9, 2, "balanced", 30, 50, 0, 0, 0, true), Map.of("es3", "Three")); // es3 holds 2..5 of 9: overall >= 44 passes 30, es3 at 0 fails the 50 floor
+		ok("eval subtopic minimum fails -> failedrule subtopic, weakest first", "subtopic".equals(rs.get("failedrule")) && ((JSONArray) rs.get("weakest")).get(0).equals("es3"), rs);
+		ok("eval subtopic titles carried", ((JSONArray) rs.get("subtopics")).toString().contains("Three"), rs.get("subtopics"));
+		ok("eval rounding 2/3 -> 67", LearningEngine.scoreEvaluation(third(t), bp("random", 3, 0, "proportional", 67, 0, 0, 0, 0, true), Map.of()).get("scorepercent").equals(67), "");
+
+		// status precedence
+		Topic n = evalTopic();
+		ok("eval status: no blueprint -> not_available not_configured", "not_available".equals(status(n, learner()).get("status")) && "not_configured".equals(status(n, learner()).get("reason")), status(n, learner()));
+		n.blueprint = bp("random", 9, 0, "proportional", 70, 0, 0, 0, 0, false);
+		n.blueprint.active = false;
+		LearningEngine.settle(n.blueprint);
+		ok("eval status: inactive", "inactive".equals(status(n, learner()).get("reason")), status(n, learner()));
+		n.blueprint = bp("random", 0, 0, "proportional", 70, 0, 0, 0, 0, false);
+		ok("eval status: invalid stored value -> invalid_maxquestions", "invalid_maxquestions".equals(status(n, learner()).get("reason")), status(n, learner()));
+		n.blueprint = bp("random", 9, 0, "proportional", 70, 0, 0, 2, 1, true);
+		ok("eval status: learn incomplete -> locked learn_incomplete", "locked".equals(status(n, learner()).get("status")) && "learn_incomplete".equals(status(n, learner()).get("reason")), status(n, learner()));
+		Learner done = learner(allLearned(n));
+		ok("eval status: available with attemptsleft 1", "available".equals(status(n, done).get("status")) && Boolean.TRUE.equals(status(n, done).get("canstart")) && status(n, done).get("attemptsleft").equals(1), status(n, done));
+		n.locked = true;
+		ok("eval status: topic lock wins over learn state", "topic_locked".equals(status(n, done).get("reason")), status(n, done));
+		n.locked = false;
+		EvalAttempt open = new EvalAttempt();
+		open.id = "u_x";
+		open.topicid = "e1";
+		open.total = 9;
+		open.expires = new Date(NOW.getTime() + 60_000);
+		done.evaluations.add(open);
+		ok("eval status: open attempt -> in_progress with attemptid", "in_progress".equals(status(n, done).get("status")) && "u_x".equals(((JSONObject) status(n, done).get("inprogress")).get("attemptid")), status(n, done));
+		open.expires = new Date(NOW.getTime() - 60_000);
+		ok("eval status: a past expiresat is not open (in progress by row, expired by clock)", !"in_progress".equals(status(n, done).get("status")), status(n, done));
+		done.evaluations.clear();
+		EvalAttempt failed = new EvalAttempt();
+		failed.topicid = "e1";
+		failed.status = "submitted";
+		failed.scorepercent = 40;
+		failed.submitted = new Date(NOW.getTime() - 3600_000L);
+		done.evaluations.add(failed);
+		ok("eval status: failed 1 h ago with 2 h wait -> waiting with nextallowedat", "waiting".equals(status(n, done).get("status")) && status(n, done).get("nextallowedat") != null && status(n, done).get("scorepercent").equals(40), status(n, done));
+		failed.submitted = new Date(NOW.getTime() - 3 * 3600_000L);
+		ok("eval status: wait over but maxattempts 1 reached -> exhausted", "exhausted".equals(status(n, done).get("status")), status(n, done));
+		n.blueprint = bp("random", 9, 0, "proportional", 70, 0, 0, 0, 0, true);
+		ok("eval status: unlimited attempts -> available again, lastresult carried", "available".equals(status(n, done).get("status")) && ((JSONObject) status(n, done).get("lastresult")).get("scorepercent").equals(40), status(n, done));
+		EvalAttempt passed = new EvalAttempt();
+		passed.topicid = "e1";
+		passed.status = "submitted";
+		passed.passed = true;
+		passed.scorepercent = 90;
+		passed.submitted = NOW;
+		done.evaluations.add(passed);
+		ok("eval status: passed is terminal", "passed".equals(status(n, done).get("status")) && Boolean.FALSE.equals(status(n, done).get("canstart")) && status(n, done).get("passedat") != null, status(n, done));
+
+		// Finished conjunct (job profiles)
+		Topic f = evalTopic();
+		f.evaluationrequired = true;
+		Learner learned = learner(allLearned(f));
+		ok("finished: evaluation required and not passed -> false even with Learn complete", !LearningEngine.finished(f, learned), "");
+		learned.evaluations.add(passed);
+		ok("finished: evaluation required and passed -> true", LearningEngine.finished(f, learned), "");
+		f.evaluationrequired = false;
+		ok("finished: not required -> unchanged rule", LearningEngine.finished(f, learner(allLearned(f))), "");
+	}
+
+	/** Topic e1: 3 subtopics x 6 sequence questions (difficulty cycling beginner/competent/expert), es1q6 unrenderable, plus 2 reserved per subtopic. */
+	static Topic evalTopic()
+	{
+		Topic t = new Topic();
+		t.id = "e1";
+		t.title = "Eval";
+		t.competentmin = 60;
+		t.expertmin = 85;
+		for (int s = 1; s <= 3; s++)
+		{
+			Section sec = new Section();
+			sec.id = "es" + s;
+			sec.title = "Sub " + s;
+			sec.topicid = t.id;
+			for (int i = 1; i <= 6; i++)
+			{
+				Question q = new Question();
+				q.id = "e1q" + ((s - 1) * 6 + i);
+				q.componentid = "c" + q.id;
+				q.sectionid = sec.id;
+				q.topicid = t.id;
+				q.difficulty = LearningEngine.LEVELS.get((i - 1) % 3);
+				q.weight = LearningEngine.weightOf(q.difficulty);
+				q.position = t.questions.size() + 1;
+				if (s == 1 && i == 6)
+				{
+					q.contentproblem = "missing_option_c";
+				}
+				sec.questions.add(q);
+				t.questions.add(q);
+			}
+			for (int i = 1; i <= 2; i++)
+			{
+				Question q = new Question();
+				q.id = "e1r" + s + i;
+				q.componentid = "c" + q.id;
+				q.sectionid = sec.id;
+				q.topicid = t.id;
+				q.difficulty = "competent";
+				q.weight = 2;
+				t.reserved.add(q);
+			}
+			t.sections.add(sec);
+		}
+		return t;
+	}
+
+	static Blueprint bp(String strategy, int max, int min, String mix, int pass, int submin, int timer, int wait, int maxatt, boolean requireLearn)
+	{
+		Blueprint b = new Blueprint();
+		b.topicid = "e1";
+		b.version = 1;
+		b.active = true;
+		b.strategy = strategy;
+		b.maxquestions = max;
+		b.minpersubtopic = min;
+		b.mix = mix;
+		b.passpercent = pass;
+		b.subtopicminpercent = submin;
+		b.timerminutes = timer;
+		b.retakewaithours = wait;
+		b.maxattempts = maxatt;
+		b.requirelearncomplete = requireLearn;
+		return LearningEngine.settle(b);
+	}
+
+	static JSONObject status(Topic t, Learner l)
+	{
+		return LearningEngine.evaluationStatus(t, l, NOW);
+	}
+
+	static List<Attempt> allLearned(Topic t)
+	{
+		List<Attempt> at = new ArrayList<>();
+		for (Question q : t.questions)
+		{
+			at.add(attempt(q.id, "learn", true, "confident", 0, 10));
+		}
+		return at;
+	}
+
+	/** An in-progress attempt over built's items. */
+	static EvalAttempt attemptOf(Topic t, JSONObject built)
+	{
+		EvalAttempt a = new EvalAttempt();
+		a.id = "u_a";
+		a.topicid = t.id;
+		for (Object o : items(built))
+		{
+			JSONObject i = (JSONObject) o;
+			a.questions.add((String) i.get("questionid"));
+			a.sectionOf.put((String) i.get("questionid"), (String) i.get("sectionid"));
+		}
+		a.total = a.questions.size();
+		return a;
+	}
+
+	/** 3 questions, 2 correct. */
+	static EvalAttempt third(Topic t)
+	{
+		EvalAttempt a = new EvalAttempt();
+		a.topicid = t.id;
+		for (int i = 1; i <= 3; i++)
+		{
+			a.questions.add("e1q" + i);
+			a.sectionOf.put("e1q" + i, "es1");
+			a.answers.put("e1q" + i, i < 3);
+		}
+		a.total = 3;
+		return a;
+	}
+
+	static List<String> qids(JSONArray inItems)
+	{
+		List<String> out = new ArrayList<>();
+		for (Object o : inItems)
+		{
+			out.add((String) ((JSONObject) o).get("questionid"));
+		}
+		return out;
+	}
+
+	static List<String> sectionsOf(JSONObject built)
+	{
+		List<String> out = new ArrayList<>();
+		for (Object o : items(built))
+		{
+			out.add((String) ((JSONObject) o).get("sectionid"));
+		}
+		return out;
+	}
+
+	static List<String> sortedSections(JSONObject built)
+	{
+		List<String> s = new ArrayList<>(sectionsOf(built));
+		java.util.Collections.sort(s);
+		return s;
+	}
+
+	static int perSection(JSONObject built, String inSection)
+	{
+		int n = 0;
+		for (String s : sectionsOf(built))
+		{
+			if (s.equals(inSection))
+			{
+				n++;
+			}
+		}
+		return n;
+	}
+
+	static List<String> difficultiesOf(JSONObject built)
+	{
+		List<String> out = new ArrayList<>();
+		for (Object o : items(built))
+		{
+			out.add((String) ((JSONObject) o).get("difficulty"));
+		}
+		return out;
+	}
+
+	static int perDifficulty(JSONObject built, String inLevel)
+	{
+		int n = 0;
+		for (String d : difficultiesOf(built))
+		{
+			if (d.equals(inLevel))
+			{
+				n++;
+			}
+		}
+		return n;
 	}
 
 	// ---- fixtures: 2 topics x 10 questions (one section each), both required, min 5 / max 20
