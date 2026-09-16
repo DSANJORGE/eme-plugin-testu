@@ -742,11 +742,14 @@ public class TestULearningModule extends TestUBaseModule
 	/** Periodic (catalog event, every 30 min): one push a day per learner at the moment they chose
 	 *  (learneronboarding.whenlearn), unless they turned reminders off (notify=false). shiftstart 07 · break 13 ·
 	 *  dayend 17 · random = an hour 08-17 drawn per learner per day. Fires in the hour after the target;
-	 *  `lastreminder` (yyyyMMdd) makes it once a day. Timezone: catalog setting testu.timezone, default
+	 *  `lastreminder` (yyyyMMdd) makes it once a day. Timezone: catalog setting testu_timezone (or the older testu.timezone), default
 	 *  America/Lima. Every day of the week: mine shifts run weekends too. Returns the number sent. */
 	public int dailyReminder(MediaArchive archive)
 	{
-		String tzid = archive.getCatalogSettingValue("testu.timezone");
+		// The engine's setting is testu_timezone (LearningEngine.orgZone); the dotted name is kept so an older site's value still counts.
+		String tzid = archive.getCatalogSettingValue("testu_timezone");
+		if (tzid == null || tzid.isEmpty())
+			tzid = archive.getCatalogSettingValue("testu.timezone");
 		Calendar cal = Calendar.getInstance(TimeZone.getTimeZone(tzid == null || tzid.isEmpty() ? "America/Lima" : tzid));
 		int hour = cal.get(Calendar.HOUR_OF_DAY);
 		String today = String.format("%04d%02d%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH));

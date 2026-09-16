@@ -24,9 +24,12 @@ Date now = new Date()
 // learningsession retention: 7 days usable + 30 days kept for diagnostics, then deleted (idempotent)
 int purgedSessions = new tech.genailabs.tutor.LearningEngine(archive).purgeSessions(now)
 
-// ---- Pass 2: tutordaily (user x calendar day, server timezone). Full rebuild, same ceiling as tutormastery.
+// ---- Pass 2: tutordaily (user x calendar day in the organisation's zone). Full rebuild, same ceiling as tutormastery.
 // Helpers are closures, not script methods: a script-level method cannot see typed script locals (tz, days).
-TimeZone tz = TimeZone.getDefault()
+// A "day" is the learners' day (catalog setting testu_timezone, the engine's own), not the server's: a server two
+// zones east would file every late-shift answer under tomorrow. Unconfigured = the server's zone, as before.
+String tzid = archive.getCatalogSettingValue("testu_timezone")
+TimeZone tz = (tzid && TimeZone.getTimeZone(tzid).getID() == tzid) ? TimeZone.getTimeZone(tzid) : TimeZone.getDefault()
 def dayOf = { Date d -> d.format("yyyyMMdd", tz) }
 Map days = [:]   // "<user>_<yyyyMMdd>" -> map
 def dayFor = { String user, Date at ->

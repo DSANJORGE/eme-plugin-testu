@@ -11,7 +11,7 @@ SAID=
 trap 'rc=$?; cleanup; [ "$rc" -eq 0 ] || [ -n "$SAID" ] || echo "FAIL (exit $rc): a request failed -- is the local admin in orgadmin (Task 0 of the plan) and Tomcat up?" >&2; exit $rc' EXIT
 login() { curl -sf -c "$1" -o /dev/null "$B/services/authentication/login.json" -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"password\":\"$3\"}"; }
 login "$J" admin admin
-for e in overview activity; do curl -sf -b "$J" "$B/services/testu/analytics/$e.json?from=2026-08-08&to=2026-09-06" > "/tmp/$e.json"; done
+for e in overview activity report; do curl -sf -b "$J" "$B/services/testu/analytics/$e.json?from=2026-08-08&to=2026-09-06" > "/tmp/$e.json"; done
 curl -sf -b "$J" "$B/services/testu/analytics/person.json?user=diego" > /tmp/person.json
 python3 - <<'PY'
 import json
@@ -23,7 +23,8 @@ assert len(o['gaps']) <= 5 and p['rows']
 c = o['cohort']
 assert c['total'] >= c['activated'] >= c['active30d'] >= c['active7d'], c
 f = a['funnel']
-assert f['cohort'] >= f['answered'] >= f['active30d'] >= f['active7d'], f
+assert f['cohort'] >= f['signedin'] >= f['answered'] >= f['active30d'] >= f['active7d'], f
+assert all('topicband' in r for r in json.load(open('/tmp/report.json'))['rows']), 'report rows carry topicband'
 for name, body in (('overview', o), ('activity', a), ('person', p)):
     assert '"query"' not in json.dumps(body), f'{name} leaks query text'
 print('ok: shapes, one denominator, monotonic funnel, no question text; person rows', len(p['rows']))

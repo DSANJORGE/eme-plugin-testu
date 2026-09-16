@@ -358,23 +358,20 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		Map<String, Object> previous = new HashMap<>();
 		int prevAnswers = 0, prevMinutes = 0, prevCw = 0, prevQuestions = 0;
-		Calendar prev7Cal = Calendar.getInstance();
-		prev7Cal.setTime(prevTo);
-		prev7Cal.add(Calendar.DAY_OF_MONTH, -7);
-		Date prev7Date = prev7Cal.getTime();
-		Set<String> prevActive7d = new HashSet<>();
 		for (Data r : prevDaily)
 		{
 			prevAnswers += getInt(r, "answers");
 			prevMinutes += getInt(r, "minutes");
 			prevCw += getInt(r, "certainwrong");
 			prevQuestions += getInt(r, "questions");
-			Date d = DateStorageUtil.getStorageUtil().parseFromObject(r.getValue("day"));
-			if (d != null && !d.before(prev7Date) && getInt(r, "answers") > 0)
-			{
-				prevActive7d.add(r.get("user"));
-			}
 		}
+		// "Active 7 d" is the wall-clock week ending at `to`, so its comparison is the week before THAT (to-14 .. to-7),
+		// whatever the period is. The last 7 days of a 30 or 90 day previous window would be a month or a quarter ago.
+		Calendar prev7Cal = Calendar.getInstance();
+		prev7Cal.setTime(to);
+		prev7Cal.add(Calendar.DAY_OF_MONTH, -7);
+		Date prev7To = prev7Cal.getTime();
+		Set<String> prevActive7d = activeSince(dailyAll, prev7To, 7);
 		previous.put("answers", prevAnswers);
 		previous.put("minutes", prevMinutes);
 		previous.put("certainwrong", prevCw);
@@ -718,6 +715,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		analytics.put("series", series);
 		analytics.put("previousSeries", prevSeries);
 		analytics.put("cohort", cohort);
+		analytics.put("activated", activatedIds);
 		analytics.put("previous", previous);
 		analytics.put("levels", levelsOf(levelByUser.values()));
 		analytics.put("topicStats", topicStats);
@@ -955,7 +953,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			}
 			if (!"open".equals(type) && !"resume".equals(type))
 				continue;
-			platforms.computeIfAbsent(e.get("platform") == null ? "unknown" : e.get("platform"), k -> new HashSet<>()).add(u);
+			// One bucket per platform whatever the case the app sent ("iOS" and "ios" are the same phones).
+			String platform = e.get("platform") == null || e.get("platform").isEmpty() ? "unknown" : e.get("platform").toLowerCase();
+			platforms.computeIfAbsent(platform, k -> new HashSet<>()).add(u);
 			sessionsByUser.computeIfAbsent(u, k -> new HashSet<>()).add(e.get("sessionid"));
 			String lat = e.get("lat"), lon = e.get("lon");
 			if (lat == null || lon == null || lat.isEmpty() || lon.isEmpty())
@@ -1113,6 +1113,10 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		String topicFilter = (String) a.get("topicFilter");
 		Map<String, Map<String, Object>> perSection = (Map<String, Map<String, Object>>) a.get("perSection");
 
+		// Hour of day in the organisation's own zone (catalog setting testu_timezone): a server in another zone would
+		// shift every learner's morning by hours. Unconfigured = the server's zone, as before.
+		Object[] zone = new LearningEngine(archive).orgZone();
+		TimeZone hoursZone = zone[1] == null ? TimeZone.getTimeZone((java.time.ZoneId) zone[0]) : TimeZone.getDefault();
 		Map<String, Integer> hours = new HashMap<>();
 		HitTracker ah = archive.query("tutoranswer").after("datecreated", from).search();
 		if (ah != null)
@@ -1130,7 +1134,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				{
 					continue;
 				}
-				Calendar c = Calendar.getInstance();
+				Calendar c = Calendar.getInstance(hoursZone);
 				c.setTime(d);
 				int dayOfWeek = (c.get(Calendar.DAY_OF_WEEK) + 5) % 7;
 				int hourOfDay = c.get(Calendar.HOUR_OF_DAY);
@@ -1140,10 +1144,13 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 
 		Map<String, Object> cohort = (Map<String, Object>) a.get("cohort");
+		// Answering needs a session, so everyone who answered has signed in even when eMe never stamped lastlogin
+		// (code logins, imported accounts). Without this the funnel read "2 signed in, 44 answered".
+		Set<String> activated = (Set<String>) a.get("activated");
 		int signedin = 0;
 		for (Data u : users.values())
 		{
-			if (u.get("lastlogin") != null)
+			if (u.get("lastlogin") != null || (activated != null && activated.contains(u.getId())))
 				signedin++;
 		}
 
@@ -2021,6 +2028,10 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX");
 
 		JSONArray rows = new JSONArray();
+		List<Data> allRows = new ArrayList<>();
+		// user|topic -> the engine's topic band, from the topic rows (blank section); the console reads a person's level
+		// in a topic off this rather than re-deriving one from section counts.
+		Map<String, String> topicBand = new HashMap<>();
 		HitTracker mh = archive.query("tutormastery").all().search();
 		if (mh != null)
 		{
@@ -2028,9 +2039,18 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			for (Object o : mh)
 			{
 				Data r = (Data) o;
+				if (r.get("componentsection") == null || r.get("componentsection").isEmpty())
+					topicBand.put(r.get("user") + "|" + r.get("entitytopic"), r.get("band"));
+				else
+					allRows.add(r);
+			}
+		}
+		{
+			for (Data r : allRows)
+			{
 				Data u = users.get(r.get("user"));
-				if (u == null || r.get("componentsection") == null || r.get("componentsection").isEmpty())
-					continue; // topic rows (blank section) are not report rows
+				if (u == null)
+					continue;
 				String team = u.get("team");
 				if (scope != null && (team == null || !scope.contains(team)))
 					continue;
@@ -2064,6 +2084,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				rObj.put("attempts", getInt(r, "attempts"));
 				rObj.put("correct", getInt(r, "correct"));
 				rObj.put("level", lvl);
+				rObj.put("topicband", topicBand.get(r.get("user") + "|" + r.get("entitytopic")));
 				rObj.put("lastactivity", la != null ? isoFormat.format(la) : null);
 				rObj.put("certaincorrect", getInt(r, "certaincorrect"));
 				rObj.put("certainwrong", getInt(r, "certainwrong"));
