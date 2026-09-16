@@ -320,10 +320,6 @@ public class LearningEngine
 		{
 			Map item = (Map) o;
 			Question q = c.questions.get(item.get("questionid"));
-			if (q == null)
-			{
-				q = c.reserved.get(item.get("questionid"));
-			}
 			String problem = q == null ? "unknown_question" : q.contentproblem;
 			if (problem != null && !Boolean.TRUE.equals(item.get("done")))
 			{
@@ -569,12 +565,7 @@ public class LearningEngine
 			{
 				continue;
 			}
-			if (!EVALUATION.equals(a.mode))
-			{
-				// An evaluation answer is never learning evidence: it must not move mastery, percent, bands or unlocks
-				// (spec 2026-09-16-evaluation-mode). Legacy / unknown modes keep counting as before.
-				l.latest.put(a.questionid, a);
-			}
+			l.latest.put(a.questionid, a); // evidence = the latest attempt in ANY mode, evaluation included (learning-engine spec)
 			if ("learn".equals(a.mode) || "dailychallenge".equals(a.mode))
 			{
 				l.answeredInSequence.add(a.questionid);
@@ -1831,10 +1822,12 @@ public class LearningEngine
 					latest = a;
 				}
 			}
-			for (int probe = Math.max(1, n); ; probe++)
+			int finalized = 0;
+			Date lastsubmitted = null;
+			for (int probe = 1; ; probe++)
 			{
-				// From n, not n + 1: the attempt l knows is re-read from storage too, since its answers (and its status) may be
-				// newer than the search index this learner was loaded from.
+				// From 1, not n + 1: the attempts l knows are re-read from storage too, since their answers, their status and
+				// their submit times may be newer than the search index this learner was loaded from.
 				Data d = (Data) searcher.searchById(l.userid + "_" + t.id + "_a" + probe);
 				if (d == null)
 				{
@@ -1842,6 +1835,14 @@ public class LearningEngine
 				}
 				latest = evalAttemptOf(d);
 				n = probe;
+				if (latest.finalized())
+				{
+					finalized++;
+					if (latest.submitted != null && (lastsubmitted == null || latest.submitted.after(lastsubmitted)))
+					{
+						lastsubmitted = latest.submitted;
+					}
+				}
 			}
 			if (latest != null && latest.open(inNow))
 			{
@@ -1849,18 +1850,27 @@ public class LearningEngine
 			}
 			if (latest != null && !latest.finalized())
 			{
-				finalizeEvaluation(latest, c, "timer");
+				EvalAttempt closed = finalizeEvaluation(latest, c, "timer");
+				finalized++;
+				if (closed.submitted != null && (lastsubmitted == null || closed.submitted.after(lastsubmitted)))
+				{
+					lastsubmitted = closed.submitted;
+				}
 			}
-			if (!inMayCreate)
+			Blueprint b = t.blueprint;
+			// The caller's gate read the search index; these two re-apply it to what storage actually holds, so a retake cannot
+			// slip past maxattempts or the retake wait on a double tap the index has not caught up with.
+			boolean maycreate = inMayCreate && (b.maxattempts == 0 || finalized < b.maxattempts)
+				&& (lastsubmitted == null || b.retakewaithours == 0 || !inNow.before(new Date(lastsubmitted.getTime() + b.retakewaithours * 3600_000L)));
+			if (!maycreate)
 			{
-				// Nothing to resume and the caller's gate (waiting | exhausted | passed | locked) does not allow a new attempt.
+				// Nothing to resume and no new attempt allowed (waiting | exhausted | passed | locked).
 				if (outReason != null)
 				{
 					outReason[0] = "evaluation_not_available";
 				}
 				return null;
 			}
-			Blueprint b = t.blueprint;
 			EvalAttempt a = new EvalAttempt();
 			a.id = l.userid + "_" + t.id + "_a" + (n + 1);
 			a.number = n + 1;
@@ -1954,7 +1964,8 @@ public class LearningEngine
 			String by = a.expires != null && a.expires.before(new Date()) ? "timer" : inBy;
 			a.status = "timer".equals(by) ? "expired" : "submitted";
 			a.finalizedby = by;
-			a.submitted = new Date();
+			// The clock closed it when the window ended, not when we noticed: the retake wait counts from the deadline.
+			a.submitted = "timer".equals(by) && a.expires != null ? a.expires : new Date();
 			saveEvalAttempt(a);
 			return a;
 		}

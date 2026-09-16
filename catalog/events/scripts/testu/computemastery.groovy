@@ -45,7 +45,6 @@ def dayFor = { String user, Date at ->
 }
 for (Data a in rows) {  // `rows` = every tutoranswer, already sorted by datecreated
   String user = a.get("user"); Date at = a.getDate("datecreated"); if (!user || !at) continue
-  if ("evaluation".equals(String.valueOf(a.get("mode")))) continue  // evaluation answers are not daily learning activity (spec 2026-09-16-evaluation-mode)
   Map d = dayFor(user, at)
   boolean ok = "true".equals(String.valueOf(a.get("iscorrect")))
   d.answers++; if (ok) d.correct++

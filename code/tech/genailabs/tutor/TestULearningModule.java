@@ -274,6 +274,17 @@ public class TestULearningModule extends TestUBaseModule
 				fail(inReq, 409, "attempt_conflict");
 				return;
 			}
+			if (LearningEngine.EVALUATION.equals(existing.get("mode")))
+			{
+				// A retry the first call answered but the app never saw: make sure the attempt carries it (idempotent, no-ops
+				// on a closed attempt), so a lost reply cannot cost the learner the question.
+				LearningEngine retryengine = new LearningEngine(archive);
+				LearningEngine.EvalAttempt open = retryengine.loadEvalAttempt(existing.get("learningsession"));
+				if (open != null)
+				{
+					retryengine.recordEvaluationAnswer(open, existing.get("entityquestion"), "true".equals(String.valueOf(existing.getValue("iscorrect"))));
+				}
+			}
 			reply(inReq, answerReply(existing, true, null));
 			return;
 		}
@@ -374,6 +385,7 @@ public class TestULearningModule extends TestUBaseModule
 			}
 		}
 		resp.put("attempthistory", attempts); // "attempts" stays the finalized count, as state.json reports it
+		resp.put("now", LearningEngine.iso(new Date())); // the app times the window off the server clock, not the device's
 		reply(inReq, resp);
 	}
 
@@ -464,6 +476,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		JSONObject resp = LearningEngine.evaluationItems(a, content);
 		resp.put("timerminutes", topic.blueprint.timerminutes);
+		resp.put("now", LearningEngine.iso(new Date())); // the app counts the timer down against this, not the device clock
 		reply(inReq, resp);
 	}
 
@@ -805,9 +818,15 @@ public class TestULearningModule extends TestUBaseModule
 				fail(inReq, 400, "bad_expectedversion");
 				return;
 			}
+			String active = param(inReq, "active");
+			if (!"true".equals(active) && !"false".equals(active))
+			{
+				fail(inReq, 400, "bad_active"); // never save a blueprint as inactive because the flag was missing or mistyped
+				return;
+			}
 			LearningEngine.Blueprint b = new LearningEngine.Blueprint();
 			b.topicid = topic.id;
-			b.active = "true".equals(param(inReq, "active"));
+			b.active = "true".equals(active);
 			b.strategy = param(inReq, "strategy") == null ? "random" : param(inReq, "strategy");
 			b.mix = param(inReq, "difficultymix") == null ? "proportional" : param(inReq, "difficultymix");
 			b.requirelearncomplete = !"false".equals(param(inReq, "requirelearncomplete"));

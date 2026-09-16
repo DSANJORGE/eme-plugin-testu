@@ -27,7 +27,7 @@ New table `evaluationblueprint` (`data/fields/evaluationblueprint.xml`), append-
 - `maxattempts` (number, ≥ 0; 0 = unlimited).
 - `requirelearncomplete` (boolean, default true): the learner must have topic Learn complete to start.
 
-New table `evaluationattempt` (`data/fields/evaluationattempt.xml`). Id `<user>_<uuid>`.
+New table `evaluationattempt` (`data/fields/evaluationattempt.xml`). Id `<user>_<topic>_a<n>`.
 
 - `user`, `entitytopic`, `blueprintversion`, `strategy`, `attemptnumber` (1-based per user × topic), `questionlist` (JSON, ordered question ids with section and difficulty as resolved by the server), `total`.
 - `status` (keyword: `inprogress` | `submitted` | `expired`), `datecreated` (start), `expiresat` (start + `timerminutes`; with no timer, start + 24 h: an attempt is always one sitting in the sense of one bounded window), `submitted` (date), `finalizedby` (`learner` | `timer`).
@@ -71,7 +71,7 @@ Selection (`LearningEngine.buildEvaluation`, pure: pool, blueprint, learner hist
 4. Order of presentation: by section content order, then by the pick order inside the section (learners see a coherent flow; comparability comes from the blueprint, not the order).
 5. `exposed` = selected questions with any learn / dailychallenge / improve answer or exposure by the learner before the attempt (0 by construction under `reserved` unless a reserved flag was added after the learner saw the question). Stored, never shown to the learner; the console shows it per attempt.
 
-Scoring (pure): strict, one point per question, unanswered = wrong. `scorepercent = round(100 × correct / total)` (half up). Per section: same over the section's selected questions. `passed` = `scorepercent ≥ passpercent` AND, when `subtopicminpercent > 0`, every section with ≥ 1 selected question has `percent ≥ subtopicminpercent` (`met` per section; the rule that failed is reported: `failedrule = overall | subtopic`). Confidence is stored and never affects the score. Hints do not exist in this mode (`hintlevel` must be 0). Multiple-correct questions do not exist in the bank; if they arrive, strict = the exact option set (out of scope now).
+Scoring (pure): strict, one point per question, unanswered = wrong. `scorepercent = round(100 × correct / total)` (half up). Per section: same over the section's selected questions. `passed` = `scorepercent ≥ passpercent` AND, when `subtopicminpercent > 0`, every section with ≥ 1 selected question has `percent ≥ subtopicminpercent` (`met` per section; the rule that failed is reported: `failedrule = overall | subtopic`). `failedrule` is `overall` when both rules fail. Confidence is stored and never affects the score. Hints do not exist in this mode (`hintlevel` must be 0). Multiple-correct questions do not exist in the bank; if they arrive, strict = the exact option set (out of scope now).
 
 Job profiles: `Finished(topic)` (job-profiles spec) gains a third conjunct: when the learner's merged row has `evaluationrequired`, the evaluation status must be `passed`. Consequences follow the existing rules: a `requiresprevious` gate on the next topic waits for the pass, `afterfinish = remove` waits for the pass, and `state.json`'s `finished` reflects it. `meetsrequirement` stays mastery-only (certification and mastery are separate, PRD). Analytics adds `evaluationmet` (see Endpoints) and counts an unmet required evaluation in `requiredgaps`.
 

@@ -84,9 +84,10 @@ def refresh():
     call(es, "POST", "/_refresh", body={}, base=ES)
 
 
-import datetime, math
+import datetime, math, time
 
 NOW = datetime.datetime.utcnow()
+AUDIT_SINCE = [""]  # set to the server's own clock before the first attempt is started (see below)
 counter = [0]
 USER_TABLES = ("tutoranswer", "tutorexposure", "dailychallengeset", "learningsession", "tutormastery", "tutordaily", "subtopicunlock", "evaluationattempt")
 
@@ -156,10 +157,22 @@ def answer(sid, qid, option, op=None, **extra):
 
 
 def audits(action, target):
-    refresh()
-    st, res = call(es, "POST", "/auditevent/_search", body={"size": 50, "query": {"bool": {"must": [
-        {"match_phrase": {"targetid": target}}, {"match_phrase": {"action": action}}]}}}, base=ES)
-    return [h["_source"] for h in res.get("hits", {}).get("hits", [])] if st == 200 else []
+    # auditevent rows are saved through eMe's queue, so a row can be a second or two behind the request that wrote it:
+    # poll until at least one shows up (a genuinely missing row still fails, just 5 s later).
+    for attempt in range(24):  # up to 12 s: three check runs back to back put the queue a few seconds behind
+        refresh()
+        st, res = call(es, "POST", "/auditevent/_search", body={"size": 50, "sort": [{"datecreated": "desc"}], "query": {"bool": {"must": [
+            {"match_phrase": {"targetid": target}}, {"match_phrase": {"action": action}}]}}}, base=ES)
+        rows = [h["_source"] for h in res["hits"]["hits"]] if st == 200 else []
+        if [r for r in rows if str(r.get("datecreated", ""))[:19] >= AUDIT_SINCE[0][:19]]:
+            break
+        time.sleep(0.5)
+    if st != 200:
+        return []
+    # auditevent is append-only and attempt ids are deterministic (<user>_<topic>_a<n>), so earlier runs of this script
+    # (and this script's own later sections, which delete the rows and start at _a1 again) leave rows on the same id.
+    # The cutoff is the server's own instant, taken before this run started its first attempt.
+    return [h["_source"] for h in res["hits"]["hits"] if str(h["_source"].get("datecreated", ""))[:19] >= AUDIT_SINCE[0][:19]]
 
 
 qhits = must("entityquestion search", call(admin, "GET", "/services/lists/search/entityquestion/search.json?hitsperpage=5000"))["results"]
@@ -227,17 +240,19 @@ try:
     # ---- available -> start -> answers -> submit (pass)
     blueprint()
     st, e = ev()
+    ok("evaluation.json / startevaluation.json carry the server clock (app timer offset)", e.get("now") and e["now"].endswith("Z"), e.get("now"))
+    AUDIT_SINCE[0] = e["now"]  # every audit row this run writes is at or after this server instant
     ok("evaluation.json: available, canstart, blueprint carried", st == 200 and e["status"] == "available" and e["canstart"] is True and e["blueprint"]["maxquestions"] == MAXQ and e["attempts"] == 0 and e["attempthistory"] == [], e)
     ok("state.json: the evaluation block carries the blueprint size and timer", topic_of(state(), T)["evaluation"]["maxquestions"] == MAXQ and topic_of(state(), T)["evaluation"]["timerminutes"] == 0, topic_of(state(), T)["evaluation"])
-    A0 = len(audits("evaluation.start", f"{USER}_{T}_a1"))  # auditevent is append-only: earlier runs reused this id
     st, s1 = start()
     ok("start: next.json shape, mode evaluation, n items, expiresat, nothing done", st == 200 and s1["mode"] == "evaluation" and s1["total"] == MAXQ and len(s1["items"]) == MAXQ and s1["expiresat"] and all(i["done"] is False for i in s1["items"]) and s1["sessionid"] == f"{USER}_{T}_a1", s1)
+    ok("start: reply carries the server clock", s1.get("now") and s1["now"].endswith("Z"), s1.get("now"))
     ok("start: positions 1..n, every item of T", [i["position"] for i in s1["items"]] == list(range(1, MAXQ + 1)) and all(i["topicid"] == T for i in s1["items"]), s1["items"])
     row = es_doc("evaluationattempt", s1["sessionid"])
     ok("start: attempt row inprogress, attemptnumber 1, questionlist stored, inputs with seed", row and row["status"] == "inprogress" and int(row["attemptnumber"]) == 1 and len(json.loads(row["questionlist"])) == MAXQ and "seed" in json.loads(row["inputs"]), row)
     st, s1b = start()
     ok("start again: resumes the same attempt", st == 200 and s1b["sessionid"] == s1["sessionid"], s1b)
-    ok("audit evaluation.start once", len(audits("evaluation.start", s1["sessionid"])) - A0 == 1, audits("evaluation.start", s1["sessionid"]))
+    ok("audit evaluation.start once", len(audits("evaluation.start", s1["sessionid"])) == 1, audits("evaluation.start", s1["sessionid"]))
     st, e = ev()
     ok("evaluation.json: in_progress with attemptid and 0 answered", e["status"] == "in_progress" and e["inprogress"]["attemptid"] == s1["sessionid"] and e["inprogress"]["answered"] == 0, e)
     q0 = s1["items"][0]["questionid"]
@@ -256,7 +271,9 @@ try:
         ok("answer: a question of T outside the attempt -> 409 not_in_session", r[0] == 409 and r[1]["error"] == "not_in_session", r)
     r = answer(s1["sessionid"], q0, right(q0), op=other)
     ok("answer: another learner on this attempt -> 409 session_mismatch", r[0] == 409 and r[1]["error"] == "session_mismatch", r)
-    LEARN0 = {k: topic_of(state(), T)[k] for k in ("masterypercent", "band", "answered", "learncomplete", "nextquestionid")}
+    # Learning state only: an evaluation answer IS mastery evidence (spec), so masterypercent / band may legitimately move.
+    LEARN0 = {k: topic_of(state(), T)[k] for k in ("answered", "learncomplete", "nextquestionid")}
+    SUB0 = {x["id"]: (x["answered"], x["unlocked"], x["learncomplete"]) for x in topic_of(state(), T)["sections"]}
     for i in s1["items"]:
         r = answer(s1["sessionid"], i["questionid"], right(i["questionid"]))
         ok(f"answer {i['position']}: stored, deferred, no iscorrect", r[0] == 200 and r[1]["ok"] is True and r[1]["deferred"] is True and "iscorrect" not in r[1] and r[1]["mode"] == "evaluation", r)
@@ -267,15 +284,14 @@ try:
     ok("tutoranswer rows: mode evaluation, learningsession = attempt id, scopetype topic", len(arow) == MAXQ and all(h["_source"]["mode"] == "evaluation" and h["_source"]["learningsession"] == s1["sessionid"] and h["_source"]["scopetype"] == "topic" for h in arow), [h["_source"].get("mode") for h in arow])
     t = topic_of(state(), T)
     ok("state: evaluation answers never count as learning answers (answered 0), in_progress with n answered", t["answered"] == 0 and t["evaluation"]["status"] == "in_progress" and t["evaluation"]["inprogress"]["answered"] == MAXQ, t["evaluation"])
-    ok("state: mastery, band and the learn sequence are untouched by evaluation answers", {k: t[k] for k in LEARN0} == LEARN0, (LEARN0, {k: t[k] for k in LEARN0}))
-    sub0 = {x["id"]: (x["masterypercent"], x["band"], x["answered"], x["unlocked"]) for x in t["sections"]}
-    ok("state: no subtopic gained mastery or an unlock from the evaluation", all(v[0] == 0 and v[1] is None and v[2] == 0 for k, v in sub0.items() if k in {i["sectionid"] for i in s1["items"]}), sub0)
-    A1 = len(audits("evaluation.submit", s1["sessionid"]))
+    ok("state: the learn sequence is untouched by evaluation answers (answered, learncomplete, nextquestionid)", {k: t[k] for k in LEARN0} == LEARN0, (LEARN0, {k: t[k] for k in LEARN0}))
+    sub1 = {x["id"]: (x["answered"], x["unlocked"], x["learncomplete"]) for x in t["sections"]}
+    ok("state: no subtopic gained a learn answer or an unlock from the evaluation", sub1 == SUB0, (SUB0, sub1))
     st, res = submit(s1["sessionid"])
     ok("submit: passed 100, correct n, subtopics listed, status submitted", st == 200 and res["passed"] is True and res["scorepercent"] == 100 and res["correct"] == MAXQ and res["status"] == "submitted" and res["subtopics"] and res["duplicate"] is False and res["evaluationstatus"] == "passed", res)
     st, res2 = submit(s1["sessionid"])
     ok("submit again: duplicate with the same score", st == 200 and res2["duplicate"] is True and res2["scorepercent"] == 100, res2)
-    ok("audit evaluation.submit once", len(audits("evaluation.submit", s1["sessionid"])) - A1 == 1, "")
+    ok("audit evaluation.submit once", len(audits("evaluation.submit", s1["sessionid"])) == 1, audits("evaluation.submit", s1["sessionid"]))
     st, e = ev()
     ok("evaluation.json: passed is terminal (canstart false, passedat, lastresult)", e["status"] == "passed" and e["canstart"] is False and e["passedat"] and e["lastresult"]["scorepercent"] == 100 and e["attempts"] == 1 and len(e["attempthistory"]) == 1, e)
     r = start()
@@ -312,6 +328,18 @@ try:
     r = start()
     ok("start when exhausted -> 409", r[0] == 409 and r[1]["status"] == "exhausted", r)
 
+    # ---- the attempt gates are re-applied to storage, not to the (lagging) search index
+    delete_rows("evaluationattempt", es_ids("evaluationattempt", {"term": {"user": USER}}))
+    delete_rows("tutoranswer", es_ids("tutoranswer", {"term": {"user": USER}}))
+    refresh()
+    blueprint(passpercent="100", maxattempts="1")
+    st, s6 = start()
+    for i in s6["items"]:
+        answer(s6["sessionid"], i["questionid"], wrong(i["questionid"]))
+    submit(s6["sessionid"])
+    r = start()  # deliberately no refresh(): the index still shows no finalized attempt, storage does
+    ok("maxattempts re-applied to storage: retake right after a submit -> 409, no a2 row", r[0] == 409 and r[1]["error"] == "evaluation_not_available" and es_doc("evaluationattempt", f"{USER}_{T}_a2") is None, r)
+
     # ---- timer: expired attempt is scored by the clock
     delete_rows("evaluationattempt", es_ids("evaluationattempt", {"term": {"user": USER}}))
     delete_rows("tutoranswer", es_ids("tutoranswer", {"term": {"user": USER}}))
@@ -344,6 +372,7 @@ try:
     st, res = submit(s5["sessionid"])
     row = es_doc("evaluationattempt", s5["sessionid"])
     ok("late submit: scored as expired / finalizedby timer, not a learner submission", st == 200 and res["status"] == "expired" and row["finalizedby"] == "timer" and res["duplicate"] is False and res["correct"] == 1, (res.get("status"), row.get("finalizedby")))
+    ok("late submit: submitted = the deadline, so the retake wait counts from it", res["submitted"][:16] == iso(NOW - datetime.timedelta(hours=1))[:16], (res["submitted"], iso(NOW - datetime.timedelta(hours=1))))
 
     # ---- learn must be complete
     blueprint(requirelearncomplete="true")
@@ -383,13 +412,16 @@ try:
 
     for field, value, status, err in (("maxquestions", "0", 400, "bad_maxquestions"), ("maxquestions", "x", 400, "bad_maxquestions"), ("passpercent", "101", 400, "bad_passpercent"),
                                       ("strategy", "common", 400, "bad_strategy"), ("difficultymix", "odd", 400, "bad_difficultymix"), ("timerminutes", "481", 400, "bad_timerminutes"),
-                                      ("retakewaithours", "-1", 400, "bad_retakewaithours"), ("excludedsections", "nope", 400, "bad_excludedsections"), ("excludedsections", '["nope"]', 400, "unknown_section")):
+                                      ("retakewaithours", "-1", 400, "bad_retakewaithours"), ("excludedsections", "nope", 400, "bad_excludedsections"), ("excludedsections", '["nope"]', 400, "unknown_section"),
+                                      ("active", "maybe", 400, "bad_active")):
         r = save(**{field: value})
         ok(f"blueprint save: {field}={value} -> {status} {err}", r[0] == status and r[1]["error"] == err, r)
     r = save(expected="999")
     ok("blueprint save: stale expectedversion -> 409 version_conflict with currentversion", r[0] == 409 and r[1]["error"] == "version_conflict" and r[1]["currentversion"] == VERSION[0], r)
     r = call(admin, "POST", BPP, form={"topicid": T, "active": "true"})
     ok("blueprint save: missing expectedversion -> 400", r[0] == 400 and r[1]["error"] == "missing_expectedversion", r)
+    r = call(admin, "POST", BPP, form={"topicid": T, "expectedversion": str(VERSION[0])})
+    ok("blueprint save: missing active -> 400 bad_active (never saved silently inactive)", r[0] == 400 and r[1]["error"] == "bad_active", r)
     r = save(minpersubtopic="1000")
     ok("blueprint save: activating over an insufficient pool -> 409 pool_insufficient with the report", r[0] == 409 and r[1]["error"] == "pool_insufficient" and r[1]["pool"]["shortfall"] == "subtopic_below_min", r)
     r = save(minpersubtopic="1000", active="false")
