@@ -523,6 +523,120 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/**
+	 * subtopicPolicy and evaluationBlueprint are the same append-only, version-numbered config endpoint over two tables. What they
+	 * share lives in VersionedConfig / configRequest / replyTopics / newestVersion / versionConflict / versionRows below; each
+	 * endpoint keeps only its own validation, row writer and json builder.
+	 */
+	private static class VersionedConfig
+	{
+		protected User user;
+		protected MediaArchive archive;
+		protected LearningEngine.Content content;
+		protected LearningEngine.Topic topic; // null = no ?topicid=, the caller replies the whole list
+		protected boolean canmanage, post;
+	}
+
+	/**
+	 * The preamble of both versioned-config endpoints: the signed-in user, the training_view / training_manage gate, the content and
+	 * the ?topicid= topic. Returns null when it has already failed the request (401, 403 forbidden, 400 missing_topicid on a POST
+	 * without a topic, 404 unknown_topic); a config with a null topic means the caller should reply the whole list.
+	 */
+	private VersionedConfig configRequest(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return null;
+		}
+		VersionedConfig config = new VersionedConfig();
+		config.user = user;
+		config.canmanage = canManageProgression(inReq);
+		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
+		if (!config.canmanage && (profile == null || !profile.hasPermission("training_view")))
+		{
+			fail(inReq, 403, "forbidden");
+			return null;
+		}
+		config.archive = getMediaArchive(inReq);
+		config.content = new LearningEngine(config.archive).loadContent();
+		config.post = inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
+		String topicid = param(inReq, "topicid");
+		if (topicid == null)
+		{
+			if (config.post)
+			{
+				fail(inReq, 400, "missing_topicid");
+				return null;
+			}
+			return config;
+		}
+		config.topic = config.content.topics.get(topicid);
+		if (config.topic == null)
+		{
+			fail(inReq, 404, "unknown_topic");
+			return null;
+		}
+		return config;
+	}
+
+	/** {ok, canmanage, topics} -- the GET-without-topicid reply of both versioned-config endpoints. */
+	private void replyTopics(WebPageRequest inReq, VersionedConfig inConfig, java.util.function.Function<LearningEngine.Topic, JSONObject> inTopicJson)
+	{
+		JSONArray topics = new JSONArray();
+		for (LearningEngine.Topic t : inConfig.content.topics.values())
+		{
+			topics.add(inTopicJson.apply(t));
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("canmanage", inConfig.canmanage);
+		resp.put("topics", topics);
+		reply(inReq, resp);
+	}
+
+	/**
+	 * The highest stored version of inTopicid at or above inFrom. loadContent's search can lag a just-saved version, so the
+	 * optimistic-concurrency check under LearningEngine.WRITE_LOCK probes the next ids with realtime gets instead of trusting it.
+	 */
+	private static int newestVersion(Searcher inSearcher, String inTopicid, int inFrom)
+	{
+		int version = inFrom;
+		while (inSearcher.searchById(inTopicid + "_v" + (version + 1)) != null)
+		{
+			version++;
+		}
+		return version;
+	}
+
+	/** 409 version_conflict: the caller's expectedversion is no longer the latest, so nothing was written. */
+	private void versionConflict(WebPageRequest inReq, int inCurrentVersion, JSONObject inTopic)
+	{
+		if (inReq.getResponse() != null)
+		{
+			inReq.getResponse().setStatus(409);
+		}
+		JSONObject err = new JSONObject();
+		err.put("ok", Boolean.FALSE);
+		err.put("error", "version_conflict");
+		err.put("currentversion", inCurrentVersion);
+		err.put("topic", inTopic);
+		reply(inReq, err);
+		inReq.setCancelActions(true);
+	}
+
+	/** Every stored version row of inTopicid, newest first by inVersionField. */
+	private static java.util.List<Data> versionRows(Searcher inSearcher, String inTopicid, String inVersionField)
+	{
+		java.util.List<Data> rows = new java.util.ArrayList<>();
+		for (Object o : inSearcher.query().exact("entitytopic", inTopicid).search())
+		{
+			rows.add((Data) o);
+		}
+		rows.sort((a, b) -> LearningEngine.intOr(b.get(inVersionField), 0) - LearningEngine.intOr(a.get(inVersionField), 0));
+		return rows;
+	}
+
+	/**
 	 * Subtopic unlock policy per topic. GET: every topic (or ?topicid=, with its version history). POST topicid + policy
 	 * (+ requiredlevel for sequential_mastery) + expectedversion (the version the caller loaded; 0 = none): appends version n+1 to
 	 * subtopicpolicy and an auditevent, create-only under LearningEngine.WRITE_LOCK. expectedversion no longer the latest = 409
@@ -532,47 +646,22 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	public void subtopicPolicy(WebPageRequest inReq)
 	{
-		User user = requireUser(inReq);
-		if (user == null)
+		VersionedConfig config = configRequest(inReq);
+		if (config == null)
 		{
 			return;
 		}
-		boolean canmanage = canManageProgression(inReq);
-		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
-		if (!canmanage && (profile == null || !profile.hasPermission("training_view")))
+		if (config.topic == null)
 		{
-			fail(inReq, 403, "forbidden");
+			replyTopics(inReq, config, t -> policyJson(t));
 			return;
 		}
-		MediaArchive archive = getMediaArchive(inReq);
-		LearningEngine.Content content = new LearningEngine(archive).loadContent();
-		String topicid = param(inReq, "topicid");
-		boolean post = inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
-		if (topicid == null)
-		{
-			if (post)
-			{
-				fail(inReq, 400, "missing_topicid");
-				return;
-			}
-			JSONArray topics = new JSONArray();
-			for (LearningEngine.Topic t : content.topics.values())
-			{
-				topics.add(policyJson(t));
-			}
-			JSONObject resp = new JSONObject();
-			resp.put("ok", Boolean.TRUE);
-			resp.put("canmanage", canmanage);
-			resp.put("topics", topics);
-			reply(inReq, resp);
-			return;
-		}
-		LearningEngine.Topic topic = content.topics.get(topicid);
-		if (topic == null)
-		{
-			fail(inReq, 404, "unknown_topic");
-			return;
-		}
+		// Unpacked so the table-specific code below reads as it did before the skeleton was shared.
+		User user = config.user;
+		boolean canmanage = config.canmanage;
+		boolean post = config.post;
+		MediaArchive archive = config.archive;
+		LearningEngine.Topic topic = config.topic;
 		Searcher searcher = archive.getSearcher("subtopicpolicy");
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -603,11 +692,7 @@ public class TestULearningModule extends TestUBaseModule
 			boolean unchanged;
 			synchronized (LearningEngine.WRITE_LOCK)
 			{
-				// loadContent's search can lag a just-saved version: probe the next ids with realtime gets.
-				while (searcher.searchById(topic.id + "_v" + (topic.policyversion + 1)) != null)
-				{
-					topic.policyversion++;
-				}
+				topic.policyversion = newestVersion(searcher, topic.id, topic.policyversion);
 				Data latest = topic.policyversion == 0 ? null : (Data) searcher.searchById(topic.id + "_v" + topic.policyversion);
 				String[] effective = LearningEngine.effectivePolicy(latest == null ? null : latest.get("unlockpolicy"), latest == null ? null : latest.get("requiredlevel"));
 				topic.policy = effective[0];
@@ -615,17 +700,7 @@ public class TestULearningModule extends TestUBaseModule
 				topic.policyreason = effective[2];
 				if (Integer.parseInt(expected) != topic.policyversion)
 				{
-					if (inReq.getResponse() != null)
-					{
-						inReq.getResponse().setStatus(409);
-					}
-					JSONObject err = new JSONObject();
-					err.put("ok", Boolean.FALSE);
-					err.put("error", "version_conflict");
-					err.put("currentversion", topic.policyversion);
-					err.put("topic", policyJson(topic));
-					reply(inReq, err);
-					inReq.setCancelActions(true);
+					versionConflict(inReq, topic.policyversion, policyJson(topic));
 					return;
 				}
 				unchanged = topic.policyversion > 0 && topic.policyreason == null && policy.equals(topic.policy) && java.util.Objects.equals(level, topic.requiredlevel);
@@ -664,14 +739,8 @@ public class TestULearningModule extends TestUBaseModule
 			reply(inReq, resp);
 			return;
 		}
-		java.util.List<Data> rows = new java.util.ArrayList<>();
-		for (Object o : searcher.query().exact("entitytopic", topic.id).search())
-		{
-			rows.add((Data) o);
-		}
-		rows.sort((a, b) -> LearningEngine.intOr(b.get("policyversion"), 0) - LearningEngine.intOr(a.get("policyversion"), 0));
 		JSONArray versions = new JSONArray();
-		for (Data d : rows)
+		for (Data d : versionRows(searcher, topic.id, "policyversion"))
 		{
 			JSONObject v = new JSONObject();
 			v.put("version", LearningEngine.intOr(d.get("policyversion"), 0));
@@ -697,48 +766,23 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	public void evaluationBlueprint(WebPageRequest inReq)
 	{
-		User user = requireUser(inReq);
-		if (user == null)
+		VersionedConfig config = configRequest(inReq);
+		if (config == null)
 		{
 			return;
 		}
-		boolean canmanage = canManageProgression(inReq);
-		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
-		if (!canmanage && (profile == null || !profile.hasPermission("training_view")))
+		java.util.Map<String, int[]> stats = attemptStats(config.archive);
+		if (config.topic == null)
 		{
-			fail(inReq, 403, "forbidden");
+			replyTopics(inReq, config, t -> blueprintJson(t, stats));
 			return;
 		}
-		MediaArchive archive = getMediaArchive(inReq);
-		LearningEngine.Content content = new LearningEngine(archive).loadContent();
-		java.util.Map<String, int[]> stats = attemptStats(archive);
-		String topicid = param(inReq, "topicid");
-		boolean post = inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
-		if (topicid == null)
-		{
-			if (post)
-			{
-				fail(inReq, 400, "missing_topicid");
-				return;
-			}
-			JSONArray topics = new JSONArray();
-			for (LearningEngine.Topic t : content.topics.values())
-			{
-				topics.add(blueprintJson(t, stats));
-			}
-			JSONObject resp = new JSONObject();
-			resp.put("ok", Boolean.TRUE);
-			resp.put("canmanage", canmanage);
-			resp.put("topics", topics);
-			reply(inReq, resp);
-			return;
-		}
-		LearningEngine.Topic topic = content.topics.get(topicid);
-		if (topic == null)
-		{
-			fail(inReq, 404, "unknown_topic");
-			return;
-		}
+		// Unpacked so the table-specific code below reads as it did before the skeleton was shared.
+		User user = config.user;
+		boolean canmanage = config.canmanage;
+		boolean post = config.post;
+		MediaArchive archive = config.archive;
+		LearningEngine.Topic topic = config.topic;
 		Searcher searcher = archive.getSearcher("evaluationblueprint");
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -809,7 +853,7 @@ public class TestULearningModule extends TestUBaseModule
 					}
 					if (!known)
 					{
-						fail(inReq, 404, "unknown_section");
+						fail(inReq, 400, "unknown_section");
 						return;
 					}
 					b.excludedsections.add(sid);
@@ -840,36 +884,14 @@ public class TestULearningModule extends TestUBaseModule
 			boolean unchanged;
 			synchronized (LearningEngine.WRITE_LOCK)
 			{
-				// loadContent's search can lag a just-saved version: probe the next ids with realtime gets.
-				int v = topic.blueprint.version;
-				Data latest = null;
-				while (true)
+				int newest = newestVersion(searcher, topic.id, topic.blueprint.version);
+				if (newest > topic.blueprint.version)
 				{
-					Data d = (Data) searcher.searchById(topic.id + "_v" + (v + 1));
-					if (d == null)
-					{
-						break;
-					}
-					latest = d;
-					v++;
-				}
-				if (latest != null)
-				{
-					topic.blueprint = LearningEngine.blueprintOf(latest, topic.id);
+					topic.blueprint = LearningEngine.blueprintOf((Data) searcher.searchById(topic.id + "_v" + newest), topic.id);
 				}
 				if (Integer.parseInt(expected) != topic.blueprint.version)
 				{
-					if (inReq.getResponse() != null)
-					{
-						inReq.getResponse().setStatus(409);
-					}
-					JSONObject err = new JSONObject();
-					err.put("ok", Boolean.FALSE);
-					err.put("error", "version_conflict");
-					err.put("currentversion", topic.blueprint.version);
-					err.put("topic", blueprintJson(topic, stats));
-					reply(inReq, err);
-					inReq.setCancelActions(true);
+					versionConflict(inReq, topic.blueprint.version, blueprintJson(topic, stats));
 					return;
 				}
 				unchanged = topic.blueprint.version > 0 && sameBlueprint(topic.blueprint, b);
@@ -915,14 +937,8 @@ public class TestULearningModule extends TestUBaseModule
 			reply(inReq, resp);
 			return;
 		}
-		java.util.List<Data> rows = new java.util.ArrayList<>();
-		for (Object o : searcher.query().exact("entitytopic", topic.id).search())
-		{
-			rows.add((Data) o);
-		}
-		rows.sort((a, c) -> LearningEngine.intOr(c.get("blueprintversion"), 0) - LearningEngine.intOr(a.get("blueprintversion"), 0));
 		JSONArray versions = new JSONArray();
-		for (Data d : rows)
+		for (Data d : versionRows(searcher, topic.id, "blueprintversion"))
 		{
 			LearningEngine.Blueprint v = LearningEngine.blueprintOf(d, topic.id);
 			JSONObject vj = v.toJson();

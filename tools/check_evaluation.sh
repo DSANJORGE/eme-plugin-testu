@@ -380,11 +380,11 @@ try:
         form.update({k: str(v) for k, v in f.items()})
         return call(op or admin, "POST", BPP, form=form)
 
-    for field, value, err in (("maxquestions", "0", "bad_maxquestions"), ("maxquestions", "x", "bad_maxquestions"), ("passpercent", "101", "bad_passpercent"),
-                              ("strategy", "common", "bad_strategy"), ("difficultymix", "odd", "bad_difficultymix"), ("timerminutes", "481", "bad_timerminutes"),
-                              ("retakewaithours", "-1", "bad_retakewaithours"), ("excludedsections", "nope", "bad_excludedsections"), ("excludedsections", '["nope"]', "unknown_section")):
+    for field, value, status, err in (("maxquestions", "0", 400, "bad_maxquestions"), ("maxquestions", "x", 400, "bad_maxquestions"), ("passpercent", "101", 400, "bad_passpercent"),
+                                      ("strategy", "common", 400, "bad_strategy"), ("difficultymix", "odd", 400, "bad_difficultymix"), ("timerminutes", "481", 400, "bad_timerminutes"),
+                                      ("retakewaithours", "-1", 400, "bad_retakewaithours"), ("excludedsections", "nope", 400, "bad_excludedsections"), ("excludedsections", '["nope"]', 400, "unknown_section")):
         r = save(**{field: value})
-        ok(f"blueprint save: {field}={value} -> {err}", r[0] in (400, 404) and r[1]["error"] == err, r)
+        ok(f"blueprint save: {field}={value} -> {status} {err}", r[0] == status and r[1]["error"] == err, r)
     r = save(expected="999")
     ok("blueprint save: stale expectedversion -> 409 version_conflict with currentversion", r[0] == 409 and r[1]["error"] == "version_conflict" and r[1]["currentversion"] == VERSION[0], r)
     r = call(admin, "POST", BPP, form={"topicid": T, "active": "true"})
