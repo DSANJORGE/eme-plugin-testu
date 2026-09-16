@@ -193,4 +193,124 @@ public class TestUTeamModule extends TestUBaseModule
 		replyObj.put("id", id);
 		reply(inReq, replyObj);
 	}
+	/**
+	 * deleteteam.json: id, cascade=true|false. The team goes; its members lose
+	 * their team (their records stay). Sub-teams either lift to the deleted
+	 * team's parent (default) or, with cascade=true, go too, members included.
+	 * Learning records and audit are kept: the console offers a CSV first.
+	 */
+	public void deleteTeam(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		String id = inReq.getRequestParameter("id");
+		id = (id != null) ? id.trim() : "";
+		boolean cascade = "true".equals(inReq.getRequestParameter("cascade"));
+
+		Searcher teams = archive.getSearcher("team");
+		Data target = (Data) teams.searchById(id);
+		if (target == null)
+		{
+			fail(inReq, 404, "no team");
+			return;
+		}
+
+		Map<String, Data> all = new HashMap<>();
+		HitTracker teamHits = teams.query().all().search();
+		if (teamHits != null)
+		{
+			for (Object hit : teamHits)
+			{
+				Data t = (Data) hit;
+				all.put(t.getId(), t);
+			}
+		}
+
+		// Everything that goes: the team, and with cascade every team under it.
+		// Bounded like loadScope's grow loop: a cycle stops adding once covered.
+		Set<String> gone = new HashSet<>();
+		gone.add(id);
+		if (cascade)
+		{
+			boolean grew = true;
+			while (grew)
+			{
+				grew = false;
+				for (Data t : all.values())
+				{
+					String parent = t.get("parent");
+					if (parent != null && gone.contains(parent) && !gone.contains(t.getId()))
+					{
+						gone.add(t.getId());
+						grew = true;
+					}
+				}
+			}
+		}
+
+		// Sub-teams that stay lift to the nearest surviving ancestor.
+		String lift = target.get("parent");
+		if (lift != null && (lift.isEmpty() || gone.contains(lift) || !all.containsKey(lift)))
+		{
+			lift = null;
+		}
+		User currentUser = inReq.getUser();
+		String[] fields = new String[] {"name", "parent", "manager", "location", "costcenter"};
+		JSONArray lifted = new JSONArray();
+		for (Data t : all.values())
+		{
+			if (gone.contains(t.getId()))
+			{
+				continue;
+			}
+			String parent = t.get("parent");
+			if (parent != null && gone.contains(parent))
+			{
+				t.setValue("parent", lift);
+				teams.saveData(t, currentUser);
+				lifted.add(t.getId());
+			}
+		}
+
+		// Members of every deleted team lose it; nothing else on the user changes.
+		Searcher users = archive.getSearcher("user");
+		JSONArray unassigned = new JSONArray();
+		HitTracker hits = users.query().all().search();
+		if (hits != null)
+		{
+			hits.enableBulkOperations();
+			for (Object hit : hits)
+			{
+				Data u = (Data) hit;
+				String team = u.get("team");
+				if (team != null && gone.contains(team))
+				{
+					u.setValue("team", null);
+					users.saveData(u, currentUser);
+					unassigned.add(u.getId());
+				}
+			}
+		}
+
+		for (String teamId : gone)
+		{
+			Data t = all.get(teamId);
+			if (t == null)
+			{
+				continue;
+			}
+			JSONObject before = snapshot(t, fields);
+			teams.delete(t, currentUser);
+			JSONObject after = new JSONObject();
+			after.put("cascade", Boolean.valueOf(cascade));
+			after.put("lifted", teamId.equals(id) ? lifted : new JSONArray());
+			after.put("unassigned", unassigned);
+			audit(inReq, archive, "team.delete", "team", teamId, before, after);
+		}
+
+		JSONObject replyObj = new JSONObject();
+		replyObj.put("ok", Boolean.TRUE);
+		replyObj.put("deleted", gone.size());
+		replyObj.put("unassigned", unassigned.size());
+		reply(inReq, replyObj);
+	}
 }
