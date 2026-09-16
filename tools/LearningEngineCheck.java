@@ -980,12 +980,16 @@ public class LearningEngineCheck
 		n.blueprint.active = false;
 		LearningEngine.settle(n.blueprint);
 		ok("eval status: inactive", "inactive".equals(status(n, learner()).get("reason")), status(n, learner()));
+		ok("eval status: not_available carries no blueprint size or timer", !status(n, learner()).containsKey("maxquestions") && !status(n, learner()).containsKey("timerminutes"), status(n, learner()));
 		n.blueprint = bp("random", 0, 0, "proportional", 70, 0, 0, 0, 0, false);
 		ok("eval status: invalid stored value -> invalid_maxquestions", "invalid_maxquestions".equals(status(n, learner()).get("reason")), status(n, learner()));
 		n.blueprint = bp("random", 9, 0, "proportional", 70, 0, 0, 2, 1, true);
 		ok("eval status: learn incomplete -> locked learn_incomplete", "locked".equals(status(n, learner()).get("status")) && "learn_incomplete".equals(status(n, learner()).get("reason")), status(n, learner()));
 		Learner done = learner(allLearned(n));
 		ok("eval status: available with attemptsleft 1", "available".equals(status(n, done).get("status")) && Boolean.TRUE.equals(status(n, done).get("canstart")) && status(n, done).get("attemptsleft").equals(1), status(n, done));
+		n.blueprint.timerminutes = 25;
+		ok("eval status: a usable blueprint carries maxquestions and timerminutes", status(n, done).get("maxquestions").equals(9) && status(n, done).get("timerminutes").equals(25), status(n, done));
+		n.blueprint.timerminutes = 0;
 		n.locked = true;
 		ok("eval status: topic lock wins over learn state", "topic_locked".equals(status(n, done).get("reason")), status(n, done));
 		n.locked = false;

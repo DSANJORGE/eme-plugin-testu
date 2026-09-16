@@ -228,6 +228,7 @@ try:
     blueprint()
     st, e = ev()
     ok("evaluation.json: available, canstart, blueprint carried", st == 200 and e["status"] == "available" and e["canstart"] is True and e["blueprint"]["maxquestions"] == MAXQ and e["attempts"] == 0 and e["attempthistory"] == [], e)
+    ok("state.json: the evaluation block carries the blueprint size and timer", topic_of(state(), T)["evaluation"]["maxquestions"] == MAXQ and topic_of(state(), T)["evaluation"]["timerminutes"] == 0, topic_of(state(), T)["evaluation"])
     A0 = len(audits("evaluation.start", f"{USER}_{T}_a1"))  # auditevent is append-only: earlier runs reused this id
     st, s1 = start()
     ok("start: next.json shape, mode evaluation, n items, expiresat, nothing done", st == 200 and s1["mode"] == "evaluation" and s1["total"] == MAXQ and len(s1["items"]) == MAXQ and s1["expiresat"] and all(i["done"] is False for i in s1["items"]) and s1["sessionid"] == f"{USER}_{T}_a1", s1)
@@ -328,7 +329,7 @@ try:
     row = es_doc("evaluationattempt", s4["sessionid"])
     ok("timer: attempt finalized by timer with the answered subset scored", row and row["status"] == "expired" and row["finalizedby"] == "timer" and int(row["answered"]) == 1 and int(row["correct"]) == 1, row)
     st, e = ev()
-    ok("evaluation.json after expiry: available again (unlimited attempts), lastresult expired", e["status"] == "available" and e["lastresult"]["status"] == "expired" and e["attempts"] == 1 and len(e["attempthistory"]) == 1, e)
+    ok("evaluation.json after expiry: available again (unlimited attempts), lastresult expired, timer carried", e["status"] == "available" and e["lastresult"]["status"] == "expired" and e["attempts"] == 1 and len(e["attempthistory"]) == 1 and e["timerminutes"] == 1 and e["maxquestions"] == MAXQ, e)
 
     # ---- a submit after the window closes is the clock's doing, not the learner's
     delete_rows("evaluationattempt", es_ids("evaluationattempt", {"term": {"user": USER}}))
@@ -443,7 +444,7 @@ try:
     st, e = ev()
     ok("inactive version: not_available inactive, blueprint null", e["status"] == "not_available" and e["reason"] == "inactive" and e["blueprint"] is None, e)
     t = topic_of(state(), T)
-    ok("state.json: evaluation block mirrors evaluation.json", t["evaluation"]["status"] == "not_available" and t["evaluation"]["reason"] == "inactive", t["evaluation"])
+    ok("state.json: evaluation block mirrors evaluation.json, no blueprint size or timer", t["evaluation"]["status"] == "not_available" and t["evaluation"]["reason"] == "inactive" and "maxquestions" not in t["evaluation"] and "timerminutes" not in t["evaluation"], t["evaluation"])
 finally:
     cleanup()
 

@@ -1552,7 +1552,8 @@ public class LearningEngine
 	 * Pure. The learner's evaluation status on t at inNow, precedence: not_available (no usable blueprint), in_progress (open attempt),
 	 * passed (terminal in v1), locked (topic_locked | learn_incomplete), waiting (retakewaithours after a failed attempt), exhausted
 	 * (maxattempts reached), available. Returns {status, reason, canstart, required, passed, passedat, scorepercent, attempts,
-	 * attemptsleft, nextallowedat, inprogress:{attemptid, expiresat, total, answered} | null, lastresult | null}.
+	 * attemptsleft, nextallowedat, inprogress:{attemptid, expiresat, total, answered} | null, lastresult | null}, plus maxquestions
+	 * and timerminutes when the blueprint is usable (absent with the rest of it when the evaluation is not on offer).
 	 */
 	public static JSONObject evaluationStatus(Topic t, Learner l, Date inNow)
 	{
@@ -1623,6 +1624,13 @@ public class LearningEngine
 		o.put("status", status);
 		o.put("reason", reason);
 		o.put("canstart", "available".equals(status));
+		if (b != null && b.usable())
+		{
+			// What the app needs to introduce the evaluation before it starts one; absent when there is nothing on offer,
+			// exactly as evaluation.json leaves its blueprint null.
+			o.put("maxquestions", b.maxquestions);
+			o.put("timerminutes", b.timerminutes);
+		}
 		return o;
 	}
 
