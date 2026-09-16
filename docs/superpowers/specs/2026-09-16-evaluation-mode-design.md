@@ -29,7 +29,7 @@ New table `evaluationblueprint` (`data/fields/evaluationblueprint.xml`), append-
 
 New table `evaluationattempt` (`data/fields/evaluationattempt.xml`). Id `<user>_<topic>_a<n>`.
 
-- `user`, `entitytopic`, `blueprintversion`, `strategy`, `attemptnumber` (1-based per user × topic), `questionlist` (JSON, ordered question ids with section and difficulty as resolved by the server), `total`.
+- `user`, `entitytopic`, `blueprintversion`, `strategy`, `attemptnumber` (1-based per user × topic), `questionlist` (JSON, ordered question ids with section and position), `total`.
 - `status` (keyword: `inprogress` | `submitted` | `expired`), `datecreated` (start), `expiresat` (start + `timerminutes`; with no timer, start + 24 h: an attempt is always one sitting in the sense of one bounded window), `submitted` (date), `finalizedby` (`learner` | `timer`).
 - Result: `answered`, `correct`, `scorepercent`, `passed` (boolean), `subtopicresults` (JSON: `[{section, questions, correct, percent, met}]`).
 - Exposure risk: `exposed` (selected questions the learner had answered or been shown in learn / dailychallenge / improve before the attempt), `reused` (selected questions already used in the learner's earlier evaluation attempts of the topic), `exposurerisk` = `exposed + reused > 0`.
