@@ -14,6 +14,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.logging.Log;
@@ -32,6 +36,51 @@ import org.openedit.util.DateStorageUtil;
 
 public class TestUAnalyticsModule extends TestUBaseModule
 {
+	/** Seconds from the first activity to the analytics rebuild it schedules; activity inside the window adds nothing. */
+	static final long REFRESH_DELAY_SECONDS = 60;
+	private static final Set<String> REFRESH_PENDING = ConcurrentHashMap.newKeySet();
+	private static final ScheduledExecutorService REFRESH = Executors.newSingleThreadScheduledExecutor(r ->
+	{
+		Thread t = new Thread(r, "testu-analytics-refresh");
+		t.setDaemon(true);
+		return t;
+	});
+
+	/**
+	 * Trailing debounce for the computemastery rebuild (~10 s, full): the first answer or tutor question schedules one run
+	 * REFRESH_DELAY_SECONDS later, later activity in that window rides on it. The event itself still coalesces with the 15 min sweep.
+	 * ponytail: per-JVM timer; a pending refresh is lost on restart, the 15 min sweep covers it.
+	 */
+	public static void scheduleRefresh(MediaArchive inArchive)
+	{
+		String catalogid = inArchive.getCatalogId();
+		if (!REFRESH_PENDING.add(catalogid))
+		{
+			return;
+		}
+		REFRESH.schedule(() ->
+		{
+			REFRESH_PENDING.remove(catalogid); // activity during the rebuild schedules the next one
+			try
+			{
+				inArchive.fireSharedMediaEvent("testu/computemastery");
+			}
+			catch (Throwable e)
+			{
+				log.error("testu analytics refresh failed", e);
+			}
+		}, REFRESH_DELAY_SECONDS, TimeUnit.SECONDS);
+	}
+
+	/** continue.json path-action: a learner's free-text tutor question counts in analytics like an answer. */
+	public void scheduleRefreshOnQuestion(WebPageRequest inReq)
+	{
+		if ("chat_tutor_usercomment".equals(inReq.getRequestParameter("functionname")) && inReq.getUser() != null)
+		{
+			scheduleRefresh(getMediaArchive(inReq));
+		}
+	}
+
 	private static final Log log = LogFactory.getLog(TestUAnalyticsModule.class);
 
 	public void loadAnalytics(WebPageRequest inReq)
