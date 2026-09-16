@@ -18,6 +18,7 @@ for u in (B, ES):
 if not os.environ.get("EME_USER") or not os.environ.get("EME_PASSWORD"):
     sys.exit("set EME_USER and EME_PASSWORD (a local admin)")
 USER, PASSWORD = "eval.check@testu.local", "Ec9-" + secrets.token_urlsafe(24)
+USER2, PASSWORD2 = "eval.check2@testu.local", "Ec9-" + secrets.token_urlsafe(24)  # a second learner: someone else's attempt
 FAILS = []
 
 
@@ -95,11 +96,23 @@ def iso(dt):
 def wipe_user_rows():
     refresh()
     for t in USER_TABLES:
-        delete_rows(t, es_ids(t, {"term": {"user": USER}}))
+        for u in (USER, USER2):
+            delete_rows(t, es_ids(t, {"term": {"user": u}}))
 
 
-def usersave(field, value):
-    must(f"usersave {field}", call(admin, "POST", "/services/authentication/usersave.json", form={"username": USER, "field": field, field + "value": value}))
+def usersave(field, value, user=None):
+    must(f"usersave {field}", call(admin, "POST", "/services/authentication/usersave.json", form={"username": user or USER, "field": field, field + "value": value}))
+
+
+def make_user(email, password, first):
+    users = must("users.json", call(admin, "GET", "/services/testu/personas/users.json"))["users"]
+    if next((u for u in users if u["id"] == email), None) is None:
+        must("createuser", call(admin, "POST", "/services/testu/personas/createuser.json", form={"email": email, "firstName": first, "lastName": "Check", "role": "users"}))
+    else:
+        usersave("enabled", "true", email)
+    usersave("password", password, email)
+    usersave("jobrole", "", email)
+    usersave("primaryjobrole", "", email)
 
 
 def put_row(table, rid, body):
@@ -133,11 +146,11 @@ def submit(sid):
     return call(me, "POST", "/services/testu/learn/submitevaluation.json", form={"sessionid": sid})
 
 
-def answer(sid, qid, option, **extra):
+def answer(sid, qid, option, op=None, **extra):
     form = {"mode": "evaluation", "scopetype": "topic", "scopeid": T, "questionid": qid, "sessionid": sid, "selectedoption": option,
             "confidence": "confident", "hintlevel": "0", "attemptid": "ec" + secrets.token_hex(8)}
     form.update(extra)
-    return call(me, "POST", "/services/testu/learn/answer.json", form={k: v for k, v in form.items() if v is not None})
+    return call(op or me, "POST", "/services/testu/learn/answer.json", form={k: v for k, v in form.items() if v is not None})
 
 
 def audits(action, target):
@@ -186,16 +199,11 @@ def cleanup():
 
 try:
     # ---- setup: learner, topic with enough questions
-    users = must("users.json", call(admin, "GET", "/services/testu/personas/users.json"))["users"]
-    if next((u for u in users if u["id"] == USER), None) is None:
-        must("createuser", call(admin, "POST", "/services/testu/personas/createuser.json", form={"email": USER, "firstName": "Eval", "lastName": "Check", "role": "users"}))
-    else:
-        usersave("enabled", "true")
-    usersave("password", PASSWORD)
-    usersave("jobrole", "")
-    usersave("primaryjobrole", "")
+    make_user(USER, PASSWORD, "Eval")
+    make_user(USER2, PASSWORD2, "Eval2")
     wipe_user_rows()
     me = login(USER, PASSWORD)
+    other = login(USER2, PASSWORD2)
     base = state()
     cands = [t for t in base["topics"] if t["questions"] >= 6 and len(t["sections"]) >= 2 and t["evaluation"]["status"] == "not_available"]
     if not cands:
@@ -203,6 +211,10 @@ try:
     T = cands[0]["id"]
     POOL = cands[0]["questions"]
     MAXQ = max(1, min(5, POOL // 2))
+    TSECTIONS = {x["id"] for x in cands[0]["sections"]}
+    slots = must("componentcontent search", call(admin, "GET", "/services/lists/search/componentcontent/search.json?hitsperpage=10000"))["results"]
+    TQUESTIONS = {fid(c.get("questionid")) for c in slots if fid(c.get("componentsectionid")) in TSECTIONS and fid(c.get("componenttype")) == "mcq"}
+    TQUESTIONS = {q for q in TQUESTIONS if q in QROW}
     refresh()
     VERSION[0] = max([int(es_doc("evaluationblueprint", i).get("blueprintversion", 0)) for i in es_ids("evaluationblueprint", {"term": {"entitytopic": T}})] or [0])
     ok("no blueprint: every topic not_available / not_configured, no evaluation UI data", all(t["evaluation"]["status"] == "not_available" for t in base["topics"]) and cands[0]["evaluation"]["reason"] == "not_configured", cands[0]["evaluation"])
@@ -210,7 +222,7 @@ try:
     # ---- available -> start -> answers -> submit (pass)
     blueprint()
     st, e = ev()
-    ok("evaluation.json: available, canstart, blueprint carried", st == 200 and e["status"] == "available" and e["canstart"] is True and e["blueprint"]["maxquestions"] == MAXQ and e["attempts"] == [], e)
+    ok("evaluation.json: available, canstart, blueprint carried", st == 200 and e["status"] == "available" and e["canstart"] is True and e["blueprint"]["maxquestions"] == MAXQ and e["attempts"] == 0 and e["attempthistory"] == [], e)
     A0 = len(audits("evaluation.start", f"{USER}_{T}_a1"))  # auditevent is append-only: earlier runs reused this id
     st, s1 = start()
     ok("start: next.json shape, mode evaluation, n items, expiresat, nothing done", st == 200 and s1["mode"] == "evaluation" and s1["total"] == MAXQ and len(s1["items"]) == MAXQ and s1["expiresat"] and all(i["done"] is False for i in s1["items"]) and s1["sessionid"] == f"{USER}_{T}_a1", s1)
@@ -231,10 +243,14 @@ try:
     ok("answer: wrong topic scope -> 409 scope_mismatch", r[0] == 409 and r[1]["error"] == "scope_mismatch", r)
     r = answer("nope", q0, right(q0))
     ok("answer: unknown attempt -> 404 unknown_session", r[0] == 404 and r[1]["error"] == "unknown_session", r)
-    outside = next((t for t in QROW if t not in {i["questionid"] for i in s1["items"]} and QROW[t].get("correctoption")), None)
+    outside = next((q for q in sorted(TQUESTIONS - {i["questionid"] for i in s1["items"]}) if QROW[q].get("correctoption")), None)
+    ok("topic T has a question outside the attempt to test with", outside is not None, (len(TQUESTIONS), MAXQ))
     if outside:
-        r = answer(s1["sessionid"], outside, "A")
-        ok("answer: question outside the attempt -> 409 not_in_session (or unknown/scope)", r[0] in (404, 409), r)
+        r = answer(s1["sessionid"], outside, right(outside))
+        ok("answer: a question of T outside the attempt -> 409 not_in_session", r[0] == 409 and r[1]["error"] == "not_in_session", r)
+    r = answer(s1["sessionid"], q0, right(q0), op=other)
+    ok("answer: another learner on this attempt -> 409 session_mismatch", r[0] == 409 and r[1]["error"] == "session_mismatch", r)
+    LEARN0 = {k: topic_of(state(), T)[k] for k in ("masterypercent", "band", "answered", "learncomplete", "nextquestionid")}
     for i in s1["items"]:
         r = answer(s1["sessionid"], i["questionid"], right(i["questionid"]))
         ok(f"answer {i['position']}: stored, deferred, no iscorrect", r[0] == 200 and r[1]["ok"] is True and r[1]["deferred"] is True and "iscorrect" not in r[1] and r[1]["mode"] == "evaluation", r)
@@ -245,6 +261,9 @@ try:
     ok("tutoranswer rows: mode evaluation, learningsession = attempt id, scopetype topic", len(arow) == MAXQ and all(h["_source"]["mode"] == "evaluation" and h["_source"]["learningsession"] == s1["sessionid"] and h["_source"]["scopetype"] == "topic" for h in arow), [h["_source"].get("mode") for h in arow])
     t = topic_of(state(), T)
     ok("state: evaluation answers never count as learning answers (answered 0), in_progress with n answered", t["answered"] == 0 and t["evaluation"]["status"] == "in_progress" and t["evaluation"]["inprogress"]["answered"] == MAXQ, t["evaluation"])
+    ok("state: mastery, band and the learn sequence are untouched by evaluation answers", {k: t[k] for k in LEARN0} == LEARN0, (LEARN0, {k: t[k] for k in LEARN0}))
+    sub0 = {x["id"]: (x["masterypercent"], x["band"], x["answered"], x["unlocked"]) for x in t["sections"]}
+    ok("state: no subtopic gained mastery or an unlock from the evaluation", all(v[0] == 0 and v[1] is None and v[2] == 0 for k, v in sub0.items() if k in {i["sectionid"] for i in s1["items"]}), sub0)
     A1 = len(audits("evaluation.submit", s1["sessionid"]))
     st, res = submit(s1["sessionid"])
     ok("submit: passed 100, correct n, subtopics listed, status submitted", st == 200 and res["passed"] is True and res["scorepercent"] == 100 and res["correct"] == MAXQ and res["status"] == "submitted" and res["subtopics"] and res["duplicate"] is False and res["evaluationstatus"] == "passed", res)
@@ -252,7 +271,7 @@ try:
     ok("submit again: duplicate with the same score", st == 200 and res2["duplicate"] is True and res2["scorepercent"] == 100, res2)
     ok("audit evaluation.submit once", len(audits("evaluation.submit", s1["sessionid"])) - A1 == 1, "")
     st, e = ev()
-    ok("evaluation.json: passed is terminal (canstart false, passedat, lastresult)", e["status"] == "passed" and e["canstart"] is False and e["passedat"] and e["lastresult"]["scorepercent"] == 100 and len(e["attempts"]) == 1, e)
+    ok("evaluation.json: passed is terminal (canstart false, passedat, lastresult)", e["status"] == "passed" and e["canstart"] is False and e["passedat"] and e["lastresult"]["scorepercent"] == 100 and e["attempts"] == 1 and len(e["attempthistory"]) == 1, e)
     r = start()
     ok("start after pass -> 409 evaluation_not_available passed", r[0] == 409 and r[1]["error"] == "evaluation_not_available" and r[1]["status"] == "passed", r)
     r = answer(s1["sessionid"], q0, right(q0))
@@ -304,7 +323,21 @@ try:
     row = es_doc("evaluationattempt", s4["sessionid"])
     ok("timer: attempt finalized by timer with the answered subset scored", row and row["status"] == "expired" and row["finalizedby"] == "timer" and int(row["answered"]) == 1 and int(row["correct"]) == 1, row)
     st, e = ev()
-    ok("evaluation.json after expiry: available again (unlimited attempts), lastresult expired", e["status"] == "available" and e["lastresult"]["status"] == "expired" and len(e["attempts"]) == 1, e)
+    ok("evaluation.json after expiry: available again (unlimited attempts), lastresult expired", e["status"] == "available" and e["lastresult"]["status"] == "expired" and e["attempts"] == 1 and len(e["attempthistory"]) == 1, e)
+
+    # ---- a submit after the window closes is the clock's doing, not the learner's
+    delete_rows("evaluationattempt", es_ids("evaluationattempt", {"term": {"user": USER}}))
+    delete_rows("tutoranswer", es_ids("tutoranswer", {"term": {"user": USER}}))
+    refresh()
+    blueprint(timerminutes="1")
+    st, s5 = start()
+    q = s5["items"][0]["questionid"]
+    answer(s5["sessionid"], q, right(q))
+    put_row("evaluationattempt", s5["sessionid"], {"expiresat": iso(NOW - datetime.timedelta(hours=1))})
+    refresh()
+    st, res = submit(s5["sessionid"])
+    row = es_doc("evaluationattempt", s5["sessionid"])
+    ok("late submit: scored as expired / finalizedby timer, not a learner submission", st == 200 and res["status"] == "expired" and row["finalizedby"] == "timer" and res["duplicate"] is False and res["correct"] == 1, (res.get("status"), row.get("finalizedby")))
 
     # ---- learn must be complete
     blueprint(requirelearncomplete="true")

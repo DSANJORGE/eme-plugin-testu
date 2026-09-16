@@ -407,7 +407,11 @@ public class LearningEngineCheck
 		at.add(attempt("t1q1", "evaluation", false, "confident", 0, 5));
 		ok("latest evidence = newest attempt (rows out of order)", learner(at).latest.get("t1q1").correct, "");
 		at.add(attempt("t1q1", "evaluation", false, "confident", 0, 0));
-		ok("latest evidence counts any mode (newer evaluation wrong)", !learner(at).latest.get("t1q1").correct, "");
+		// Evaluation answers are not learning evidence: they never become the latest attempt of a question, so mastery,
+		// percent, bands and unlocks cannot move (spec 2026-09-16-evaluation-mode).
+		ok("latest evidence ignores a newer evaluation answer", learner(at).latest.get("t1q1").correct, "");
+		at.add(attempt("t1q1", LearningEngine.LEGACY, false, "confident", 0, 0));
+		ok("latest evidence still counts a newer legacy answer", !learner(at).latest.get("t1q1").correct, "");
 		// aggregation: topic % = weighted mean over all its questions, section % over its own
 		Content two = content(1, 4);
 		Topic t = two.topics.get("t1");

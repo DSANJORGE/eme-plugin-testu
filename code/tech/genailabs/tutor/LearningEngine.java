@@ -569,7 +569,12 @@ public class LearningEngine
 			{
 				continue;
 			}
-			l.latest.put(a.questionid, a);
+			if (!EVALUATION.equals(a.mode))
+			{
+				// An evaluation answer is never learning evidence: it must not move mastery, percent, bands or unlocks
+				// (spec 2026-09-16-evaluation-mode). Legacy / unknown modes keep counting as before.
+				l.latest.put(a.questionid, a);
+			}
 			if ("learn".equals(a.mode) || "dailychallenge".equals(a.mode))
 			{
 				l.answeredInSequence.add(a.questionid);
@@ -1789,12 +1794,15 @@ public class LearningEngine
 	}
 
 	/**
-	 * The learner's attempt to serve: under the write lock, probes the next attempt ids (<user>_<topic>_a<n>) with realtime gets past
-	 * what l knows; the newest one is resumed when still open, finalized by the timer when past its window; otherwise a new attempt is
-	 * built (buildEvaluation, seed = id hash) and stored with expiresat = now + timer (or UNTIMED_WINDOW_MS). Returns null when the
-	 * built evaluation has no items (the caller answers pool_insufficient). The caller decides eligibility (evaluationStatus) first.
+	 * The learner's attempt to serve: under the write lock, re-reads the attempt ids (<user>_<topic>_a<n>) from storage with realtime
+	 * gets, from the newest one l knows upwards (the search index lags a save); the newest one is resumed when still open, finalized by
+	 * the timer when past its window; otherwise a new attempt is built (buildEvaluation, seed = id hash) and stored with expiresat =
+	 * now + timer (or UNTIMED_WINDOW_MS).
+	 * @param inMayCreate the caller's eligibility verdict (evaluationStatus canstart). False = resume only: nothing is created.
+	 * @param outReason nullable 1 slot; on null receives evaluation_not_available (a new attempt was needed but inMayCreate is false)
+	 *                  or pool_insufficient (the blueprint selects no question).
 	 */
-	public EvalAttempt startEvaluation(Topic t, Learner l, Content c, Date inNow)
+	public EvalAttempt startEvaluation(Topic t, Learner l, Content c, Date inNow, boolean inMayCreate, String[] outReason)
 	{
 		synchronized (WRITE_LOCK)
 		{
@@ -1815,15 +1823,17 @@ public class LearningEngine
 					latest = a;
 				}
 			}
-			while (true)
+			for (int probe = Math.max(1, n); ; probe++)
 			{
-				Data d = (Data) searcher.searchById(l.userid + "_" + t.id + "_a" + (n + 1));
+				// From n, not n + 1: the attempt l knows is re-read from storage too, since its answers (and its status) may be
+				// newer than the search index this learner was loaded from.
+				Data d = (Data) searcher.searchById(l.userid + "_" + t.id + "_a" + probe);
 				if (d == null)
 				{
 					break;
 				}
 				latest = evalAttemptOf(d);
-				n++;
+				n = probe;
 			}
 			if (latest != null && latest.open(inNow))
 			{
@@ -1832,6 +1842,15 @@ public class LearningEngine
 			if (latest != null && !latest.finalized())
 			{
 				finalizeEvaluation(latest, c, "timer");
+			}
+			if (!inMayCreate)
+			{
+				// Nothing to resume and the caller's gate (waiting | exhausted | passed | locked) does not allow a new attempt.
+				if (outReason != null)
+				{
+					outReason[0] = "evaluation_not_available";
+				}
+				return null;
 			}
 			Blueprint b = t.blueprint;
 			EvalAttempt a = new EvalAttempt();
@@ -1850,7 +1869,11 @@ public class LearningEngine
 			}
 			if (a.questions.isEmpty())
 			{
-				return null; // empty pool: no attempt row, the endpoint fails with pool_insufficient
+				if (outReason != null)
+				{
+					outReason[0] = "pool_insufficient"; // empty pool: no attempt row is created
+				}
+				return null;
 			}
 			a.total = a.questions.size();
 			a.exposed = ((Number) built.get("exposed")).intValue();
@@ -1919,8 +1942,10 @@ public class LearningEngine
 			a.inputs.put("weakest", r.get("weakest"));
 			a.inputs.put("passpercent", b.passpercent);
 			a.inputs.put("subtopicminpercent", b.subtopicminpercent);
-			a.status = "timer".equals(inBy) ? "expired" : "submitted";
-			a.finalizedby = inBy;
+			// Past its window the clock closed it, whoever asked: a late submit is an expired attempt, not a learner submission.
+			String by = a.expires != null && a.expires.before(new Date()) ? "timer" : inBy;
+			a.status = "timer".equals(by) ? "expired" : "submitted";
+			a.finalizedby = by;
 			a.submitted = new Date();
 			saveEvalAttempt(a);
 			return a;

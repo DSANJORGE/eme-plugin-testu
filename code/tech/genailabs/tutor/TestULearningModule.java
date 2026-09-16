@@ -339,7 +339,8 @@ public class TestULearningModule extends TestUBaseModule
 
 	/**
 	 * services/testu/learn/evaluation.json?topicid= -- the learner's evaluation status on the topic (LearningEngine.evaluationStatus), the
-	 * usable blueprint (null when not offered) and the attempt history. Read-only apart from finalizing an attempt past its window.
+	 * usable blueprint (null when not offered) and the attempt history (attempthistory; attempts stays the finalized count).
+	 * Read-only apart from finalizing an attempt past its window.
 	 */
 	public void evaluation(WebPageRequest inReq)
 	{
@@ -372,8 +373,25 @@ public class TestULearningModule extends TestUBaseModule
 				attempts.add(a.toResultJson());
 			}
 		}
-		resp.put("attempts", attempts);
+		resp.put("attempthistory", attempts); // "attempts" stays the finalized count, as state.json reports it
 		reply(inReq, resp);
+	}
+
+	/** 409 evaluation_not_available with the status block the learner needs to know when they may try again. */
+	private void notAvailable(WebPageRequest inReq, JSONObject inStatus)
+	{
+		JSONObject err = new JSONObject();
+		err.put("ok", Boolean.FALSE);
+		err.put("error", "evaluation_not_available");
+		err.put("status", inStatus.get("status"));
+		err.put("reason", inStatus.get("reason"));
+		err.put("nextallowedat", inStatus.get("nextallowedat"));
+		if (inReq.getResponse() != null)
+		{
+			inReq.getResponse().setStatus(409);
+		}
+		reply(inReq, err);
+		inReq.setCancelActions(true);
 	}
 
 	/**
@@ -403,26 +421,24 @@ public class TestULearningModule extends TestUBaseModule
 		engine.expireStale(learner, content);
 		Date now = new Date();
 		JSONObject status = LearningEngine.evaluationStatus(topic, learner, now);
-		if (!"in_progress".equals(status.get("status")) && !Boolean.TRUE.equals(status.get("canstart")))
+		boolean maycreate = Boolean.TRUE.equals(status.get("canstart"));
+		if (!"in_progress".equals(status.get("status")) && !maycreate)
 		{
-			JSONObject err = new JSONObject();
-			err.put("ok", Boolean.FALSE);
-			err.put("error", "evaluation_not_available");
-			err.put("status", status.get("status"));
-			err.put("reason", status.get("reason"));
-			err.put("nextallowedat", status.get("nextallowedat"));
-			if (inReq.getResponse() != null)
-			{
-				inReq.getResponse().setStatus(409);
-			}
-			reply(inReq, err);
-			inReq.setCancelActions(true);
+			notAvailable(inReq, status);
 			return;
 		}
-		LearningEngine.EvalAttempt a = engine.startEvaluation(topic, learner, content, now);
+		// The gate above is the search index's view; the engine decides from storage. Passing the verdict down keeps the two
+		// agreed: an in_progress attempt that turns out to be gone or closed can never become a new attempt here.
+		String[] reason = new String[1];
+		LearningEngine.EvalAttempt a = engine.startEvaluation(topic, learner, content, now, maycreate, reason);
 		if (a == null)
 		{
-			fail(inReq, 409, "pool_insufficient"); // the blueprint selects no question from this topic; nothing was created
+			if ("pool_insufficient".equals(reason[0]))
+			{
+				fail(inReq, 409, "pool_insufficient"); // the blueprint selects no question from this topic; nothing was created
+				return;
+			}
+			notAvailable(inReq, LearningEngine.evaluationStatus(topic, learner, new Date()));
 			return;
 		}
 		boolean isNew = true;
