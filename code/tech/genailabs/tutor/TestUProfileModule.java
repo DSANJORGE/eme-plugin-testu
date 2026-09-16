@@ -199,25 +199,25 @@ public class TestUProfileModule extends TestUBaseModule
 			fail(inReq, 404, "unknown_profile");
 			return;
 		}
-		Integer members = memberCounts(archive).get(id);
-		if (members != null && members > 0)
-		{
-			JSONObject err = new JSONObject();
-			err.put("ok", Boolean.FALSE);
-			err.put("error", "profile_in_use");
-			err.put("members", members);
-			if (inReq.getResponse() != null)
-			{
-				inReq.getResponse().setStatus(409);
-			}
-			reply(inReq, err);
-			inReq.setCancelActions(true);
-			return;
-		}
 		LearningEngine.Content content = new LearningEngine(archive).loadContent();
 		JSONObject before = profileJson(archive, content, p, new HashMap<>());
 		synchronized (LOCK)
 		{
+			Integer members = memberCounts(archive).get(id);
+			if (members != null && members > 0)
+			{
+				JSONObject err = new JSONObject();
+				err.put("ok", Boolean.FALSE);
+				err.put("error", "profile_in_use");
+				err.put("members", members);
+				if (inReq.getResponse() != null)
+				{
+					inReq.getResponse().setStatus(409);
+				}
+				reply(inReq, err);
+				inReq.setCancelActions(true);
+				return;
+			}
 			Searcher req = archive.getSearcher("topicrequirement");
 			for (Object o : req.query().exact("jobrole", id).search())
 			{
@@ -274,20 +274,23 @@ public class TestUProfileModule extends TestUBaseModule
 			all.add(primary);
 		}
 		all.addAll(extras);
-		for (String id : all)
-		{
-			if (archive.getCachedData("jobrole", id) == null)
-			{
-				fail(inReq, 400, "unknown_profile");
-				return;
-			}
-		}
 		JSONObject before = new JSONObject();
-		before.put("primaryjobrole", LearningEngine.primaryJobroleOf(u));
-		before.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(u)));
-		u.setValue("primaryjobrole", primary.isEmpty() ? null : primary);
-		u.setValue("jobrole", all.isEmpty() ? null : all);
-		users.saveData(u, inReq.getUser());
+		synchronized (LOCK)
+		{
+			for (String id : all)
+			{
+				if (archive.getCachedData("jobrole", id) == null)
+				{
+					fail(inReq, 400, "unknown_profile");
+					return;
+				}
+			}
+			before.put("primaryjobrole", LearningEngine.primaryJobroleOf(u));
+			before.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(u)));
+			u.setValue("primaryjobrole", primary.isEmpty() ? null : primary);
+			u.setValue("jobrole", all.isEmpty() ? null : all);
+			users.saveData(u, inReq.getUser());
+		}
 		JSONObject after = new JSONObject();
 		after.put("primaryjobrole", primary.isEmpty() ? null : primary);
 		after.put("jobroles", all);
