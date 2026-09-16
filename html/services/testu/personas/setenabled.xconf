@@ -1,0 +1,4 @@
+<page>
+  <path-action name="TestUUserModule.setEnabled"/>
+  <permission name="view"><userprofile property="personas_operate" equals="true"/></permission>
+</page>

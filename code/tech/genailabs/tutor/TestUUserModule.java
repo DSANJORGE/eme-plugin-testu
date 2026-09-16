@@ -388,6 +388,17 @@ public class TestUUserModule extends TestUBaseModule
 
 	public void disableUser(WebPageRequest inReq)
 	{
+		setEnabled(inReq, false);
+	}
+
+	/** setenabled.json: enabled=true|false. Re-enabling is the undo of Desactivar. */
+	public void setEnabled(WebPageRequest inReq)
+	{
+		setEnabled(inReq, !"false".equals(inReq.getRequestParameter("enabled")));
+	}
+
+	protected void setEnabled(WebPageRequest inReq, boolean enabled)
+	{
 		MediaArchive archive = getMediaArchive(inReq);
 		String userid = inReq.getRequestParameter("userid");
 		userid = (userid != null) ? userid.trim() : "";
@@ -406,29 +417,86 @@ public class TestUUserModule extends TestUBaseModule
 			fail(inReq, 404, "no user");
 			return;
 		}
-
-		Data userProfileData = (Data) archive.getSearcher("userprofile").searchById(userid);
-		String targetrole = (userProfileData != null) ? userProfileData.get("settingsgroup") : null;
-
-		UserProfile userProfile = inReq.getUserProfile();
-		if (("orgadmin".equals(targetrole) || "training".equals(targetrole)) && (userProfile == null || !userProfile.hasPermission("personas_manage")))
+		if (!canTouch(inReq, archive, userid))
 		{
-			fail(inReq, 403, "role requires personas_manage");
 			return;
 		}
 
-		u.setValue("enabled", "false");
+		boolean was = !"false".equals(String.valueOf(u.get("enabled")));
+		u.setValue("enabled", enabled ? "true" : "false");
 		users.saveData(u, currentUser);
 
 		JSONObject before = new JSONObject();
-		before.put("enabled", Boolean.TRUE);
+		before.put("enabled", Boolean.valueOf(was));
 		JSONObject after = new JSONObject();
-		after.put("enabled", Boolean.FALSE);
-		audit(inReq, archive, "user.disable", "user", userid, before, after);
+		after.put("enabled", Boolean.valueOf(enabled));
+		audit(inReq, archive, enabled ? "user.enable" : "user.disable", "user", userid, before, after);
 
 		JSONObject replyObj = new JSONObject();
 		replyObj.put("ok", Boolean.TRUE);
 		reply(inReq, replyObj);
+	}
+
+	/**
+	 * deleteuser.json: removes the account and its profile, so the person can no
+	 * longer sign in and leaves the roster. Learning records (sessions, mastery,
+	 * audit) are kept under the old id: they are the organization's evidence, and
+	 * the console offers a CSV of them before this is called.
+	 */
+	public void deleteUser(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		String userid = inReq.getRequestParameter("userid");
+		userid = (userid != null) ? userid.trim() : "";
+
+		User currentUser = inReq.getUser();
+		if (currentUser != null && userid.equals(currentUser.getId()))
+		{
+			fail(inReq, 400, "cannot delete yourself");
+			return;
+		}
+		User target = archive.getUserManager().getUser(userid);
+		if (target == null)
+		{
+			fail(inReq, 404, "no user");
+			return;
+		}
+		if (!canTouch(inReq, archive, userid))
+		{
+			return;
+		}
+
+		JSONObject before = new JSONObject();
+		before.put("email", target.getEmail());
+		before.put("firstName", target.getFirstName());
+		before.put("lastName", target.getLastName());
+		before.put("team", target.get("team"));
+		Data profile = (Data) archive.getSearcher("userprofile").searchById(userid);
+		if (profile != null)
+		{
+			before.put("role", profile.get("settingsgroup"));
+			archive.getSearcher("userprofile").delete(profile, currentUser);
+		}
+		archive.getUserManager().deleteUser(target);
+		audit(inReq, archive, "user.delete", "user", userid, before, null);
+
+		JSONObject replyObj = new JSONObject();
+		replyObj.put("ok", Boolean.TRUE);
+		reply(inReq, replyObj);
+	}
+
+	/** orgadmin/training targets need personas_manage; a 403 is written and false returned. */
+	protected boolean canTouch(WebPageRequest inReq, MediaArchive archive, String userid)
+	{
+		Data userProfileData = (Data) archive.getSearcher("userprofile").searchById(userid);
+		String targetrole = (userProfileData != null) ? userProfileData.get("settingsgroup") : null;
+		UserProfile userProfile = inReq.getUserProfile();
+		if (("orgadmin".equals(targetrole) || "training".equals(targetrole)) && (userProfile == null || !userProfile.hasPermission("personas_manage")))
+		{
+			fail(inReq, 403, "role requires personas_manage");
+			return false;
+		}
+		return true;
 	}
 
 	public void setRole(WebPageRequest inReq)
