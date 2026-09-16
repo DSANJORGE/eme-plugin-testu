@@ -79,6 +79,16 @@ public class TestUBaseModule extends BaseMediaModule
 		s.saveData(e, actor);
 	}
 
+	/** The user's stored record (fresh read by id), or null. Session User objects are cached at login, so profile assignments made afterwards are only visible here. */
+	public Data freshUser(MediaArchive inArchive, String inUserId)
+	{
+		if (inUserId == null || inUserId.isEmpty())
+		{
+			return null;
+		}
+		return (Data) inArchive.getSearcher("user").searchById(inUserId);
+	}
+
 	/**
 	 * Tells every signed-in device of [inUserId] that its [inType] data changed ({"type": "avatar"|"progress"|"notifications"}
 	 * plus [inExtra]) over EnterMedia's per-user websocket (org.entermediadb.websocket.usernotify.UserNotifyConnection).

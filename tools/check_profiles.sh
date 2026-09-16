@@ -88,6 +88,14 @@ def wipe_user_rows():
         delete_rows(t, es_ids(t, {"term": {"user": USER}}))
 
 
+def sweep_orphan_imports():
+    # ImportUsers.groovy without an id column saves under a generated id, orphaning pcheck-import*@testu.local
+    # under some other id; find them by email instead of assuming id == email.
+    for u in (call(admin, "GET", "/services/testu/personas/users.json")[1] or {}).get("users", []):
+        if u.get("email") in ("pcheck-import@testu.local", "pcheck-import2@testu.local"):
+            call(admin, "POST", "/services/testu/personas/deleteuser.json", form={"userid": u["id"]})
+
+
 def usersave(field, value):
     must(f"usersave {field}", call(admin, "POST", "/services/authentication/usersave.json", form={"username": USER, "field": field, field + "value": value}))
 
@@ -127,6 +135,7 @@ try:
     usersave("jobrole", "")
     usersave("primaryjobrole", "")
     wipe_user_rows()
+    sweep_orphan_imports()
     me = login(USER, PASSWORD)
     base = state()
     TOPICS = [t["id"] for t in base["topics"] if t["questions"] > 0]
@@ -259,7 +268,7 @@ try:
     ok("audit: jobprofile.save rows written", len(aud) >= 2, aud)
 
     # CSV import with profile columns (names and ids)
-    csv = f"email,firstName,lastName,primaryjobrole,jobrole\npcheck-import@testu.local,Imp,Ort,Pcheck Pilot,{P1}|Pcheck Safety\n"
+    csv = f"id,email,firstName,lastName,primaryjobrole,jobrole\npcheck-import@testu.local,pcheck-import@testu.local,Imp,Ort,Pcheck Pilot,{P1}|Pcheck Safety\n"
     boundary = "----pcheck" + secrets.token_hex(6)
     body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"users.csv\"\r\nContent-Type: text/csv\r\n\r\n{csv}\r\n--{boundary}--\r\n").encode()
     req = urllib.request.Request(B + PP + "importusers.json", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
@@ -273,7 +282,7 @@ try:
     ulist = must("users.json", call(admin, "GET", PP + "users.json"))["users"]
     iu = next((x for x in ulist if x["id"] == "pcheck-import@testu.local"), None)
     ok("import: names resolved to ids, primary set", iu is not None and iu["primaryjobrole"] == P1 and sorted(iu["jobroles"]) == sorted([P1, P2]), iu)
-    csv_bad = "email,firstName,lastName,primaryjobrole\npcheck-import2@testu.local,A,B,No Such Profile\n"
+    csv_bad = "id,email,firstName,lastName,primaryjobrole\npcheck-import2@testu.local,pcheck-import2@testu.local,A,B,No Such Profile\n"
     body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"users.csv\"\r\nContent-Type: text/csv\r\n\r\n{csv_bad}\r\n--{boundary}--\r\n").encode()
     req = urllib.request.Request(B + PP + "importusers.json", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
@@ -294,6 +303,7 @@ finally:
     delete_rows("jobrole", [P1, P2])
     wipe_user_rows()
     call(admin, "POST", "/services/testu/personas/disableuser.json", form={"userid": USER})
+    sweep_orphan_imports()
     call(admin, "POST", "/services/testu/personas/deleteuser.json", form={"userid": "pcheck-import@testu.local"})
     call(admin, "POST", "/services/testu/personas/deleteuser.json", form={"userid": "pcheck-import2@testu.local"})
     delete_rows("jobrole", ["pcheck-new"])

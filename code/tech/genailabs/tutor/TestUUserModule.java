@@ -103,8 +103,9 @@ public class TestUUserModule extends TestUBaseModule
 			userObj.put("email", u.get("email"));
 			userObj.put("firstName", u.get("firstName"));
 			userObj.put("lastName", u.get("lastName"));
-			userObj.put("primaryjobrole", LearningEngine.primaryJobroleOf(u));
-			userObj.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(u)));
+			Data urec = freshUser(archive, u.getId());
+			userObj.put("primaryjobrole", LearningEngine.primaryJobroleOf(urec));
+			userObj.put("jobroles", new ArrayList<>(LearningEngine.jobrolesOf(urec)));
 			String avatar = avatarVersion(avatarFile(archive, u.getId()));
 			userObj.put("avatarversion", avatar);
 			userObj.put("avatarurl", avatar == null ? null : "services/testu/personas/avatar.json?v=" + avatar);
