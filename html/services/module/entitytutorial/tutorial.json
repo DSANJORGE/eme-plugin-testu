@@ -26,7 +26,7 @@
         "id": #jesc($section.id),
         "title": "#text($section)",
         "contents": [
-          #set($componentcontents = $mediaarchive.query("componentcontent").exact("componentsectionid", $section.getId()).sort("ordering").search())
+          #set($componentcontents = $mediaarchive.query("componentcontent").exact("componentsectionid", $section.getId()).sort("ordering").hitsPerPage(1000).search())
           #foreach($componentcontent in $componentcontents)
             #if($foreach.count > 1),#end
             {
@@ -38,7 +38,11 @@
                 ,"assetthumbnail": "$siteroot$mediaarchive.asLinkToPreview($componentcontent.assetid, 'image200x200')"
                 ,"asseturl": "$siteroot$mediaarchive.asLinkToPreview($componentcontent.assetid, 'image3000x3000')"
               #end
-              #if($componentcontent.questionid)
+              #if($componentcontent.questionid && "$!componentcontent.componenttype.toLowerCase()" != "mcq")
+                ## Paragraph/asset/heading rows only carry their question's id (the app pairs an asset
+                ## with its MCQ by it); the full question rode on every row = ~60% of a 2 MB response.
+                ,"question": { "id": #jesc($componentcontent.questionid) }
+              #elseif($componentcontent.questionid)
                 #set($question = $mediaarchive.getData("entityquestion", $componentcontent.questionid))
                 ,"question": {
                   "id": #jesc($question.id),
