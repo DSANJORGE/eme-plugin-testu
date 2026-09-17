@@ -5,6 +5,8 @@ set -e
 cd "$(dirname "$0")"
 S="${1:-/Users/DSANJORGE/Code/eme-server-minsur}"
 rsync -a --exclude '.DS_Store' html/ "$S/webapp/site/mediadb/"
+# The web bundles are served one level up, at /site/admin/ and /site/learn/, not under the mediadb app.
+[ -d site ] && rsync -a --exclude '.DS_Store' site/ "$S/webapp/site/"
 rsync -a data/fields/ "$S/webapp/WEB-INF/data/site/catalog/fields/"
 [ -d data/lists ] && mkdir -p "$S/webapp/WEB-INF/data/site/catalog/lists" && rsync -a data/lists/ "$S/webapp/WEB-INF/data/site/catalog/lists/"
 mkdir -p "$S/webapp/WEB-INF/data/system/fields" && rsync -a data/system/fields/ "$S/webapp/WEB-INF/data/system/fields/"
