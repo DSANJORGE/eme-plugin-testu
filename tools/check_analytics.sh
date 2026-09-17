@@ -12,7 +12,9 @@ trap 'rc=$?; cleanup; [ "$rc" -eq 0 ] || [ -n "$SAID" ] || echo "FAIL (exit $rc)
 login() { curl -sf -c "$1" -o /dev/null "$B/services/authentication/login.json" -H 'Content-Type: application/json' -d "{\"id\":\"$2\",\"password\":\"$3\"}"; }
 login "$J" admin admin
 for e in overview activity report; do curl -sf -b "$J" "$B/services/testu/analytics/$e.json?from=2026-08-08&to=2026-09-06" > "/tmp/$e.json"; done
-curl -sf -b "$J" "$B/services/testu/analytics/person.json?user=diego" > /tmp/person.json
+# Any learner with rows: the seed's ids change (diego -> diego@testu.co), so take the first report row.
+U=$(python3 -c 'import json;print(json.load(open("/tmp/report.json"))["rows"][0]["user"])')
+curl -sf -b "$J" "$B/services/testu/analytics/person.json?user=$U" > /tmp/person.json
 python3 - <<'PY'
 import json
 o = json.load(open('/tmp/overview.json')); a = json.load(open('/tmp/activity.json')); p = json.load(open('/tmp/person.json'))
@@ -46,5 +48,5 @@ curl -sf -b "$J" -X POST "$B/services/authentication/usersave.json" -d username=
 login "$M" mgr.check@testu.local Checkpass123
 curl -sf -b "$M" "$B/services/testu/analytics/overview.json" | python3 -c "import sys,json;o=json.load(sys.stdin);ids={t['id'] for t in o['teams']};assert ids <= {'$TEAM'}, ids;print('ok: manager sees only', ids)"
 want=403; [ "$DIEGOTEAM" = "$TEAM" ] && want=200
-code=$(curl -s -o /dev/null -w '%{http_code}' -b "$M" "$B/services/testu/analytics/person.json?user=diego")
-[ "$code" = "$want" ] && echo "ok: manager person scope (diego team '$DIEGOTEAM' vs '$TEAM' -> $code)" || { echo "FAIL: manager person.json?user=diego -> $code, want $want"; SAID=1; exit 1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$M" "$B/services/testu/analytics/person.json?user=$U")
+[ "$code" = "$want" ] && echo "ok: manager person scope ($U team '$DIEGOTEAM' vs '$TEAM' -> $code)" || { echo "FAIL: manager person.json?user=$U -> $code, want $want"; SAID=1; exit 1; }
