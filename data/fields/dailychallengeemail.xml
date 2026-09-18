@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Daily Challenge email (catalog event dailychallengeemail, TestULearningModule.dailyChallengeEmail): one row per learner and
+     learner-local day it was sent, id = <user>_<yyyyMMdd of localdate>. Saved before the send, so its existence is the "already
+     sent today" check; status sent | failed (a failed send is not retried that day). localdate is the learner's own date in
+     `timezone` (user.timezone, else the org's testu_timezone). -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="localdate" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Local date</language><language id="es">Fecha local</language></name></property>
+  <property id="timezone" index="true" stored="true" editable="false"><name><language id="en">Timezone</language><language id="es">Zona horaria</language></name></property>
+  <property id="sentat" index="true" stored="true" editable="false" type="date"><name><language id="en">Sent at</language><language id="es">Enviado</language></name></property>
+  <property id="status" index="true" stored="true" editable="false" keyword="true" indextype="not_analyzed"><name><language id="en">Status</language><language id="es">Estado</language></name></property>
+</properties>

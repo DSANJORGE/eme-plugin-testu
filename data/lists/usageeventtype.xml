@@ -6,4 +6,7 @@
   <usageeventtype id="iris_rate"><name><![CDATA[Valora una respuesta del tutor]]></name></usageeventtype>
   <usageeventtype id="source_open"><name><![CDATA[Abre una fuente]]></name></usageeventtype>
   <usageeventtype id="session_leave"><name><![CDATA[Abandona una sesión]]></name></usageeventtype>
+  <usageeventtype id="dailydone_shown"><name><![CDATA[Ve "Desafío completado"]]></name></usageeventtype>
+  <usageeventtype id="dailydone_click"><name><![CDATA[Acepta la recomendación de "Desafío completado"]]></name></usageeventtype>
+  <usageeventtype id="dailydone_dismiss"><name><![CDATA[Descarta "Desafío completado"]]></name></usageeventtype>
 </usageeventtypes>
