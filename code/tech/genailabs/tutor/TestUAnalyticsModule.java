@@ -1428,7 +1428,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 
 		Data userProfileData = (Data) archive.getSearcher("userprofile").searchById(uid);
-		String role = (userProfileData != null && userProfileData.get("settingsgroup") != null) ? userProfileData.get("settingsgroup") : "users";
+		String role = (userProfileData != null && TestUUserModule.roleOf(userProfileData) != null) ? TestUUserModule.roleOf(userProfileData) : "users";
 
 		JSONObject userObj = new JSONObject();
 		userObj.put("id", uid);

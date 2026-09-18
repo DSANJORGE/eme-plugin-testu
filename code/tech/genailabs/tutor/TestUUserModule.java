@@ -33,6 +33,14 @@ public class TestUUserModule extends TestUBaseModule
 	private static final org.apache.commons.logging.Log log = org.apache.commons.logging.LogFactory.getLog(TestUUserModule.class);
 
 	private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+	/** userprofile role. eMe renamed settingsgroup to settingsrole (2026-09-17); profiles not yet migrated
+	 *  still carry only settingsgroup. ponytail: drop the fallback once no profile has settingsgroup. */
+	static String roleOf(Data inProfile)
+	{
+		String role = inProfile.get("settingsrole");
+		return role != null ? role : inProfile.get("settingsgroup");
+	}
+
 	private static final Set<String> VALID_ROLES = new HashSet<>(Arrays.asList("users", "manager", "training", "orgadmin"));
 
 	public void loadMe(WebPageRequest inReq)
@@ -114,9 +122,9 @@ public class TestUUserModule extends TestUBaseModule
 		}
 
 		String role = "manager";
-		if (p != null && p.get("settingsgroup") != null && !p.get("settingsgroup").isEmpty())
+		if (p != null && TestUUserModule.roleOf(p) != null && !TestUUserModule.roleOf(p).isEmpty())
 		{
-			role = p.get("settingsgroup");
+			role = TestUUserModule.roleOf(p);
 		}
 
 		JSONObject json = new JSONObject();
@@ -246,7 +254,7 @@ public class TestUUserModule extends TestUBaseModule
 			for (Object hit : profileHits)
 			{
 				Data p = (Data) hit;
-				roles.put(p.getId(), p.get("settingsgroup"));
+				roles.put(p.getId(), TestUUserModule.roleOf(p));
 			}
 		}
 
@@ -388,7 +396,7 @@ public class TestUUserModule extends TestUBaseModule
 		}
 		p.setId(email);
 		p.setValue("userid", email);
-		p.setValue("settingsgroup", role);
+		p.setValue("settingsrole", role);
 		profiles.saveData(p, inReq.getUser());
 
 		JSONObject after = new JSONObject();
@@ -557,7 +565,7 @@ public class TestUUserModule extends TestUBaseModule
 		Data profile = (Data) archive.getSearcher("userprofile").searchById(userid);
 		if (profile != null)
 		{
-			before.put("role", profile.get("settingsgroup"));
+			before.put("role", TestUUserModule.roleOf(profile));
 			archive.getSearcher("userprofile").delete(profile, currentUser);
 		}
 		archive.getUserManager().deleteUser(target);
@@ -572,7 +580,7 @@ public class TestUUserModule extends TestUBaseModule
 	protected boolean canTouch(WebPageRequest inReq, MediaArchive archive, String userid)
 	{
 		Data userProfileData = (Data) archive.getSearcher("userprofile").searchById(userid);
-		String targetrole = (userProfileData != null) ? userProfileData.get("settingsgroup") : null;
+		String targetrole = (userProfileData != null) ? TestUUserModule.roleOf(userProfileData) : null;
 		UserProfile userProfile = inReq.getUserProfile();
 		if (("orgadmin".equals(targetrole) || "training".equals(targetrole)) && (userProfile == null || !userProfile.hasPermission("personas_manage")))
 		{
@@ -608,10 +616,10 @@ public class TestUUserModule extends TestUBaseModule
 		{
 			p = profiles.createNewData();
 		}
-		String before = p.get("settingsgroup");
+		String before = TestUUserModule.roleOf(p);
 		p.setId(userid);
 		p.setValue("userid", userid);
-		p.setValue("settingsgroup", role);
+		p.setValue("settingsrole", role);
 		profiles.saveData(p, inReq.getUser());
 
 		// eMe keeps loaded profiles in CacheManager("userprofile"); without this the old role

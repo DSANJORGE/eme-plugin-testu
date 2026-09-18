@@ -156,7 +156,7 @@ public class TestUSocialModule extends TestUBaseModule
 			if (u == null)
 				continue;
 			Data p = (Data) profileSearcher.searchById(uid);
-			String role = (p != null && p.get("settingsgroup") != null) ? p.get("settingsgroup") : "users";
+			String role = (p != null && TestUUserModule.roleOf(p) != null) ? TestUUserModule.roleOf(p) : "users";
 			if (canSeeTopic(archive, topic, uid, role) || STAFF_ROLES.contains(role))
 			{
 				filteredMentions.add(uid);
@@ -422,7 +422,7 @@ public class TestUSocialModule extends TestUBaseModule
 			for (Object p : profiles)
 			{
 				Data pd = (Data) p;
-				roles.put(pd.getId(), pd.get("settingsgroup"));
+				roles.put(pd.getId(), TestUUserModule.roleOf(pd));
 			}
 		}
 
@@ -653,7 +653,7 @@ public class TestUSocialModule extends TestUBaseModule
 			if (TUTOR.equals(k))
 				return TUTOR;
 			Data p = (Data) profileSearcher.searchById(k);
-			return (p != null && p.get("settingsgroup") != null) ? p.get("settingsgroup") : "users";
+			return (p != null && TestUUserModule.roleOf(p) != null) ? TestUUserModule.roleOf(p) : "users";
 		});
 
 		String channel = inReq.getRequestParameter("channel");
@@ -1480,7 +1480,7 @@ public class TestUSocialModule extends TestUBaseModule
 
 	/** Who has a topic: the rule BaseSearchSecurity.attachStandardSecurity applies when the app lists entitytopic
 	 *  (TestULearningModule.visibleTopics / topics.json): securityenabled off = everyone; else owner, viewusers,
-	 *  viewroles (userprofile.settingsgroup) or viewgroups (user groups); administrator always. null topic = nobody. */
+	 *  viewroles (userprofile.settingsrole) or viewgroups (user groups); administrator always. null topic = nobody. */
 	static boolean canSeeTopic(MediaArchive archive, Data topic, String uid, String role)
 	{
 		if (topic == null)
