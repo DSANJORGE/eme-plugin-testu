@@ -12,6 +12,10 @@
   <property id="componentsection" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Section</language><language id="es">Subtema</language></name></property>
   <property id="entityquestion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Question</language><language id="es">Pregunta</language></name></property>
   <property id="rating" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Rating</language><language id="es">Valoración</language></name></property>
+  <!-- dailydone_*: the recommendation on the Daily Challenge "done" screen (topic, subtopic in componentsection, learn|improve);
+       source = how the app was reached: email (the reminder link) | app. -->
+  <property id="entitytopic" index="true" stored="true" editable="false" keyword="true" indextype="not_analyzed"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="mode" index="true" stored="true" editable="false" type="list"><name><language id="en">Mode</language><language id="es">Modo</language></name></property>
   <property id="source" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Source</language><language id="es">Fuente</language></name></property>
   <property id="platform" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Platform</language><language id="es">Plataforma</language></name></property>
   <property id="appversion" index="true" stored="true" editable="false" keyword="true"><name><language id="en">App version</language><language id="es">Versión</language></name></property>

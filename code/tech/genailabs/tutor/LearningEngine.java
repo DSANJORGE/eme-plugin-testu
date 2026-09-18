@@ -2399,6 +2399,7 @@ public class LearningEngine
 	public static class Session
 	{
 		public String id, user, mode, scopetype, scopeid, algorithmversion;
+		public String topic, source; // topic of the scope; source = what started it (dailydone = the Daily Challenge "done" screen), else null
 		public List<String> questions = new ArrayList<>(); // served order
 		public int policyversion;
 		public JSONObject inputs = new JSONObject();
@@ -2410,6 +2411,12 @@ public class LearningEngine
 	 * The Daily Challenge's session is its stored set (dailyChallenge puts that id).
 	 */
 	public JSONObject startSession(String inUserid, String inScopetype, String inScopeid, Topic inTopic, JSONObject inNext)
+	{
+		return startSession(inUserid, inScopetype, inScopeid, inTopic, inNext, null);
+	}
+
+	/** inSource: what started the session (dailydone), stored for the engagement funnel; null = the learner's own choice. */
+	public JSONObject startSession(String inUserid, String inScopetype, String inScopeid, Topic inTopic, JSONObject inNext, String inSource)
 	{
 		JSONArray items = (JSONArray) inNext.get("items");
 		if (items == null || items.isEmpty())
@@ -2423,6 +2430,8 @@ public class LearningEngine
 		s.mode = (String) inNext.get("mode");
 		s.scopetype = inScopetype;
 		s.scopeid = inScopeid;
+		s.topic = inTopic.id;
+		s.source = inSource;
 		s.algorithmversion = s.mode + "-v1";
 		for (Object o : items)
 		{
@@ -2450,6 +2459,8 @@ public class LearningEngine
 		d.setValue("mode", s.mode);
 		d.setValue("scopetype", s.scopetype);
 		d.setValue("scopeid", s.scopeid);
+		d.setValue("entitytopic", s.topic);
+		d.setValue("source", s.source);
 		JSONArray ids = new JSONArray();
 		ids.addAll(s.questions);
 		d.setValue("questionlist", ids.toJSONString());
@@ -2959,16 +2970,7 @@ public class LearningEngine
 			{
 				continue; // question removed or evaluation-reserved since the set was built
 			}
-			boolean done = false;
-			for (Attempt a : l.attempts)
-			{
-				// only a Daily Challenge answer completes a Daily Challenge item (a Learn answer to the same question does not)
-				if (q.id.equals(a.questionid) && "dailychallenge".equals(a.mode) && a.at != null && (created == null || !a.at.before(created)))
-				{
-					done = true;
-					break;
-				}
-			}
+			boolean done = challengeItemDone(q.id, l.attempts, created);
 			alldone &= done;
 			JSONObject it = item(q, String.valueOf(o.get("reason")), done);
 			String bucket = o.get("bucket") != null ? String.valueOf(o.get("bucket")) : "new".equals(o.get("reason")) ? "new" : "reinforcement";
@@ -2984,6 +2986,110 @@ public class LearningEngine
 		resp.put("localdate", day.toString());
 		resp.put("timezone", ((java.time.ZoneId) zone[0]).getId());
 		return resp;
+	}
+
+	/** Only a Daily Challenge answer given since the set was built completes its item (a Learn answer to the same question does not). */
+	public static boolean challengeItemDone(String inQuestionid, List<Attempt> inAttempts, Date inCreated)
+	{
+		for (Attempt a : inAttempts)
+		{
+			if (inQuestionid.equals(a.questionid) && "dailychallenge".equals(a.mode) && a.at != null && (inCreated == null || !a.at.before(inCreated)))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Today's (org-local) Daily Challenge exists, has items and every one is done. Never builds a set: no set yet = not done.
+	 * For background jobs (no request, so no topic visibility): a question removed since the set was built counts as open,
+	 * where dailyChallenge() skips it.
+	 */
+	public boolean dailyChallengeDoneToday(String inUserid)
+	{
+		Data set = (Data) fieldArchive.getSearcher("dailychallengeset").searchById(challengeId(inUserid, challengeDate(new Date(), (java.time.ZoneId) orgZone()[0])));
+		Object parsed = set == null ? null : JSONValue.parse(String.valueOf(set.get("questionlist")));
+		if (!(parsed instanceof List) || ((List) parsed).isEmpty())
+		{
+			return false;
+		}
+		Date created = DateStorageUtil.getStorageUtil().parseFromObject(set.getValue("datecreated"));
+		List<Attempt> attempts = loadLearner(inUserid, null).attempts;
+		for (Object o : (List) parsed)
+		{
+			if (!(o instanceof Map) || !challengeItemDone(String.valueOf(((Map) o).get("questionid")), attempts, created))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * What to practise after today's Daily Challenge: {mode learn|improve, topicid, topictitle, sectionid, sectiontitle}, or null
+	 * when nothing is open. Topic = the unlocked one furthest from its need: below the learner's required level first, then lowest
+	 * mastery, then learner order. In it: Learn at the first unanswered question in an unlocked subtopic (the learning sequence
+	 * comes first), else Improve on the weakest subtopic whose questions are all answered.
+	 * inRequiredOf: topic id -> required level (null = none). Pure.
+	 */
+	public static JSONObject recommend(Content c, Learner l, Map<String, JSONObject> inStates, Function<String, String> inRequiredOf)
+	{
+		List<Topic> topics = new ArrayList<>();
+		Map<String, int[]> key = new HashMap<>();
+		for (Topic t : c.topics.values())
+		{
+			if (t.locked || t.questions.isEmpty())
+			{
+				continue;
+			}
+			Mastery m = mastery(t.questions, l, t.competentmin, t.expertmin);
+			String req = inRequiredOf.apply(t.id);
+			boolean below = req != null && levelIndex(m.band) < levelIndex(req);
+			key.put(t.id, new int[] {below ? 0 : 1, m.percent});
+			topics.add(t);
+		}
+		topics.sort(Comparator.<Topic> comparingInt(t -> key.get(t.id)[0]).thenComparingInt(t -> key.get(t.id)[1])); // stable: learner order breaks ties
+		for (Topic t : topics)
+		{
+			for (Question q : t.questions)
+			{
+				if (!l.answeredInSequence.contains(q.id) && isUnlocked(inStates, q.sectionid))
+				{
+					return recommendation("learn", t, c.sections.get(q.sectionid));
+				}
+			}
+			Section weakest = null;
+			int weakestPercent = Integer.MAX_VALUE;
+			for (Section s : t.sections)
+			{
+				if (!s.questions.isEmpty() && l.answeredInSequence.containsAll(ids(s.questions)))
+				{
+					int p = percent(s.questions, l);
+					if (p < weakestPercent)
+					{
+						weakest = s;
+						weakestPercent = p;
+					}
+				}
+			}
+			if (weakest != null)
+			{
+				return recommendation("improve", t, weakest);
+			}
+		}
+		return null;
+	}
+
+	private static JSONObject recommendation(String inMode, Topic t, Section s)
+	{
+		JSONObject o = new JSONObject();
+		o.put("mode", inMode);
+		o.put("topicid", t.id);
+		o.put("topictitle", t.title);
+		o.put("sectionid", s == null ? null : s.id);
+		o.put("sectiontitle", s == null ? null : s.title);
+		return o;
 	}
 
 	/**

@@ -981,6 +981,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		long liveSince = System.currentTimeMillis() - LIVE_MS;
 
 		Set<String> live = new HashSet<>();
+		List<DoneRow> doneEvents = new ArrayList<>();
 		Map<String, Date> placeAt = new HashMap<>();
 		Map<String, String> placeOf = new HashMap<>();
 		Map<String, Set<String>> platforms = new HashMap<>();
@@ -998,6 +999,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			if (d.getTime() >= liveSince)
 				live.add(u);
 			String type = e.get("type");
+			if (type != null && type.startsWith("dailydone_"))
+			{
+				doneEvents.add(new DoneRow(u, type, e.get("source"), e.get("entitytopic"), d, false));
+				continue;
+			}
 			if ("iris_rate".equals(type))
 			{
 				if ("helpful".equals(e.get("rating")))
@@ -1025,6 +1031,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		Map<String, Integer> modeAnswers = new HashMap<>();
 		Map<String, Set<String>> modePeople = new HashMap<>();
+		Map<String, Set<String>> answeredIn = new HashMap<>(); // learningsession -> questions answered in it
 		HitTracker ah = archive.query("tutoranswer").after("datecreated", from).search();
 		ah.enableBulkOperations();
 		for (Object o : ah)
@@ -1036,6 +1043,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				continue;
 			if (d.getTime() >= liveSince)
 				live.add(u);
+			if (x.get("learningsession") != null)
+				answeredIn.computeIfAbsent(x.get("learningsession"), k -> new HashSet<>()).add(x.get("entityquestion"));
 			if (!topicFilter.isEmpty() && !perSection.containsKey(x.get("componentsection")))
 				continue;
 			String mode = x.get("mode") == null ? "other" : x.get("mode");
@@ -1125,6 +1134,23 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				flags++;
 		}
 
+		// Daily Challenge "done" screen funnel (not per topic, like social): the learn/improve sessions of the period, each complete
+		// when every question it served was answered in it.
+		List<DoneRow> doneSessions = new ArrayList<>();
+		HitTracker lh = archive.query("learningsession").after("datecreated", from).search();
+		lh.enableBulkOperations();
+		for (Object o : lh)
+		{
+			Data s = (Data) o;
+			Date d = dates.parseFromObject(s.getValue("datecreated"));
+			String mode = s.get("mode");
+			if (d == null || !d.before(to) || !users.contains(s.get("user")) || !("learn".equals(mode) || "improve".equals(mode)))
+				continue;
+			Object ql = org.json.simple.JSONValue.parse(String.valueOf(s.get("questionlist")));
+			boolean complete = ql instanceof List && !((List) ql).isEmpty() && answeredIn.getOrDefault(s.getId(), Set.of()).containsAll((List) ql);
+			doneSessions.add(new DoneRow(s.get("user"), mode, s.get("source"), s.get("entitytopic"), d, complete));
+		}
+
 		JSONObject social = new JSONObject();
 		social.put("comments", comments);
 		social.put("commenters", commenters.size());
@@ -1147,7 +1173,115 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("modes", modes);
 		resp.put("platforms", platformOut);
 		resp.put("social", social);
+		resp.put("dailydone", dailyDoneFunnel(doneEvents, doneSessions, (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]));
 		return resp;
+	}
+
+	/** A dailydone_* usage event (type, source = email|app, topic = the recommended one) or a learn/improve session (type = mode,
+	 *  source = dailydone when started from the recommendation, topic = its topic, complete). */
+	public static class DoneRow
+	{
+		public final String user, type, source, topic;
+		public final Date at;
+		public final boolean complete;
+
+		public DoneRow(String inUser, String inType, String inSource, String inTopic, Date inAt, boolean inComplete)
+		{
+			user = inUser;
+			type = inType;
+			source = inSource;
+			topic = inTopic;
+			at = inAt;
+			complete = inComplete;
+		}
+	}
+
+	/**
+	 * The Daily Challenge "done" screen funnel, per entry point (email = opened from the reminder link, app = any other open):
+	 * shown; then, before the learner's next showing and on the same org-local day, clicked (took the recommendation) or
+	 * dismissed. Clicked -> started = a session tagged dailydone begun after the click that day -> completed. Not clicked ->
+	 * ownstarted = a learn/improve session of their own begun after the showing that day, split into ownsame (the recommended
+	 * topic) and owndifferent. Pure.
+	 */
+	public static JSONObject dailyDoneFunnel(List<DoneRow> inEvents, List<DoneRow> inSessions, java.time.ZoneId inZone)
+	{
+		String[] keys = {"shown", "clicked", "dismissed", "started", "completed", "ownstarted", "ownsame", "owndifferent"};
+		Map<String, Map<String, Integer>> counts = new LinkedHashMap<>();
+		for (String entry : new String[] {"email", "app"})
+		{
+			Map<String, Integer> c = new LinkedHashMap<>();
+			for (String k : keys)
+				c.put(k, 0);
+			counts.put(entry, c);
+		}
+		Map<String, List<DoneRow>> events = byUser(inEvents), sessions = byUser(inSessions);
+		for (Map.Entry<String, List<DoneRow>> ue : events.entrySet())
+		{
+			List<DoneRow> ev = ue.getValue();
+			List<DoneRow> ss = sessions.getOrDefault(ue.getKey(), List.of());
+			for (int i = 0; i < ev.size(); i++)
+			{
+				DoneRow shown = ev.get(i);
+				if (!"dailydone_shown".equals(shown.type))
+					continue;
+				java.time.LocalDate day = shown.at.toInstant().atZone(inZone).toLocalDate();
+				Map<String, Integer> c = counts.get("email".equals(shown.source) ? "email" : "app");
+				c.merge("shown", 1, Integer::sum);
+				DoneRow act = null;
+				for (int j = i + 1; j < ev.size() && !"dailydone_shown".equals(ev.get(j).type); j++)
+				{
+					if (ev.get(j).at.toInstant().atZone(inZone).toLocalDate().equals(day))
+					{
+						act = ev.get(j);
+						break;
+					}
+				}
+				boolean clicked = act != null && "dailydone_click".equals(act.type);
+				if (act != null)
+					c.merge(clicked ? "clicked" : "dismissed", 1, Integer::sum);
+				Date after = clicked ? act.at : shown.at;
+				DoneRow s = null;
+				for (DoneRow x : ss)
+				{
+					if (!x.at.before(after) && x.at.toInstant().atZone(inZone).toLocalDate().equals(day) && clicked == "dailydone".equals(x.source))
+					{
+						s = x;
+						break;
+					}
+				}
+				if (s == null)
+					continue;
+				if (clicked)
+				{
+					c.merge("started", 1, Integer::sum);
+					if (s.complete)
+						c.merge("completed", 1, Integer::sum);
+				}
+				else
+				{
+					c.merge("ownstarted", 1, Integer::sum);
+					c.merge(shown.topic != null && shown.topic.equals(s.topic) ? "ownsame" : "owndifferent", 1, Integer::sum);
+				}
+			}
+		}
+		JSONObject out = new JSONObject();
+		for (Map.Entry<String, Map<String, Integer>> e : counts.entrySet())
+		{
+			JSONObject o = new JSONObject();
+			o.putAll(e.getValue());
+			out.put(e.getKey(), o);
+		}
+		return out;
+	}
+
+	private static Map<String, List<DoneRow>> byUser(List<DoneRow> inRows)
+	{
+		Map<String, List<DoneRow>> m = new HashMap<>();
+		for (DoneRow r : inRows)
+			m.computeIfAbsent(r.user, k -> new ArrayList<>()).add(r);
+		for (List<DoneRow> l : m.values())
+			l.sort(Comparator.comparing(r -> r.at));
+		return m;
 	}
 
 	public void loadActivity(WebPageRequest inReq)

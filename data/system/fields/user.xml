@@ -17,4 +17,7 @@
        (personas/setinternal.json), by the users CSV `internal` column, or on creation when the email domain is in the
        catalog setting testu_internaldomains (comma-separated). -->
   <property id="internal" index="true" stored="true" editable="true" type="boolean" datatype="boolean">Internal (support) account</property>
+  <!-- Daily Challenge email: the learner's IANA zone (e.g. America/Lima), so the 09:00 email is their 09:00. Empty = the org's
+       catalog setting testu_timezone. Set by hand or by an admin; nothing fills it automatically yet. -->
+  <property id="timezone" index="true" stored="true" editable="true" keyword="true" indextype="not_analyzed">Timezone</property>
 </properties>
