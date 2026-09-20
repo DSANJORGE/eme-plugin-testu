@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ponytail: generic CRUD via mediadb/services/module/default fallback; admin/eMe UI only, no app-facing endpoint here.
+     Same pattern as the sibling module folders. This is how the tutor's voice provider gets configured (aiservertype
+     "speak", see TestUVoiceModule): eMe has no settings view for aiserver.
+     Administrators only, with no userprofile alternative: these records hold provider API keys, so a managing profile
+     that may edit personas has no business reading them. -->
+<page>
+  <property name="fallbackdirectory">/mediadb/services/module/default</property>
+  <property name="module">aiserver</property>
+  <property name="searchtype">aiserver</property>
+  <permission name="view">
+    <group id="administrators"/>
+  </permission>
+</page>

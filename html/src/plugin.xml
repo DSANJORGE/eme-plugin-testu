@@ -40,4 +40,9 @@
 			<ref bean="moduleManager" />
 		</property>
 	</bean>
+	<bean id="TestUVoiceModule" class="tech.genailabs.tutor.TestUVoiceModule" scope="prototype">
+		<property name="moduleManager">
+			<ref bean="moduleManager" />
+		</property>
+	</bean>
 </beans>
