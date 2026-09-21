@@ -105,13 +105,16 @@ long budgetEnd = System.currentTimeMillis() + 60_000L
 List pending = qsave.findAll { !it.getDate("classifiedat") }
 int classified = 0
 try {
-  def llm = archive.getLlmConnection("thinking")
+  // classifytext -> llamat (unmetered): batches bursting through groq's free-tier 8K tokens/min starved tutor replies.
+  def llm = archive.getLlmConnection("classifytext")
   while (pending && System.currentTimeMillis() < budgetEnd) {
     List batch = pending.take(20); pending = pending.drop(20)
     def ctx = new org.entermediadb.ai.llm.BaseAgentContext()
     ctx.putContextValue("questions", groovy.json.JsonOutput.toJson(batch.collect { [id: it.getId(), section: sections[it.get("componentsection")]?.name ?: "", text: it.get("query")] }))
     def res = llm.callStructure(ctx, "analytics_classify_questions")
-    def items = res.getMessageStructured()?.get("items")
+    // getResponsePayload, not getMessageStructured: no LlmResponse has ever had the latter, so this
+    // line threw on every run. It was invisible behind the 400 the template caused (Diego, 2026-09-20).
+    def items = res.getResponsePayload()?.get("items")
     List csave = []
     for (Map it in (items ?: [])) {
       Data row = batch.find { b -> b.getId() == it.id }

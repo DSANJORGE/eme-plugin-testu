@@ -15,7 +15,6 @@
 #end
 {
 	"model": "${model}",
-	"id_slot": 1,
 	"messages": [
 		{
 			"role": "system",
