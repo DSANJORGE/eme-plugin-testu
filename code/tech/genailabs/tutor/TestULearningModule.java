@@ -598,7 +598,11 @@ public class TestULearningModule extends TestUBaseModule
 		JSONArray topics = new JSONArray();
 		for (LearningEngine.Topic t : inConfig.content.topics.values())
 		{
-			topics.add(inTopicJson.apply(t));
+			JSONObject json = inTopicJson.apply(t);
+			if (json != null) // null = the endpoint hides this topic from the caller
+			{
+				topics.add(json);
+			}
 		}
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -787,7 +791,12 @@ public class TestULearningModule extends TestUBaseModule
 		java.util.Map<String, int[]> stats = attemptStats(config.archive);
 		if (config.topic == null)
 		{
-			replyTopics(inReq, config, t -> blueprintJson(t, stats));
+			replyTopics(inReq, config, t -> canManageEvaluations(inReq, config.archive, t.id) ? blueprintJson(t, stats) : null);
+			return;
+		}
+		if (!canManageEvaluations(inReq, config.archive, config.topic.id))
+		{
+			fail(inReq, 403, "forbidden");
 			return;
 		}
 		// Unpacked so the table-specific code below reads as it did before the skeleton was shared.
@@ -1081,6 +1090,13 @@ public class TestULearningModule extends TestUBaseModule
 	{
 		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
 		return profile != null && profile.hasPermission("training_manage");
+	}
+
+	/** Per-topic entity permission (permissionsentity/evaluations.xml); same check as $permissions.canEntity($module,$entity,"manageevaluations"). */
+	private static boolean canManageEvaluations(WebPageRequest inReq, MediaArchive inArchive, String inTopicid)
+	{
+		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
+		return profile != null && profile.getPermissions().canEntity(inArchive.getCachedData("module", "entitytopic"), inArchive.getCachedData("entitytopic", inTopicid), "manageevaluations");
 	}
 
 	/** Shared by answer and exposure: mode + scope + claimed hierarchy checked against the learner's visible content. */
