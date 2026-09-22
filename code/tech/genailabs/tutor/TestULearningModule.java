@@ -75,6 +75,11 @@ public class TestULearningModule extends TestUBaseModule
 		if ("dailychallenge".equals(mode))
 		{
 			JSONObject dc = engine.dailyChallenge(content, learner);
+			if (Boolean.TRUE.equals(dc.get("complete")) && ((Number) dc.get("total")).intValue() > 0)
+			{
+				// Done for today: what the learner could practise next (the app's "already completed" screen offers it).
+				dc.put("recommended", LearningEngine.recommend(content, learner, engine.subtopicStates(content, learner), t -> engine.requiredLevel(t, learner.jobroles)));
+			}
 			if (!contentUnavailable(inReq, engine, user, content, dc))
 			{
 				reply(inReq, dc);
@@ -115,6 +120,8 @@ public class TestULearningModule extends TestUBaseModule
 			return;
 		}
 		String scopetype = section == null ? "topic" : "subtopic";
+		// Started from the Daily Challenge "done" screen's recommendation: tagged for the engagement funnel. Anything else = null.
+		String source = "dailydone".equals(param(inReq, "source")) ? "dailydone" : null;
 		String scopeid = section == null ? topic.id : section.id;
 		if ("learn".equals(mode))
 		{
@@ -138,7 +145,7 @@ public class TestULearningModule extends TestUBaseModule
 			}
 			if (!contentUnavailable(inReq, engine, user, content, learn))
 			{
-				reply(inReq, engine.startSession(user.getId(), scopetype, scopeid, topic, learn));
+				reply(inReq, engine.startSession(user.getId(), scopetype, scopeid, topic, learn, source));
 			}
 			return;
 		}
@@ -151,7 +158,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		if (!contentUnavailable(inReq, engine, user, content, improve))
 		{
-			reply(inReq, engine.startSession(user.getId(), scopetype, scopeid, topic, improve));
+			reply(inReq, engine.startSession(user.getId(), scopetype, scopeid, topic, improve, source));
 		}
 	}
 
@@ -1371,6 +1378,237 @@ public class TestULearningModule extends TestUBaseModule
 			sent++;
 		}
 		return sent;
+	}
+
+	/** Local hour of the Daily Challenge email. */
+	public static final int EMAIL_HOUR = 9;
+
+	/**
+	 * Periodic (catalog event dailychallengeemail, every 15 min): the Daily Challenge email, Monday to Friday in the 09:00 hour of each
+	 * learner's own zone (user.timezone, else the org's testu_timezone), with a one-click sign-in link that opens today's challenge.
+	 * Off unless catalog setting testu_dailychallengeemail is "true" (everyone) or a comma-separated list of emails (only those).
+	 * Skips disabled, internal (support) and email-less accounts, and learners whose challenge for today is already done.
+	 * Once per learner and local day: the dailychallengeemail row (id <user>_<yyyyMMdd>) is saved before the send, so a crash or a
+	 * failed send (status failed) is never retried into a second email. Returns the number sent.
+	 */
+	public int dailyChallengeEmail(MediaArchive archive)
+	{
+		String on = archive.getCatalogSettingValue("testu_dailychallengeemail");
+		if (on == null || on.trim().isEmpty() || "false".equals(on.trim()))
+		{
+			return 0;
+		}
+		// ponytail: an email allowlist doubles as the pilot switch; a per-team or per-profile toggle when an org needs one.
+		Set<String> only = null;
+		if (!"true".equals(on.trim()))
+		{
+			only = new java.util.HashSet<>();
+			for (String e : on.split(","))
+			{
+				only.add(e.trim().toLowerCase());
+			}
+		}
+		String learnurl = learnUrl(archive);
+		if (learnurl == null)
+		{
+			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).error("testu dailychallengeemail: set catalog setting testu_learnurl (or siteroot); nothing sent");
+			return 0;
+		}
+		LearningEngine engine = new LearningEngine(archive);
+		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.Instant now = java.time.Instant.now();
+		Searcher sent = archive.getSearcher("dailychallengeemail");
+		HitTracker users = archive.query("user").all().search();
+		users.enableBulkOperations();
+		int n = 0;
+		for (Object hit : users)
+		{
+			Data u = (Data) hit;
+			String email = u.get("email");
+			// "admin" is the platform's own account, not a learner.
+			if (email == null || email.trim().isEmpty() || "admin".equals(u.getId()) || !TestUAnalyticsModule.countsAsPerson(u.getId(), u)
+					|| (only != null && !only.contains(email.trim().toLowerCase())))
+			{
+				continue;
+			}
+			java.time.ZoneId zone = zoneOf(u.get("timezone"), orgzone);
+			String key = emailDueKey(u.getId(), zone, now);
+			if (key == null || sent.searchById(key) != null || engine.dailyChallengeDoneToday(u.getId()))
+			{
+				continue;
+			}
+			Data row = sent.createNewData();
+			row.setId(key);
+			row.setValue("user", u.getId());
+			row.setValue("localdate", now.atZone(zone).toLocalDate().toString());
+			row.setValue("timezone", zone.getId());
+			row.setValue("sentat", new Date());
+			row.setValue("status", "sent");
+			sent.saveData(row, null);
+			try
+			{
+				sendDailyChallengeEmail(archive, u, learnurl);
+				n++;
+			}
+			catch (Exception e)
+			{
+				org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).error("testu dailychallengeemail " + u.getId(), e);
+				row.setValue("status", "failed");
+				sent.saveData(row, null);
+			}
+		}
+		return n;
+	}
+
+	/** inNow in inZone is a Monday-Friday EMAIL_HOUR: the send key <user>_<yyyyMMdd of that local day>; otherwise null. Pure. */
+	public static String emailDueKey(String inUserid, java.time.ZoneId inZone, java.time.Instant inNow)
+	{
+		java.time.ZonedDateTime t = inNow.atZone(inZone);
+		java.time.DayOfWeek d = t.getDayOfWeek();
+		if (t.getHour() != EMAIL_HOUR || d == java.time.DayOfWeek.SATURDAY || d == java.time.DayOfWeek.SUNDAY)
+		{
+			return null;
+		}
+		return inUserid + "_" + t.toLocalDate().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+	}
+
+	/** The learner's IANA zone (user.timezone); missing or invalid = inOrg. */
+	public static java.time.ZoneId zoneOf(String inUserZone, java.time.ZoneId inOrg)
+	{
+		try
+		{
+			return inUserZone == null || inUserZone.trim().isEmpty() ? inOrg : java.time.ZoneId.of(inUserZone.trim());
+		}
+		catch (Exception e)
+		{
+			return inOrg;
+		}
+	}
+
+	/** The learner web app's address, with a trailing slash: catalog setting testu_learnurl, else siteroot + /site/learn/; null when neither. */
+	static String learnUrl(MediaArchive archive)
+	{
+		String url = archive.getCatalogSettingValue("testu_learnurl");
+		if (url == null || url.trim().isEmpty())
+		{
+			String root = archive.getCatalogSettingValue("siteroot");
+			if (root == null || root.trim().isEmpty())
+			{
+				return null;
+			}
+			url = root.trim().replaceAll("/+$", "") + "/site/learn/";
+		}
+		url = url.trim();
+		return url.endsWith("/") ? url : url + "/";
+	}
+
+	/** Mints u's sign-in link and mails the Daily Challenge email to u; returns {subject, html, text, link}. */
+	protected String[] sendDailyChallengeEmail(MediaArchive archive, Data u, String inLearnurl) throws Exception
+	{
+		String[] mail = dailyChallengeMail(archive, u, inLearnurl);
+		org.entermediadb.email.PostMail pm = (org.entermediadb.email.PostMail) getModuleManager().getBean("postMail");
+		pm.postMail(new String[] {u.get("email")}, mail[0], mail[1], mail[2], archive.getCatalogSettingValue("system_from_email"), mail[4]);
+		return mail;
+	}
+
+	/** {subject, html, text, link, fromname} for u, with a freshly minted sign-in link (which replaces u's previous one). */
+	protected String[] dailyChallengeMail(MediaArchive archive, Data u, String inLearnurl)
+	{
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		String tutor = persona == null || persona.getName() == null ? "TestU" : persona.getName();
+		String lang = u.get("language");
+		if (lang == null || lang.isEmpty())
+		{
+			lang = persona == null ? null : persona.get("tutorlanguage");
+		}
+		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
+		String link = inLearnurl + "#/desafio?login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
+		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, link);
+		return new String[] {m[0], m[1], m[2], link, tutor};
+	}
+
+	/** "RENZO ALDAIR" -> "Renzo"; null/blank -> "". */
+	public static String givenName(String inFirstName)
+	{
+		String f = inFirstName == null ? "" : inFirstName.trim();
+		if (f.isEmpty())
+		{
+			return "";
+		}
+		f = f.split("\\s+")[0];
+		return f.substring(0, 1).toUpperCase() + f.substring(1).toLowerCase();
+	}
+
+	/**
+	 * {subject, html, text} of the Daily Challenge email (copy: docs/copy/desafio-diario-minsur.es.md; the {minutos} clause is left
+	 * out, nothing estimates it before the day's set is built). Pure.
+	 */
+	public static String[] emailContent(boolean inEnglish, String inName, String inTutor, String inLink)
+	{
+		boolean named = inName != null && !inName.isEmpty();
+		String subject = inEnglish ? (named ? inName + ", your" : "Your") + " Daily Challenge is waiting"
+				: (named ? inName + ", tu" : "Tu") + " Desafío Diario te espera";
+		String pre = inEnglish ? "It only takes a few minutes. " + inTutor + " has it ready." : "Solo te toma unos minutos. " + inTutor + " ya lo tiene listo.";
+		String hello = inEnglish ? (named ? "Hi " + inName + "," : "Hi,") : (named ? "Hola " + inName + ":" : "Hola:");
+		String p1 = inEnglish ? "Today’s Daily Challenge is ready. It’s just a few questions." : "Tu Desafío Diario de hoy ya está listo. Son pocas preguntas.";
+		String p2 = inEnglish ? "Every day you complete it, you reinforce what you already know and " + inTutor + " learns which topics you need to practise most."
+				: "Cada día que lo completas, refuerzas lo que ya sabes y " + inTutor + " aprende qué temas necesitas practicar más.";
+		String button = inEnglish ? "Start my challenge" : "Empezar mi desafío";
+		String bye = inEnglish ? "See you in the app!" : "¡Nos vemos en la app!";
+		String foot = inEnglish ? "You’re receiving this email because you have a TestU account. If the button doesn’t work, open the app and sign in with your email."
+				: "Recibes este correo porque tienes una cuenta en TestU. Si el botón no funciona, abre la app e ingresa con tu correo.";
+		String text = hello + "\n\n" + p1 + "\n\n" + p2 + "\n\n" + button + ": " + inLink + "\n\n" + bye + "\n" + inTutor + "\n\n" + foot + "\n";
+		String p = "<p style=\"margin:0 0 16px;font-size:16px;line-height:1.5;color:#1a1a1a\">";
+		String html = "<!DOCTYPE html><html><body style=\"margin:0;padding:0;background:#f4f4f5\">"
+				+ "<span style=\"display:none;max-height:0;overflow:hidden;opacity:0\">" + esc(pre) + "</span>"
+				+ "<div style=\"max-width:520px;margin:0 auto;padding:32px 24px;font-family:Helvetica,Arial,sans-serif;background:#ffffff\">"
+				+ p + esc(hello) + "</p>" + p + esc(p1) + "</p>" + p + esc(p2) + "</p>"
+				+ "<p style=\"margin:28px 0;text-align:center\"><a href=\"" + esc(inLink) + "\" style=\"display:inline-block;padding:14px 28px;border-radius:8px;"
+				+ "background:#18181b;color:#ffffff;font-size:16px;font-weight:bold;text-decoration:none\">" + esc(button) + "</a></p>"
+				+ p + esc(bye) + "<br>" + esc(inTutor) + "</p>"
+				+ "<p style=\"margin:32px 0 0;font-size:12px;line-height:1.5;color:#71717a\">" + esc(foot) + "</p>"
+				+ "</div></body></html>";
+		return new String[] {subject, html, text};
+	}
+
+	private static String esc(String s)
+	{
+		return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+	}
+
+	/**
+	 * services/testu/learn/dailychallengeemail.json -- the signed-in learner's own Daily Challenge email, for QA: GET = preview
+	 * {ok, to, subject, text, html, link, due} with a freshly minted link (replaces any link emailed earlier); POST send=true also
+	 * mails it to that learner. Never another user's: a link is a sign-in.
+	 */
+	public void dailyChallengeEmailPreview(WebPageRequest inReq) throws Exception
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		String learnurl = learnUrl(archive);
+		if (learnurl == null)
+		{
+			fail(inReq, 409, "learnurl_not_configured");
+			return;
+		}
+		Data u = freshUser(archive, user);
+		boolean send = "true".equals(inReq.getRequestParameter("send")) && inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
+		String[] mail = send ? sendDailyChallengeEmail(archive, u, learnurl) : dailyChallengeMail(archive, u, learnurl);
+		JSONObject out = new JSONObject();
+		out.put("ok", Boolean.TRUE);
+		out.put("to", u.get("email"));
+		out.put("subject", mail[0]);
+		out.put("html", mail[1]);
+		out.put("text", mail[2]);
+		out.put("link", mail[3]);
+		out.put("sent", send);
+		out.put("due", emailDueKey(u.getId(), zoneOf(u.get("timezone"), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now()));
+		reply(inReq, out);
 	}
 
 	private static JSONObject onboardingJson(Data d)
