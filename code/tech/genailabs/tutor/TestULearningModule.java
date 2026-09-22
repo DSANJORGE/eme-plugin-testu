@@ -1880,6 +1880,127 @@ public class TestULearningModule extends TestUBaseModule
 		return new String[] {subject, html};
 	}
 
+	/**
+	 * /.well-known/apple-app-site-association (webapp/.well-known/*.xconf): lets the iOS app (Universal Links) open the email's
+	 * https link, scoped to the learn app's path. App ids = catalog setting testu_ios_appids (comma-separated TEAMID.bundleid),
+	 * default the app-genailabs Runner's VJ8RCF92K4.world.eme.genailabs. application/json, no redirect.
+	 */
+	public void appleAppSiteAssociation(WebPageRequest inReq) throws Exception
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		String ids = archive.getCatalogSettingValue("testu_ios_appids");
+		writeWellKnown(inReq, appleAppSiteAssociation(ids == null || ids.trim().isEmpty() ? "VJ8RCF92K4.world.eme.genailabs" : ids, learnPath(archive)).toJSONString());
+	}
+
+	/**
+	 * /.well-known/assetlinks.json: Android App Links verification for the same link. Package = catalog setting
+	 * testu_android_package (default world.eme.genailabs, the app-genailabs applicationId); signing certificates = catalog setting
+	 * testu_android_sha256 (comma-separated SHA-256 fingerprints, AA:BB:...). No fingerprint = [] (valid, verifies nothing).
+	 */
+	public void assetLinks(WebPageRequest inReq) throws Exception
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		String pkg = archive.getCatalogSettingValue("testu_android_package");
+		writeWellKnown(inReq, assetLinks(pkg == null || pkg.trim().isEmpty() ? "world.eme.genailabs" : pkg.trim(), archive.getCatalogSettingValue("testu_android_sha256")).toJSONString());
+	}
+
+	/** Path of the learn app ("/site/learn/"), from testu_learnurl / siteroot; that default when neither is set. */
+	static String learnPath(MediaArchive archive)
+	{
+		String url = learnUrl(archive);
+		try
+		{
+			String p = url == null ? null : java.net.URI.create(url).getPath();
+			return p == null || p.isEmpty() ? "/site/learn/" : p.endsWith("/") ? p : p + "/";
+		}
+		catch (Exception e)
+		{
+			return "/site/learn/";
+		}
+	}
+
+	/** {"applinks": {"details": [{appIDs, components [{"/": <path>*}], paths}]}}: every link under inPath opens the app. Pure. */
+	public static JSONObject appleAppSiteAssociation(String inAppIds, String inPath)
+	{
+		JSONArray ids = new JSONArray();
+		for (String id : inAppIds.split(","))
+		{
+			if (!id.trim().isEmpty())
+			{
+				ids.add(id.trim());
+			}
+		}
+		JSONObject component = new JSONObject();
+		component.put("/", inPath + "*");
+		component.put("comment", "TestU Learn: the Daily Challenge email link");
+		JSONArray components = new JSONArray();
+		components.add(component);
+		JSONArray paths = new JSONArray(); // iOS 12 and older read "paths"
+		paths.add(inPath + "*");
+		JSONObject detail = new JSONObject();
+		detail.put("appIDs", ids);
+		detail.put("components", components);
+		detail.put("paths", paths);
+		if (ids.size() == 1)
+		{
+			detail.put("appID", ids.get(0)); // with "paths", the pre-iOS 13 shape
+		}
+		JSONArray details = new JSONArray();
+		details.add(detail);
+		JSONObject applinks = new JSONObject();
+		applinks.put("apps", new JSONArray());
+		applinks.put("details", details);
+		JSONObject o = new JSONObject();
+		o.put("applinks", applinks);
+		return o;
+	}
+
+	/** [{relation [handle_all_urls], target {android_app, inPackage, fingerprints}}]; [] without a fingerprint. Pure. */
+	public static JSONArray assetLinks(String inPackage, String inSha256s)
+	{
+		JSONArray prints = new JSONArray();
+		for (String f : (inSha256s == null ? "" : inSha256s).split(","))
+		{
+			if (!f.trim().isEmpty())
+			{
+				prints.add(f.trim().toUpperCase());
+			}
+		}
+		JSONArray out = new JSONArray();
+		if (prints.isEmpty())
+		{
+			return out;
+		}
+		JSONArray relation = new JSONArray();
+		relation.add("delegate_permission/common.handle_all_urls");
+		JSONObject target = new JSONObject();
+		target.put("namespace", "android_app");
+		target.put("package_name", inPackage);
+		target.put("sha256_cert_fingerprints", prints);
+		JSONObject statement = new JSONObject();
+		statement.put("relation", relation);
+		statement.put("target", target);
+		out.add(statement);
+		return out;
+	}
+
+	/** Content type of both .well-known files. */
+	public static final String WELL_KNOWN_TYPE = "application/json";
+
+	private void writeWellKnown(WebPageRequest inReq, String inJson) throws Exception
+	{
+		if (inReq.getResponse() != null)
+		{
+			inReq.getResponse().setContentType(WELL_KNOWN_TYPE);
+			inReq.getResponse().setCharacterEncoding("UTF-8");
+			inReq.getResponse().setHeader("Cache-Control", "max-age=3600");
+		}
+		java.io.Writer w = inReq.getWriter();
+		w.write(inJson);
+		w.flush();
+		inReq.setHasRedirected(true); // the JSON is the whole response: no generator runs after it
+	}
+
 	/** "RENZO ALDAIR" -> "Renzo"; null/blank -> "". */
 	public static String givenName(String inFirstName)
 	{

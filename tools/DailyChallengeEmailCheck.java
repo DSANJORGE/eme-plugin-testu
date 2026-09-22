@@ -156,6 +156,23 @@ public class DailyChallengeEmailCheck
 			&& "Ayer acertaste 4 de 5 en tu Desafío. ¡Vamos por otro!".equals(TestULearningModule.recentLine(false, thu, new int[] {1, 4, 5})), "");
 		ok("given name", "Renzo".equals(TestULearningModule.givenName("RENZO ALDAIR")) && "".equals(TestULearningModule.givenName(null)), TestULearningModule.givenName("RENZO ALDAIR"));
 
+		// ---- App Links / Universal Links: the two .well-known files
+		ok(".well-known content type", "application/json".equals(TestULearningModule.WELL_KNOWN_TYPE), "");
+		JSONObject aasa = TestULearningModule.appleAppSiteAssociation("VJ8RCF92K4.world.eme.genailabs", "/site/learn/");
+		Object parsed = org.json.simple.JSONValue.parse(aasa.toJSONString());
+		JSONObject detail = (JSONObject) ((java.util.List) ((JSONObject) ((JSONObject) parsed).get("applinks")).get("details")).get(0);
+		ok("AASA: applinks.details[0].appIDs", List.of("VJ8RCF92K4.world.eme.genailabs").equals(detail.get("appIDs")), aasa);
+		ok("AASA: scoped to the learn path", "/site/learn/*".equals(((JSONObject) ((java.util.List) detail.get("components")).get(0)).get("/"))
+			&& List.of("/site/learn/*").equals(detail.get("paths")), aasa);
+		ok("AASA: several app ids", ((java.util.List) ((JSONObject) ((java.util.List) ((JSONObject) TestULearningModule.appleAppSiteAssociation("A.x, B.y", "/l/").get("applinks"))
+			.get("details")).get(0)).get("appIDs")).size() == 2, "");
+		ok("assetlinks: [] without a signing fingerprint", TestULearningModule.assetLinks("world.eme.genailabs", null).isEmpty()
+			&& "[]".equals(TestULearningModule.assetLinks("p", " ").toJSONString()), "");
+		Object al = org.json.simple.JSONValue.parse(TestULearningModule.assetLinks("world.eme.genailabs", "aa:bb, CC:DD").toJSONString());
+		JSONObject st = (JSONObject) ((java.util.List) al).get(0), tg = (JSONObject) st.get("target");
+		ok("assetlinks: statement shape", List.of("delegate_permission/common.handle_all_urls").equals(st.get("relation")) && "android_app".equals(tg.get("namespace"))
+			&& "world.eme.genailabs".equals(tg.get("package_name")) && List.of("AA:BB", "CC:DD").equals(tg.get("sha256_cert_fingerprints")), al);
+
 		// ---- previews (optional arg = output dir): the 5 weekdays in Spanish, Minsur/IRIS, Diego, with and without streak data
 		if (args.length > 0)
 		{
