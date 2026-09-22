@@ -80,6 +80,7 @@ public class TestULearningModule extends TestUBaseModule
 				// Done for today: what the learner could practise next (the app's "already completed" screen offers it).
 				dc.put("recommended", LearningEngine.recommend(content, learner, engine.subtopicStates(content, learner), t -> engine.requiredLevel(t, learner.jobroles)));
 			}
+			dc.put("daycopy", dayCopyJson(getMediaArchive(inReq), urec, learner.attempts));
 			if (!contentUnavailable(inReq, engine, user, content, dc))
 			{
 				reply(inReq, dc);
@@ -1442,7 +1443,7 @@ public class TestULearningModule extends TestUBaseModule
 
 	/**
 	 * Whether the Daily Challenge email goes to inEmail, whose role carries inRolePermissions. Pure.
-	 * inOn = catalog setting testu_dailychallengeemail, the org's master switch: only "true" sends (unset = off).
+	 * inOn = catalog setting testu_dailychallengeemail, the org's master switch: on unless it is "false" (unset = on).
 	 * inOnly = catalog setting testu_dailychallengeemail_only, a comma-separated test allowlist: when set, only those emails get it,
 	 * even with the master switch off, so a tester can receive it before the org is switched on.
 	 * Either way the learner's role must carry EMAIL_PERMISSION. inEmail null = "could anyone get it?" (the job's early exit).
@@ -1457,7 +1458,7 @@ public class TestULearningModule extends TestUBaseModule
 				only.add(e.trim().toLowerCase());
 			}
 		}
-		boolean on = only.isEmpty() ? inOn != null && "true".equals(inOn.trim()) : inEmail == null || only.contains(inEmail.trim().toLowerCase());
+		boolean on = only.isEmpty() ? inOn == null || !"false".equalsIgnoreCase(inOn.trim()) : inEmail == null || only.contains(inEmail.trim().toLowerCase());
 		return on && (inEmail == null || inRolePermissions != null && inRolePermissions.contains(EMAIL_PERMISSION));
 	}
 
@@ -1603,7 +1604,7 @@ public class TestULearningModule extends TestUBaseModule
 		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
 		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u.get("timezone"), orgzone)).toLocalDate();
 		// The challenge days are org-local (LearningEngine.challengeDate), so the streak is counted on the org's calendar.
-		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone));
+		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), null);
 		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
 		String link = inLearnurl + "#/desafio?login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
 		String avatar = absoluteUrl(inLearnurl, persona == null ? null : persona.get("avatar"));
@@ -1639,11 +1640,12 @@ public class TestULearningModule extends TestUBaseModule
 	 * sets and Daily Challenge answers. A set is finished when each of its questions has a Daily Challenge answer since it was
 	 * built (LearningEngine.challengeItemDone); a question's first such answer is the one scored.
 	 */
-	protected int[] recentChallenges(LearningEngine engine, MediaArchive archive, String inUserid, java.time.LocalDate inToday)
+	protected int[] recentChallenges(LearningEngine engine, MediaArchive archive, String inUserid, java.time.LocalDate inToday,
+			java.util.List<LearningEngine.Attempt> inAttempts)
 	{
 		java.util.Map<java.time.LocalDate, int[]> done = new java.util.HashMap<>();
 		HitTracker sets = archive.query("dailychallengeset").exact("user", inUserid).search();
-		java.util.List<LearningEngine.Attempt> attempts = null;
+		java.util.List<LearningEngine.Attempt> attempts = inAttempts; // null = loaded on the first finished-looking set
 		for (Object o : sets)
 		{
 			Data set = (Data) o;
@@ -1727,78 +1729,113 @@ public class TestULearningModule extends TestUBaseModule
 		return score == null ? new int[] {0, 0, 0} : new int[] {streak, score[0], score[1]};
 	}
 
-	// Per weekday, Monday..Friday (Saturday/Sunday, only ever a preview, use Tuesday's): preheader, heading, body, closing.
-	// Spanish copy: docs/copy/desafio-diario-minsur.es.md.
+	// Per day, Monday..Friday then the weekend (Saturday/Sunday: the app's card only, no email goes out): preheader, title, mood
+	// sentence, "it's ready" sentence (email only; "" = none), closing. The email body = mood + ready; the Hoy card = title + mood,
+	// then the app's own question counts. Spanish copy: docs/copy/desafio-diario-minsur.es.md.
 	private static final String[][] DAY_ES = {
-		{"Arranca la semana con tu Desafío: son unos minutos.", "Empieza la semana con fuerza",
-			"Espero que hayas descansado el fin de semana. Tu Desafío de hoy ya está listo: son pocas preguntas y te toma unos minutos.",
-			"Vamos por una gran semana."},
-		{"Tu Desafío de hoy ya está listo.", "Mantén el ritmo",
-			"La semana ya está en marcha y cada día suma. Tu Desafío de hoy ya está listo: pocas preguntas para seguir reforzando lo que sabes.",
-			"Paso a paso se llega lejos."},
+		{"Arranca la semana con tu Desafío: son unos minutos.", "Empieza la semana con fuerza", "Espero que hayas descansado el fin de semana.",
+			"Tu Desafío de hoy ya está listo: son pocas preguntas y te toma unos minutos.", "Vamos por una gran semana."},
+		{"Tu Desafío de hoy ya está listo.", "Mantén el ritmo", "La semana ya está en marcha y cada día suma.",
+			"Tu Desafío de hoy ya está listo: pocas preguntas para seguir reforzando lo que sabes.", "Paso a paso se llega lejos."},
 		{"Mitad de semana: unos minutos para tu Desafío.", "Mitad de semana, buen momento para avanzar",
-			"Ya vamos por la mitad de la semana. Unos minutos hoy te ayudan a fijar lo que aprendiste. Tu Desafío te espera.",
-			"Hoy también cuenta. ¡Tú puedes!"},
-		{"Ya casi es viernes. Tu Desafío está listo.", "Ya casi llegamos",
-			"Un día más y cierras la semana. Tu Desafío de hoy ya está listo para que sigas avanzando.",
-			"Un empujón más y llegamos al viernes."},
+			"Ya vamos por la mitad de la semana. Unos minutos hoy te ayudan a fijar lo que aprendiste.", "Tu Desafío te espera.", "Hoy también cuenta. ¡Tú puedes!"},
+		{"Ya casi es viernes. Tu Desafío está listo.", "Ya casi llegamos", "Un día más y cierras la semana.",
+			"Tu Desafío de hoy ya está listo para que sigas avanzando.", "Un empujón más y llegamos al viernes."},
 		{"Último Desafío de la semana.", "Último esfuerzo de la semana",
-			"Completa tu Desafío de hoy y cierra la semana con todo. Después, a disfrutar del fin de semana.",
-			"¡Que tengas un gran fin de semana!"}};
+			"Completa tu Desafío de hoy y cierra la semana con todo. Después, a disfrutar del fin de semana.", "", "¡Que tengas un gran fin de semana!"},
+		{"Tu Desafío de fin de semana está listo.", "Un Desafío de fin de semana", "Aunque sea fin de semana, unos minutos te ayudan a no perder el ritmo.",
+			"Tu Desafío de hoy ya está listo.", "Disfruta tu fin de semana."}};
 	private static final String[][] DAY_EN = {
-		{"Start the week with your challenge: just a few minutes.", "Start the week strong",
-			"I hope you had a restful weekend. Today’s challenge is ready: just a few questions and a few minutes.",
-			"Here’s to a great week."},
-		{"Today’s challenge is ready.", "Keep the momentum",
-			"The week is under way and every day adds up. Today’s challenge is ready: a few questions to keep strengthening what you know.",
-			"Step by step, you go far."},
+		{"Start the week with your challenge: just a few minutes.", "Start the week strong", "I hope you had a restful weekend.",
+			"Today’s challenge is ready: just a few questions and a few minutes.", "Here’s to a great week."},
+		{"Today’s challenge is ready.", "Keep the momentum", "The week is under way and every day adds up.",
+			"Today’s challenge is ready: a few questions to keep strengthening what you know.", "Step by step, you go far."},
 		{"Midweek: a few minutes for your challenge.", "Midweek, a good moment to push ahead",
-			"We’re halfway through the week. A few minutes today help what you learned stick. Your challenge is waiting.",
-			"Today counts too. You’ve got this!"},
-		{"Almost Friday. Your challenge is ready.", "Almost there",
-			"One more day and the week is done. Today’s challenge is ready so you can keep moving forward.",
-			"One more push and it’s Friday."},
-		{"Last challenge of the week.", "One last push this week",
-			"Finish today’s challenge and close the week strong. Then enjoy your weekend.",
-			"Have a great weekend!"}};
+			"We’re halfway through the week. A few minutes today help what you learned stick.", "Your challenge is waiting.", "Today counts too. You’ve got this!"},
+		{"Almost Friday. Your challenge is ready.", "Almost there", "One more day and the week is done.",
+			"Today’s challenge is ready so you can keep moving forward.", "One more push and it’s Friday."},
+		{"Last challenge of the week.", "One last push this week", "Finish today’s challenge and close the week strong. Then enjoy your weekend.", "",
+			"Have a great weekend!"},
+		{"Your weekend challenge is ready.", "A weekend challenge", "Even on the weekend, a few minutes help you keep your rhythm.",
+			"Today’s challenge is ready.", "Enjoy your weekend."}};
+
+	/** {preheader, title, mood, ready, closing} for inToday's weekday (weekend = one variant). Pure. */
+	public static String[] dayCopy(boolean inEnglish, java.time.LocalDate inToday)
+	{
+		int d = inToday.getDayOfWeek().getValue(); // 1 = Monday
+		return (inEnglish ? DAY_EN : DAY_ES)[d <= 5 ? d - 1 : 5];
+	}
+
+	/**
+	 * The streak / last-score sentence for inRecent = {streak, correct, total} (challengeStats) on inToday, or null when there is
+	 * no streak (then nothing is said, no number is made up). Pure.
+	 */
+	public static String recentLine(boolean inEnglish, java.time.LocalDate inToday, int[] inRecent)
+	{
+		if (inRecent == null || inRecent[0] <= 0)
+		{
+			return null;
+		}
+		java.util.Locale loc = inEnglish ? java.util.Locale.ENGLISH : new java.util.Locale("es");
+		java.time.LocalDate last = previousWorkday(inToday);
+		boolean yesterday = last.equals(inToday.minusDays(1));
+		String lastday = last.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, loc);
+		String when = inEnglish ? (yesterday ? "yesterday" : "on " + lastday) : (yesterday ? "ayer" : "el " + lastday);
+		String score = inRecent[1] > 0 ? (inEnglish ? "you got " + inRecent[1] + " of " + inRecent[2] + " right" : "acertaste " + inRecent[1] + " de " + inRecent[2]) : null;
+		if (inRecent[0] >= 2)
+		{
+			return inEnglish ? "You’re on a " + inRecent[0] + "-day streak" + (score == null ? "" : ", and " + when + " " + score) + ". Keep it up!"
+					: "Llevas " + inRecent[0] + " días seguidos completando tu Desafío" + (score == null ? "" : " y " + when + " " + score) + ". ¡Sigue así!";
+		}
+		String w = when.substring(0, 1).toUpperCase() + when.substring(1);
+		return inEnglish ? w + " " + (score == null ? "you completed your challenge" : score + " in your challenge") + ". Let’s go for another!"
+				: w + " " + (score == null ? "completaste tu Desafío" : score + " en tu Desafío") + ". ¡Vamos por otro!";
+	}
+
+	/**
+	 * next.json?mode=dailychallenge "daycopy": {language, title, body, recent} for the Hoy card, the same copy as that day's email
+	 * (learner-local weekday, the learner's language as in the email). recent = null without a streak. inAttempts = the learner's
+	 * already-loaded answers.
+	 */
+	protected JSONObject dayCopyJson(MediaArchive archive, Data u, java.util.List<LearningEngine.Attempt> inAttempts)
+	{
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		String lang = u == null ? null : u.get("language");
+		if (lang == null || lang.isEmpty())
+		{
+			lang = persona == null ? null : persona.get("tutorlanguage");
+		}
+		boolean en = lang != null && lang.startsWith("en");
+		LearningEngine engine = new LearningEngine(archive);
+		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u == null ? null : u.get("timezone"), orgzone)).toLocalDate();
+		String[] day = dayCopy(en, today);
+		JSONObject o = new JSONObject();
+		o.put("language", en ? "en" : "es");
+		o.put("title", day[1]);
+		o.put("body", day[2]);
+		o.put("recent", u == null ? null : recentLine(en, today, recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), inAttempts)));
+		return o;
+	}
 
 	/**
 	 * {subject, html} of the Daily Challenge email for inToday (the learner's local date). HTML only, TestU Learn's dark theme
 	 * (app-genailabs lib/testu/testu_theme.dart tokens) as inline CSS in tables, for Gmail, Outlook and Apple Mail. inRecent =
 	 * {streak, correct, total} (challengeStats) or null: the streak/score line only when there is one. inAvatar = absolute URL of the
-	 * tutor's picture, or null (then just the name). Copy: docs/copy/desafio-diario-minsur.es.md. Pure.
+	 * tutor's picture, or null (then just the name). Copy: dayCopy / recentLine, docs/copy/desafio-diario-minsur.es.md. Pure.
 	 */
 	public static String[] emailContent(boolean inEnglish, String inName, String inTutor, String inAvatar, String inLink, java.time.LocalDate inToday,
 			int[] inRecent)
 	{
 		boolean named = inName != null && !inName.isEmpty();
-		java.time.DayOfWeek dow = inToday.getDayOfWeek();
-		java.util.Locale loc = inEnglish ? java.util.Locale.ENGLISH : new java.util.Locale("es");
-		String dayname = dow.getDisplayName(java.time.format.TextStyle.FULL, loc); // "Monday" / "lunes"
-		String[] day = (inEnglish ? DAY_EN : DAY_ES)[dow.getValue() <= 5 ? dow.getValue() - 1 : 1];
+		String dayname = inToday.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, inEnglish ? java.util.Locale.ENGLISH : new java.util.Locale("es"));
+		String[] c = dayCopy(inEnglish, inToday);
+		String[] day = {c[0], c[1], c[3].isEmpty() ? c[2] : c[2] + " " + c[3], c[4]}; // preheader, heading, body, closing
 		String subject = inEnglish ? (named ? "Hi " + inName + ", your " : "Your ") + dayname + " challenge"
 				: (named ? "Hola " + inName + ", tu" : "Tu") + " desafío del " + dayname;
 		String hello = inEnglish ? (named ? "Hi " + inName + "," : "Hi,") : (named ? "Hola " + inName + ":" : "Hola:");
-		String recent = null;
-		if (inRecent != null && inRecent[0] > 0)
-		{
-			java.time.LocalDate last = previousWorkday(inToday);
-			boolean yesterday = last.equals(inToday.minusDays(1));
-			String when = inEnglish ? (yesterday ? "yesterday" : "on " + last.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, loc))
-					: (yesterday ? "ayer" : "el " + last.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, loc));
-			String score = inRecent[1] > 0 ? (inEnglish ? "you got " + inRecent[1] + " of " + inRecent[2] + " right" : "acertaste " + inRecent[1] + " de " + inRecent[2]) : null;
-			if (inRecent[0] >= 2)
-			{
-				recent = inEnglish ? "You’re on a " + inRecent[0] + "-day streak" + (score == null ? "" : ", and " + when + " " + score) + ". Keep it up!"
-						: "Llevas " + inRecent[0] + " días seguidos completando tu Desafío" + (score == null ? "" : " y " + when + " " + score) + ". ¡Sigue así!";
-			}
-			else
-			{
-				String w = when.substring(0, 1).toUpperCase() + when.substring(1);
-				recent = inEnglish ? w + " " + (score == null ? "you completed your challenge" : score + " in your challenge") + ". Let’s go for another!"
-						: w + " " + (score == null ? "completaste tu Desafío" : score + " en tu Desafío") + ". ¡Vamos por otro!";
-			}
-		}
+		String recent = recentLine(inEnglish, inToday, inRecent);
 		String eyebrow = inEnglish ? "DAILY CHALLENGE" : "DESAFÍO DIARIO";
 		String button = inEnglish ? "Start my challenge" : "Empezar mi desafío";
 		String foot = inEnglish ? "You’re receiving this email because you have a TestU account. If the button doesn’t work, open the app and sign in with your email."

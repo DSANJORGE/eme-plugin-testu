@@ -79,13 +79,14 @@ public class DailyChallengeEmailCheck
 		ok("future-dated row rejected", !AdminModule.loginLinkFresh(new Date(now.getTime() + 60_000), now, 12), "");
 		ok("no date rejected", !AdminModule.loginLinkFresh(null, now, 12), "");
 
-		// ---- who gets it: master switch (off by default), role permission, test allowlist
+		// ---- who gets it: master switch (on by default, only "false" turns it off), role permission, test allowlist
 		List<String> can = List.of("view", TestULearningModule.EMAIL_PERMISSION), cannot = List.of("view");
-		ok("switch unset: nobody", !TestULearningModule.mayReceive(null, null, null, null) && !TestULearningModule.mayReceive(null, null, "a@x.pe", can), "");
-		ok("switch false / an old email list: nobody", !TestULearningModule.mayReceive("false", null, "a@x.pe", can) && !TestULearningModule.mayReceive("a@x.pe", "", "a@x.pe", can), "");
-		ok("switch on: roles with the permission", TestULearningModule.mayReceive(" true ", null, null, null) && TestULearningModule.mayReceive("true", null, "a@x.pe", can), "");
-		ok("switch on: a role without it is skipped", !TestULearningModule.mayReceive("true", null, "a@x.pe", cannot) && !TestULearningModule.mayReceive("true", null, "a@x.pe", null), "");
-		ok("allowlist works with the switch off", TestULearningModule.mayReceive(null, "Diego@X.pe, b@x.pe", "diego@x.pe", can) && TestULearningModule.mayReceive(null, "b@x.pe", null, null), "");
+		ok("switch unset: on for roles with the permission", TestULearningModule.mayReceive(null, null, null, null) && TestULearningModule.mayReceive(null, null, "a@x.pe", can)
+			&& TestULearningModule.mayReceive("", "", "a@x.pe", can), "");
+		ok("switch false: nobody", !TestULearningModule.mayReceive("false", null, null, null) && !TestULearningModule.mayReceive(" FALSE ", null, "a@x.pe", can), "");
+		ok("switch true: roles with the permission", TestULearningModule.mayReceive(" true ", null, null, null) && TestULearningModule.mayReceive("true", null, "a@x.pe", can), "");
+		ok("a role without it is skipped", !TestULearningModule.mayReceive("true", null, "a@x.pe", cannot) && !TestULearningModule.mayReceive(null, null, "a@x.pe", null), "");
+		ok("allowlist works with the switch off", TestULearningModule.mayReceive("false", "Diego@X.pe, b@x.pe", "diego@x.pe", can) && TestULearningModule.mayReceive(null, "b@x.pe", null, null), "");
 		ok("allowlist excludes everyone else, switch on or off", !TestULearningModule.mayReceive("true", "b@x.pe", "a@x.pe", can) && !TestULearningModule.mayReceive(null, "b@x.pe", "a@x.pe", can), "");
 		ok("allowlist still needs the permission", !TestULearningModule.mayReceive(null, "a@x.pe", "a@x.pe", cannot), "");
 
@@ -140,6 +141,19 @@ public class DailyChallengeEmailCheck
 		ok("en without a name or avatar", "Your Thursday challenge".equals(en[0]) && en[1].contains("Hi,") && !en[1].contains("<img"), en[0]);
 		ok("en uses the org's tutor, no other", en[1].contains("Sully") && !en[1].contains("IRIS"), "");
 		ok("name is escaped", TestULearningModule.emailContent(false, "<b>x", "IRIS", null, link, mon, null)[1].contains("&lt;b&gt;x"), "");
+		// ---- shared copy: the Hoy card (next.json daycopy) takes title + mood from the same table as the email
+		for (int i = 0; i < 7; i++)
+		{
+			java.time.LocalDate d = mon.plusDays(i);
+			String[] c = TestULearningModule.dayCopy(false, d);
+			String html = TestULearningModule.emailContent(false, "Diego", "IRIS", null, link, d, null)[1];
+			ok("card copy = email copy " + d.getDayOfWeek(), html.contains(">" + c[1] + "</h1>") && html.contains(c[2]) && !c[2].contains("{"), c[1]);
+		}
+		ok("weekend variant on the card", TestULearningModule.dayCopy(false, mon.plusDays(5))[1].equals("Un Desafío de fin de semana")
+			&& TestULearningModule.dayCopy(false, mon.plusDays(6)) == TestULearningModule.dayCopy(false, mon.plusDays(5)), "");
+		ok("card mood never repeats the email's 'ready' sentence", !TestULearningModule.dayCopy(false, mon)[2].contains("ya está listo"), "");
+		ok("recent line shared, null without data", TestULearningModule.recentLine(false, thu, null) == null && TestULearningModule.recentLine(false, thu, new int[] {0, 0, 0}) == null
+			&& "Ayer acertaste 4 de 5 en tu Desafío. ¡Vamos por otro!".equals(TestULearningModule.recentLine(false, thu, new int[] {1, 4, 5})), "");
 		ok("given name", "Renzo".equals(TestULearningModule.givenName("RENZO ALDAIR")) && "".equals(TestULearningModule.givenName(null)), TestULearningModule.givenName("RENZO ALDAIR"));
 
 		// ---- previews (optional arg = output dir): the 5 weekdays in Spanish, Minsur/IRIS, Diego, with and without streak data
