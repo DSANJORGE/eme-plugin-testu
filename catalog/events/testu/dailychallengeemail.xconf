@@ -1,6 +1,6 @@
 <page>
   <property name="eventname">TestU: Daily Challenge email</property>
-  <property name="eventdescription">Monday to Friday at 09:00 in each learner's zone: email with a one-click sign-in link to today's Daily Challenge, once a day, unless it is done. Off unless catalog setting testu_dailychallengeemail is set</property>
+  <property name="eventdescription">Monday to Friday at 09:00 in each learner's zone: email with a one-click sign-in link to today's Daily Challenge, once a day, unless it is done. On unless catalog setting testu_dailychallengeemail is false (testu_dailychallengeemail_only = test allowlist); only roles with permission testu_dailychallengeemail</property>
   <property name="enabled">true</property>
   <property name="period">15m</property>
   <property name="delay">4m</property>

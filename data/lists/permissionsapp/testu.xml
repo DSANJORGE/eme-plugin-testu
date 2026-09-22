@@ -9,4 +9,5 @@
   <permission id="training_manage" permissiontype="application" name="Training: administrar" ordering="920"/>
   <permission id="training_operate" permissiontype="application" name="Training: operar" ordering="921"/>
   <permission id="training_view" permissiontype="application" name="Training: ver" ordering="922"/>
+  <permission id="testu_dailychallengeemail" permissiontype="application" name="Desafío Diario: recibir el email" ordering="930"/>
 </permissions>

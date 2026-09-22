@@ -80,6 +80,7 @@ public class TestULearningModule extends TestUBaseModule
 				// Done for today: what the learner could practise next (the app's "already completed" screen offers it).
 				dc.put("recommended", LearningEngine.recommend(content, learner, engine.subtopicStates(content, learner), t -> engine.requiredLevel(t, learner.jobroles)));
 			}
+			dc.put("daycopy", dayCopyJson(getMediaArchive(inReq), urec, learner.attempts));
 			if (!contentUnavailable(inReq, engine, user, content, dc))
 			{
 				reply(inReq, dc);
@@ -1386,27 +1387,19 @@ public class TestULearningModule extends TestUBaseModule
 	/**
 	 * Periodic (catalog event dailychallengeemail, every 15 min): the Daily Challenge email, Monday to Friday in the 09:00 hour of each
 	 * learner's own zone (user.timezone, else the org's testu_timezone), with a one-click sign-in link that opens today's challenge.
-	 * Off unless catalog setting testu_dailychallengeemail is "true" (everyone) or a comma-separated list of emails (only those).
-	 * Skips disabled, internal (support) and email-less accounts, and learners whose challenge for today is already done.
-	 * Once per learner and local day: the dailychallengeemail row (id <user>_<yyyyMMdd>) is saved before the send, so a crash or a
-	 * failed send (status failed) is never retried into a second email. Returns the number sent.
+	 * Who: see mayReceive (master switch testu_dailychallengeemail, role permission EMAIL_PERMISSION, test allowlist
+	 * testu_dailychallengeemail_only). Skips disabled, internal (support) and email-less accounts, and learners whose challenge for
+	 * today is already done. Once per learner and local day: the dailychallengeemail row (id <user>_<yyyyMMdd>) is saved before the
+	 * send, so a crash or a failed send (status failed) is never retried into a second email. Returns the number sent.
 	 */
 	public int dailyChallengeEmail(MediaArchive archive)
 	{
+		grantEmailPermissionOnce(archive);
 		String on = archive.getCatalogSettingValue("testu_dailychallengeemail");
-		if (on == null || on.trim().isEmpty() || "false".equals(on.trim()))
+		String only = archive.getCatalogSettingValue("testu_dailychallengeemail_only");
+		if (!mayReceive(on, only, null, null))
 		{
 			return 0;
-		}
-		// ponytail: an email allowlist doubles as the pilot switch; a per-team or per-profile toggle when an org needs one.
-		Set<String> only = null;
-		if (!"true".equals(on.trim()))
-		{
-			only = new java.util.HashSet<>();
-			for (String e : on.split(","))
-			{
-				only.add(e.trim().toLowerCase());
-			}
 		}
 		String learnurl = learnUrl(archive);
 		if (learnurl == null)
@@ -1418,6 +1411,7 @@ public class TestULearningModule extends TestUBaseModule
 		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
 		java.time.Instant now = java.time.Instant.now();
 		Searcher sent = archive.getSearcher("dailychallengeemail");
+		java.util.Map<String, java.util.Collection> rolePerms = new java.util.HashMap<>();
 		HitTracker users = archive.query("user").all().search();
 		users.enableBulkOperations();
 		int n = 0;
@@ -1426,14 +1420,14 @@ public class TestULearningModule extends TestUBaseModule
 			Data u = (Data) hit;
 			String email = u.get("email");
 			// "admin" is the platform's own account, not a learner.
-			if (email == null || email.trim().isEmpty() || "admin".equals(u.getId()) || !TestUAnalyticsModule.countsAsPerson(u.getId(), u)
-					|| (only != null && !only.contains(email.trim().toLowerCase())))
+			if (email == null || email.trim().isEmpty() || "admin".equals(u.getId()) || !TestUAnalyticsModule.countsAsPerson(u.getId(), u))
 			{
 				continue;
 			}
 			java.time.ZoneId zone = zoneOf(u.get("timezone"), orgzone);
 			String key = emailDueKey(u.getId(), zone, now);
-			if (key == null || sent.searchById(key) != null || engine.dailyChallengeDoneToday(u.getId()))
+			if (key == null || !mayReceive(on, only, email, rolePermissions(archive, u.getId(), rolePerms)) || sent.searchById(key) != null
+					|| engine.dailyChallengeDoneToday(u.getId()))
 			{
 				continue;
 			}
@@ -1458,6 +1452,98 @@ public class TestULearningModule extends TestUBaseModule
 			}
 		}
 		return n;
+	}
+
+	/** Role permission (Settings > Roles) that lets a learner receive the Daily Challenge email. */
+	public static final String EMAIL_PERMISSION = "testu_dailychallengeemail";
+
+	/**
+	 * Whether the Daily Challenge email goes to inEmail, whose role carries inRolePermissions. Pure.
+	 * inOn = catalog setting testu_dailychallengeemail, the org's master switch: on unless it is "false" (unset = on).
+	 * inOnly = catalog setting testu_dailychallengeemail_only, a comma-separated test allowlist: when set, only those emails get it,
+	 * even with the master switch off, so a tester can receive it before the org is switched on.
+	 * Either way the learner's role must carry EMAIL_PERMISSION. inEmail null = "could anyone get it?" (the job's early exit).
+	 */
+	public static boolean mayReceive(String inOn, String inOnly, String inEmail, java.util.Collection inRolePermissions)
+	{
+		Set<String> only = new java.util.HashSet<>();
+		for (String e : (inOnly == null ? "" : inOnly).split(","))
+		{
+			if (!e.trim().isEmpty())
+			{
+				only.add(e.trim().toLowerCase());
+			}
+		}
+		boolean on = only.isEmpty() ? inOn == null || !"false".equalsIgnoreCase(inOn.trim()) : inEmail == null || only.contains(inEmail.trim().toLowerCase());
+		return on && (inEmail == null || inRolePermissions != null && inRolePermissions.contains(EMAIL_PERMISSION));
+	}
+
+	/**
+	 * System permissions of inUserid's role (userprofile.settingsrole, legacy settingsgroup, else the catalog's defaultrole, else
+	 * "users" -- UserProfileManager's rule), read from the settingsrole row as UserProfile.hasPermission does; cached per role in
+	 * inCache for one run. Without loading a full UserProfile, which would create and save one for users who never signed in.
+	 */
+	protected java.util.Collection rolePermissions(MediaArchive archive, String inUserid, java.util.Map<String, java.util.Collection> inCache)
+	{
+		Data p = (Data) archive.getSearcher("userprofile").searchById(inUserid);
+		String role = p == null ? null : TestUUserModule.roleOf(p);
+		if (role == null || role.isEmpty())
+		{
+			role = archive.getCatalogSettingValue("defaultrole");
+			role = role == null || role.isEmpty() ? "users" : role;
+		}
+		return inCache.computeIfAbsent(role, r -> {
+			Data row = (Data) archive.getSearcher("settingsrole").searchById(r);
+			java.util.Collection v = row == null ? null : row.getValues("permissions");
+			return v == null ? java.util.Collections.emptyList() : v;
+		});
+	}
+
+	/**
+	 * One-time default: EMAIL_PERMISSION on every role but guest, and its permissionsapp row so Settings > Roles lists it. Roles live
+	 * in the database, seeded from XML only when the table is first created, so an XML edit alone never reaches an existing site.
+	 * Catalog setting testu_dailychallengeemail_granted records it: a role an admin unticks afterwards stays unticked.
+	 */
+	protected void grantEmailPermissionOnce(MediaArchive archive)
+	{
+		if ("true".equals(archive.getCatalogSettingValue("testu_dailychallengeemail_granted")))
+		{
+			return;
+		}
+		Searcher apps = archive.getSearcher("permissionsapp");
+		if (apps.searchById(EMAIL_PERMISSION) == null)
+		{
+			Data d = apps.createNewData();
+			d.setId(EMAIL_PERMISSION);
+			d.setName("Desafío Diario: recibir el email");
+			d.setValue("permissiontype", "application");
+			d.setValue("ordering", "930");
+			apps.saveData(d, null);
+		}
+		Searcher roles = archive.getSearcher("settingsrole");
+		int seen = 0;
+		for (Object hit : roles.query().all().search())
+		{
+			Data r = (Data) roles.searchById(((Data) hit).getId());
+			if (r == null || "guest".equals(r.getId()))
+			{
+				continue;
+			}
+			seen++;
+			java.util.Collection v = r.getValues("permissions");
+			java.util.List<String> perms = new java.util.ArrayList<>(v == null ? java.util.Collections.emptyList() : v);
+			if (!perms.contains(EMAIL_PERMISSION))
+			{
+				perms.add(EMAIL_PERMISSION);
+				r.setValue("permissions", perms);
+				roles.saveData(r, null);
+			}
+		}
+		if (seen > 0) // no roles yet (table not seeded): try again next run
+		{
+			archive.setCatalogSettingValue("testu_dailychallengeemail_granted", "true");
+			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).info("testu dailychallengeemail: granted " + EMAIL_PERMISSION + " to " + seen + " roles");
+		}
 	}
 
 	/** inNow in inZone is a Monday-Friday EMAIL_HOUR: the send key <user>_<yyyyMMdd of that local day>; otherwise null. Pure. */
@@ -1502,16 +1588,24 @@ public class TestULearningModule extends TestUBaseModule
 		return url.endsWith("/") ? url : url + "/";
 	}
 
-	/** Mints u's sign-in link and mails the Daily Challenge email to u; returns {subject, html, text, link}. */
+	/** Mints u's sign-in link and mails the Daily Challenge email to u, HTML only; returns {subject, html, link, fromname}. */
 	protected String[] sendDailyChallengeEmail(MediaArchive archive, Data u, String inLearnurl) throws Exception
 	{
 		String[] mail = dailyChallengeMail(archive, u, inLearnurl);
 		org.entermediadb.email.PostMail pm = (org.entermediadb.email.PostMail) getModuleManager().getBean("postMail");
-		pm.postMail(new String[] {u.get("email")}, mail[0], mail[1], mail[2], archive.getCatalogSettingValue("system_from_email"), mail[4]);
+		// No text part: PostMail wraps text + html in multipart/mixed (not alternative), so Gmail showed both, one after the other.
+		pm.postMail(new String[] {u.get("email")}, mail[0], mail[1], null, emailFrom(archive), mail[3]);
 		return mail;
 	}
 
-	/** {subject, html, text, link, fromname} for u, with a freshly minted sign-in link (which replaces u's previous one). */
+	/** Sender address: catalog setting testu_email_from, else system_from_email. */
+	static String emailFrom(MediaArchive archive)
+	{
+		String from = archive.getCatalogSettingValue("testu_email_from");
+		return from == null || from.trim().isEmpty() ? archive.getCatalogSettingValue("system_from_email") : from.trim();
+	}
+
+	/** {subject, html, link, fromname} for u on u's local today, with a freshly minted sign-in link (which replaces u's previous one). */
 	protected String[] dailyChallengeMail(MediaArchive archive, Data u, String inLearnurl)
 	{
 		String personaId = archive.getCatalogSettingValue("tutorpersona");
@@ -1522,10 +1616,284 @@ public class TestULearningModule extends TestUBaseModule
 		{
 			lang = persona == null ? null : persona.get("tutorlanguage");
 		}
+		LearningEngine engine = new LearningEngine(archive);
+		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u.get("timezone"), orgzone)).toLocalDate();
+		// The challenge days are org-local (LearningEngine.challengeDate), so the streak is counted on the org's calendar.
+		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), null);
 		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
 		String link = inLearnurl + "#/desafio?login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
-		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, link);
-		return new String[] {m[0], m[1], m[2], link, tutor};
+		String avatar = absoluteUrl(inLearnurl, persona == null ? null : persona.get("avatar"));
+		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, avatar, link, today, recent);
+		return new String[] {m[0], m[1], link, tutor};
+	}
+
+	/** inPath made absolute against inBase's origin ("/site/x.png" -> "https://host/site/x.png"); http(s) kept; else null. Pure. */
+	public static String absoluteUrl(String inBase, String inPath)
+	{
+		if (inPath == null || inPath.trim().isEmpty())
+		{
+			return null;
+		}
+		String p = inPath.trim();
+		if (p.startsWith("http://") || p.startsWith("https://"))
+		{
+			return p;
+		}
+		try
+		{
+			java.net.URI b = java.net.URI.create(inBase);
+			return p.startsWith("/") && b.getScheme() != null && b.getRawAuthority() != null ? b.getScheme() + "://" + b.getRawAuthority() + p : null;
+		}
+		catch (Exception e)
+		{
+			return null;
+		}
+	}
+
+	/**
+	 * {streak, correct, total} of the learner's finished Daily Challenges before inToday (see challengeStats), from the stored
+	 * sets and Daily Challenge answers. A set is finished when each of its questions has a Daily Challenge answer since it was
+	 * built (LearningEngine.challengeItemDone); a question's first such answer is the one scored.
+	 */
+	protected int[] recentChallenges(LearningEngine engine, MediaArchive archive, String inUserid, java.time.LocalDate inToday,
+			java.util.List<LearningEngine.Attempt> inAttempts)
+	{
+		java.util.Map<java.time.LocalDate, int[]> done = new java.util.HashMap<>();
+		HitTracker sets = archive.query("dailychallengeset").exact("user", inUserid).search();
+		java.util.List<LearningEngine.Attempt> attempts = inAttempts; // null = loaded on the first finished-looking set
+		for (Object o : sets)
+		{
+			Data set = (Data) o;
+			java.time.LocalDate day;
+			try
+			{
+				day = java.time.LocalDate.parse(set.get("localdate"));
+			}
+			catch (Exception e)
+			{
+				continue;
+			}
+			if (!day.isBefore(inToday) || day.isBefore(inToday.minusDays(60)))
+			{
+				continue;
+			}
+			Object parsed = org.json.simple.JSONValue.parse(String.valueOf(set.get("questionlist")));
+			if (!(parsed instanceof java.util.List) || ((java.util.List) parsed).isEmpty())
+			{
+				continue;
+			}
+			if (attempts == null)
+			{
+				attempts = engine.loadLearner(inUserid, null).attempts; // oldest first
+			}
+			Date created = org.openedit.util.DateStorageUtil.getStorageUtil().parseFromObject(set.getValue("datecreated"));
+			int correct = 0, total = 0;
+			for (Object it : (java.util.List) parsed)
+			{
+				String q = it instanceof java.util.Map ? String.valueOf(((java.util.Map) it).get("questionid")) : null;
+				LearningEngine.Attempt first = null;
+				for (LearningEngine.Attempt a : attempts)
+				{
+					if (a.questionid != null && a.questionid.equals(q) && "dailychallenge".equals(a.mode) && a.at != null && (created == null || !a.at.before(created)))
+					{
+						first = a;
+						break;
+					}
+				}
+				if (first == null)
+				{
+					total = -1;
+					break;
+				}
+				total++;
+				correct += first.correct ? 1 : 0;
+			}
+			if (total > 0)
+			{
+				done.put(day, new int[] {correct, total});
+			}
+		}
+		return challengeStats(done, inToday);
+	}
+
+	/** The last Monday-Friday before inDay. Pure. */
+	public static java.time.LocalDate previousWorkday(java.time.LocalDate inDay)
+	{
+		java.time.LocalDate d = inDay.minusDays(1);
+		while (d.getDayOfWeek() == java.time.DayOfWeek.SATURDAY || d.getDayOfWeek() == java.time.DayOfWeek.SUNDAY)
+		{
+			d = d.minusDays(1);
+		}
+		return d;
+	}
+
+	/**
+	 * {streak, correct, total} from finished challenges (day -> {correct, total}). streak = finished workdays in a row ending on the
+	 * workday before inToday (weekends neither count nor break it); correct/total = that workday's score. {0, 0, 0} when it was not
+	 * finished. Pure.
+	 */
+	public static int[] challengeStats(java.util.Map<java.time.LocalDate, int[]> inDone, java.time.LocalDate inToday)
+	{
+		java.time.LocalDate last = previousWorkday(inToday);
+		int streak = 0;
+		for (java.time.LocalDate d = last; inDone.containsKey(d); d = previousWorkday(d))
+		{
+			streak++;
+		}
+		int[] score = inDone.get(last);
+		return score == null ? new int[] {0, 0, 0} : new int[] {streak, score[0], score[1]};
+	}
+
+	// Per day, Monday..Friday then the weekend (Saturday/Sunday: the app's card only, no email goes out): preheader, title, mood
+	// sentence, "it's ready" sentence (email only; "" = none), closing. The email body = mood + ready; the Hoy card = title + mood,
+	// then the app's own question counts. Spanish copy: docs/copy/desafio-diario-minsur.es.md.
+	private static final String[][] DAY_ES = {
+		{"Arranca la semana con tu Desafío: son unos minutos.", "Empieza la semana con fuerza", "Espero que hayas descansado el fin de semana.",
+			"Tu Desafío de hoy ya está listo: son pocas preguntas y te toma unos minutos.", "Vamos por una gran semana."},
+		{"Tu Desafío de hoy ya está listo.", "Mantén el ritmo", "La semana ya está en marcha y cada día suma.",
+			"Tu Desafío de hoy ya está listo: pocas preguntas para seguir reforzando lo que sabes.", "Paso a paso se llega lejos."},
+		{"Mitad de semana: unos minutos para tu Desafío.", "Mitad de semana, buen momento para avanzar",
+			"Ya vamos por la mitad de la semana. Unos minutos hoy te ayudan a fijar lo que aprendiste.", "Tu Desafío te espera.", "Hoy también cuenta. ¡Tú puedes!"},
+		{"Ya casi es viernes. Tu Desafío está listo.", "Ya casi llegamos", "Un día más y cierras la semana.",
+			"Tu Desafío de hoy ya está listo para que sigas avanzando.", "Un empujón más y llegamos al viernes."},
+		{"Último Desafío de la semana.", "Último esfuerzo de la semana",
+			"Completa tu Desafío de hoy y cierra la semana con todo. Después, a disfrutar del fin de semana.", "", "¡Que tengas un gran fin de semana!"},
+		{"Tu Desafío de fin de semana está listo.", "Un Desafío de fin de semana", "Aunque sea fin de semana, unos minutos te ayudan a no perder el ritmo.",
+			"Tu Desafío de hoy ya está listo.", "Disfruta tu fin de semana."}};
+	private static final String[][] DAY_EN = {
+		{"Start the week with your challenge: just a few minutes.", "Start the week strong", "I hope you had a restful weekend.",
+			"Today’s challenge is ready: just a few questions and a few minutes.", "Here’s to a great week."},
+		{"Today’s challenge is ready.", "Keep the momentum", "The week is under way and every day adds up.",
+			"Today’s challenge is ready: a few questions to keep strengthening what you know.", "Step by step, you go far."},
+		{"Midweek: a few minutes for your challenge.", "Midweek, a good moment to push ahead",
+			"We’re halfway through the week. A few minutes today help what you learned stick.", "Your challenge is waiting.", "Today counts too. You’ve got this!"},
+		{"Almost Friday. Your challenge is ready.", "Almost there", "One more day and the week is done.",
+			"Today’s challenge is ready so you can keep moving forward.", "One more push and it’s Friday."},
+		{"Last challenge of the week.", "One last push this week", "Finish today’s challenge and close the week strong. Then enjoy your weekend.", "",
+			"Have a great weekend!"},
+		{"Your weekend challenge is ready.", "A weekend challenge", "Even on the weekend, a few minutes help you keep your rhythm.",
+			"Today’s challenge is ready.", "Enjoy your weekend."}};
+
+	/** {preheader, title, mood, ready, closing} for inToday's weekday (weekend = one variant). Pure. */
+	public static String[] dayCopy(boolean inEnglish, java.time.LocalDate inToday)
+	{
+		int d = inToday.getDayOfWeek().getValue(); // 1 = Monday
+		return (inEnglish ? DAY_EN : DAY_ES)[d <= 5 ? d - 1 : 5];
+	}
+
+	/**
+	 * The streak / last-score sentence for inRecent = {streak, correct, total} (challengeStats) on inToday, or null when there is
+	 * no streak (then nothing is said, no number is made up). Pure.
+	 */
+	public static String recentLine(boolean inEnglish, java.time.LocalDate inToday, int[] inRecent)
+	{
+		if (inRecent == null || inRecent[0] <= 0)
+		{
+			return null;
+		}
+		java.util.Locale loc = inEnglish ? java.util.Locale.ENGLISH : new java.util.Locale("es");
+		java.time.LocalDate last = previousWorkday(inToday);
+		boolean yesterday = last.equals(inToday.minusDays(1));
+		String lastday = last.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, loc);
+		String when = inEnglish ? (yesterday ? "yesterday" : "on " + lastday) : (yesterday ? "ayer" : "el " + lastday);
+		String score = inRecent[1] > 0 ? (inEnglish ? "you got " + inRecent[1] + " of " + inRecent[2] + " right" : "acertaste " + inRecent[1] + " de " + inRecent[2]) : null;
+		if (inRecent[0] >= 2)
+		{
+			return inEnglish ? "You’re on a " + inRecent[0] + "-day streak" + (score == null ? "" : ", and " + when + " " + score) + ". Keep it up!"
+					: "Llevas " + inRecent[0] + " días seguidos completando tu Desafío" + (score == null ? "" : " y " + when + " " + score) + ". ¡Sigue así!";
+		}
+		String w = when.substring(0, 1).toUpperCase() + when.substring(1);
+		return inEnglish ? w + " " + (score == null ? "you completed your challenge" : score + " in your challenge") + ". Let’s go for another!"
+				: w + " " + (score == null ? "completaste tu Desafío" : score + " en tu Desafío") + ". ¡Vamos por otro!";
+	}
+
+	/**
+	 * next.json?mode=dailychallenge "daycopy": {language, title, body, recent} for the Hoy card, the same copy as that day's email
+	 * (learner-local weekday, the learner's language as in the email). recent = null without a streak. inAttempts = the learner's
+	 * already-loaded answers.
+	 */
+	protected JSONObject dayCopyJson(MediaArchive archive, Data u, java.util.List<LearningEngine.Attempt> inAttempts)
+	{
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		String lang = u == null ? null : u.get("language");
+		if (lang == null || lang.isEmpty())
+		{
+			lang = persona == null ? null : persona.get("tutorlanguage");
+		}
+		boolean en = lang != null && lang.startsWith("en");
+		LearningEngine engine = new LearningEngine(archive);
+		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u == null ? null : u.get("timezone"), orgzone)).toLocalDate();
+		String[] day = dayCopy(en, today);
+		JSONObject o = new JSONObject();
+		o.put("language", en ? "en" : "es");
+		o.put("title", day[1]);
+		o.put("body", day[2]);
+		o.put("recent", u == null ? null : recentLine(en, today, recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), inAttempts)));
+		return o;
+	}
+
+	/**
+	 * {subject, html} of the Daily Challenge email for inToday (the learner's local date). HTML only, TestU Learn's dark theme
+	 * (app-genailabs lib/testu/testu_theme.dart tokens) as inline CSS in tables, for Gmail, Outlook and Apple Mail. inRecent =
+	 * {streak, correct, total} (challengeStats) or null: the streak/score line only when there is one. inAvatar = absolute URL of the
+	 * tutor's picture, or null (then just the name). Copy: dayCopy / recentLine, docs/copy/desafio-diario-minsur.es.md. Pure.
+	 */
+	public static String[] emailContent(boolean inEnglish, String inName, String inTutor, String inAvatar, String inLink, java.time.LocalDate inToday,
+			int[] inRecent)
+	{
+		boolean named = inName != null && !inName.isEmpty();
+		String dayname = inToday.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, inEnglish ? java.util.Locale.ENGLISH : new java.util.Locale("es"));
+		String[] c = dayCopy(inEnglish, inToday);
+		String[] day = {c[0], c[1], c[3].isEmpty() ? c[2] : c[2] + " " + c[3], c[4]}; // preheader, heading, body, closing
+		String subject = inEnglish ? (named ? "Hi " + inName + ", your " : "Your ") + dayname + " challenge"
+				: (named ? "Hola " + inName + ", tu" : "Tu") + " desafío del " + dayname;
+		String hello = inEnglish ? (named ? "Hi " + inName + "," : "Hi,") : (named ? "Hola " + inName + ":" : "Hola:");
+		String recent = recentLine(inEnglish, inToday, inRecent);
+		String eyebrow = inEnglish ? "DAILY CHALLENGE" : "DESAFÍO DIARIO";
+		String button = inEnglish ? "Start my challenge" : "Empezar mi desafío";
+		String foot = inEnglish ? "You’re receiving this email because you have a TestU account. If the button doesn’t work, open the app and sign in with your email."
+				: "Recibes este correo porque tienes una cuenta en TestU. Si el botón no funciona, abre la app e ingresa con tu correo.";
+
+		// Tokens: bg #0A0A0B, card #121215, line #222227, card2 #17171B, ink #ECEBE7, inkSoft #D6D4D0, mut #8B8F98, faint #6B6F78,
+		// orange #E8703A (brand/progress), CTA #F4F2EE on #0A0A0B. Sora = display, Geist = text, GeistMono = eyebrow labels.
+		String sans = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
+		String p = "<p style=\"margin:0 0 16px;" + sans + "font-size:16px;line-height:1.6;color:#D6D4D0\">";
+		String tutorCell = "<td style=\"vertical-align:middle\"><div style=\"" + sans + "font-size:15px;font-weight:600;color:#ECEBE7\">" + esc(inTutor) + "</div>"
+				+ "<div style=\"font-family:GeistMono,ui-monospace,Menlo,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0.12em;color:#8B8F98;padding-top:3px\">"
+				+ esc(eyebrow) + "</div></td>";
+		String avatarCell = inAvatar == null ? ""
+				: "<td width=\"56\" style=\"width:56px;vertical-align:middle\"><img src=\"" + esc(inAvatar) + "\" width=\"44\" height=\"44\" alt=\"" + esc(inTutor)
+						+ "\" style=\"display:block;width:44px;height:44px;border-radius:22px;border:1px solid #2C2C33;object-fit:cover\"></td>";
+		String html = "<!DOCTYPE html><html lang=\"" + (inEnglish ? "en" : "es") + "\"><head><meta charset=\"utf-8\">"
+				+ "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark\">"
+				+ "<meta name=\"supported-color-schemes\" content=\"dark\"><title>" + esc(subject) + "</title>"
+				+ "<link href=\"https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@500&family=Sora:wght@700&display=swap\" rel=\"stylesheet\">"
+				+ "<style>:root{color-scheme:dark}@media (max-width:520px){.tu-card{padding:28px 20px !important}.tu-h1{font-size:22px !important}}</style></head>"
+				+ "<body style=\"margin:0;padding:0;background:#0A0A0B\" bgcolor=\"#0A0A0B\">"
+				+ "<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:#0A0A0B\">" + esc(day[0]) + "</div>"
+				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" bgcolor=\"#0A0A0B\" style=\"background:#0A0A0B\"><tr><td align=\"center\" style=\"padding:32px 12px\">"
+				+ "<table role=\"presentation\" width=\"480\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"width:100%;max-width:480px\"><tr>"
+				+ "<td class=\"tu-card\" bgcolor=\"#121215\" style=\"background:#121215;border:1px solid #222227;border-radius:14px;padding:32px 28px\">"
+				+ "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 0 28px\"><tr>" + avatarCell + tutorCell + "</tr></table>"
+				+ "<h1 class=\"tu-h1\" style=\"margin:0 0 18px;font-family:Sora,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:24px;font-weight:700;"
+				+ "line-height:1.25;letter-spacing:-0.01em;color:#ECEBE7\">" + esc(day[1]) + "</h1>"
+				+ p + esc(hello) + "</p>" + p + esc(day[2]) + "</p>"
+				+ (recent == null ? ""
+						: "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 20px\"><tr>"
+								+ "<td bgcolor=\"#17171B\" style=\"background:#17171B;border:1px solid #222227;border-left:3px solid #E8703A;border-radius:8px;padding:12px 14px;"
+								+ sans + "font-size:15px;line-height:1.5;color:#ECEBE7\">" + esc(recent) + "</td></tr></table>")
+				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:12px 0 28px\"><tr>"
+				+ "<td align=\"center\" bgcolor=\"#F4F2EE\" style=\"background:#F4F2EE;border-radius:8px\">"
+				+ "<a href=\"" + esc(inLink) + "\" style=\"display:block;padding:15px 20px;" + sans + "font-size:15px;font-weight:700;letter-spacing:0.05em;"
+				+ "color:#0A0A0B;text-decoration:none;border-radius:8px\">" + esc(button) + "</a></td></tr></table>"
+				+ "<p style=\"margin:0;" + sans + "font-size:16px;line-height:1.6;color:#D6D4D0\">" + esc(day[3]) + "</p>"
+				+ "<p style=\"margin:4px 0 0;" + sans + "font-size:15px;font-weight:600;color:#ECEBE7\">" + esc(inTutor) + "</p>"
+				+ "</td></tr><tr><td style=\"padding:20px 8px 0;" + sans + "font-size:12px;line-height:1.55;color:#6B6F78\">" + esc(foot) + "</td></tr></table>"
+				+ "</td></tr></table></body></html>";
+		return new String[] {subject, html};
 	}
 
 	/** "RENZO ALDAIR" -> "Renzo"; null/blank -> "". */
@@ -1540,38 +1908,6 @@ public class TestULearningModule extends TestUBaseModule
 		return f.substring(0, 1).toUpperCase() + f.substring(1).toLowerCase();
 	}
 
-	/**
-	 * {subject, html, text} of the Daily Challenge email (copy: docs/copy/desafio-diario-minsur.es.md; the {minutos} clause is left
-	 * out, nothing estimates it before the day's set is built). Pure.
-	 */
-	public static String[] emailContent(boolean inEnglish, String inName, String inTutor, String inLink)
-	{
-		boolean named = inName != null && !inName.isEmpty();
-		String subject = inEnglish ? (named ? inName + ", your" : "Your") + " Daily Challenge is waiting"
-				: (named ? inName + ", tu" : "Tu") + " Desafío Diario te espera";
-		String pre = inEnglish ? "It only takes a few minutes. " + inTutor + " has it ready." : "Solo te toma unos minutos. " + inTutor + " ya lo tiene listo.";
-		String hello = inEnglish ? (named ? "Hi " + inName + "," : "Hi,") : (named ? "Hola " + inName + ":" : "Hola:");
-		String p1 = inEnglish ? "Today’s Daily Challenge is ready. It’s just a few questions." : "Tu Desafío Diario de hoy ya está listo. Son pocas preguntas.";
-		String p2 = inEnglish ? "Every day you complete it, you reinforce what you already know and " + inTutor + " learns which topics you need to practise most."
-				: "Cada día que lo completas, refuerzas lo que ya sabes y " + inTutor + " aprende qué temas necesitas practicar más.";
-		String button = inEnglish ? "Start my challenge" : "Empezar mi desafío";
-		String bye = inEnglish ? "See you in the app!" : "¡Nos vemos en la app!";
-		String foot = inEnglish ? "You’re receiving this email because you have a TestU account. If the button doesn’t work, open the app and sign in with your email."
-				: "Recibes este correo porque tienes una cuenta en TestU. Si el botón no funciona, abre la app e ingresa con tu correo.";
-		String text = hello + "\n\n" + p1 + "\n\n" + p2 + "\n\n" + button + ": " + inLink + "\n\n" + bye + "\n" + inTutor + "\n\n" + foot + "\n";
-		String p = "<p style=\"margin:0 0 16px;font-size:16px;line-height:1.5;color:#1a1a1a\">";
-		String html = "<!DOCTYPE html><html><body style=\"margin:0;padding:0;background:#f4f4f5\">"
-				+ "<span style=\"display:none;max-height:0;overflow:hidden;opacity:0\">" + esc(pre) + "</span>"
-				+ "<div style=\"max-width:520px;margin:0 auto;padding:32px 24px;font-family:Helvetica,Arial,sans-serif;background:#ffffff\">"
-				+ p + esc(hello) + "</p>" + p + esc(p1) + "</p>" + p + esc(p2) + "</p>"
-				+ "<p style=\"margin:28px 0;text-align:center\"><a href=\"" + esc(inLink) + "\" style=\"display:inline-block;padding:14px 28px;border-radius:8px;"
-				+ "background:#18181b;color:#ffffff;font-size:16px;font-weight:bold;text-decoration:none\">" + esc(button) + "</a></p>"
-				+ p + esc(bye) + "<br>" + esc(inTutor) + "</p>"
-				+ "<p style=\"margin:32px 0 0;font-size:12px;line-height:1.5;color:#71717a\">" + esc(foot) + "</p>"
-				+ "</div></body></html>";
-		return new String[] {subject, html, text};
-	}
-
 	private static String esc(String s)
 	{
 		return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
@@ -1579,8 +1915,9 @@ public class TestULearningModule extends TestUBaseModule
 
 	/**
 	 * services/testu/learn/dailychallengeemail.json -- the signed-in learner's own Daily Challenge email, for QA: GET = preview
-	 * {ok, to, subject, text, html, link, due} with a freshly minted link (replaces any link emailed earlier); POST send=true also
-	 * mails it to that learner. Never another user's: a link is a sign-in.
+	 * {ok, to, from, subject, html, link, due, eligible} with a freshly minted link (replaces any link emailed earlier); eligible = the
+	 * job would mail this learner (mayReceive). POST send=true also mails it to that learner, whatever eligible says. Never another
+	 * user's: a link is a sign-in.
 	 */
 	public void dailyChallengeEmailPreview(WebPageRequest inReq) throws Exception
 	{
@@ -1602,10 +1939,12 @@ public class TestULearningModule extends TestUBaseModule
 		JSONObject out = new JSONObject();
 		out.put("ok", Boolean.TRUE);
 		out.put("to", u.get("email"));
+		out.put("from", emailFrom(archive));
 		out.put("subject", mail[0]);
 		out.put("html", mail[1]);
-		out.put("text", mail[2]);
-		out.put("link", mail[3]);
+		out.put("link", mail[2]);
+		out.put("eligible", mayReceive(archive.getCatalogSettingValue("testu_dailychallengeemail"), archive.getCatalogSettingValue("testu_dailychallengeemail_only"),
+				u.get("email"), rolePermissions(archive, u.getId(), new java.util.HashMap<>())));
 		out.put("sent", send);
 		out.put("due", emailDueKey(u.getId(), zoneOf(u.get("timezone"), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now()));
 		reply(inReq, out);
