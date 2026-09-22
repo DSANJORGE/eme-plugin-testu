@@ -22,8 +22,9 @@ import tech.genailabs.tutor.TestULearningModule;
  * Pure checks of the Daily Challenge email (no server): the weekday / 09:00 / timezone selection and the once-a-day key, the
  * sign-in link token, who receives it (master switch, role permission, test allowlist), the weekday copy with the streak line,
  * the "what to practise next" recommendation and the "done" screen funnel. From the server root, after bin/compile.sh:
- * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java [previewdir]
- * With previewdir, also writes the Spanish previews (one per weekday, with and without streak data) there.
+ * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java [previewdir [otppreviewdir]]
+ * With previewdir, also writes the Spanish previews (one per weekday, with and without streak data) there; with a second dir, the
+ * login-code email previews (es, en).
  */
 public class DailyChallengeEmailCheck
 {
@@ -173,6 +174,20 @@ public class DailyChallengeEmailCheck
 		ok("assetlinks: statement shape", List.of("delegate_permission/common.handle_all_urls").equals(st.get("relation")) && "android_app".equals(tg.get("namespace"))
 			&& "world.eme.genailabs".equals(tg.get("package_name")) && List.of("AA:BB", "CC:DD").equals(tg.get("sha256_cert_fingerprints")), al);
 
+		// ---- login-code (OTP) email: same shell, code big and whole, validity, language, escaping
+		String[] otpEs = TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", avatar, "482913", "diego@x.pe");
+		ok("otp es subject", "Tu código para entrar a TestU".equals(otpEs[0]), otpEs[0]);
+		ok("otp es: code whole and big, validity, tutor header", otpEs[1].contains(">482913</span>") && otpEs[1].contains("font-size:34px")
+			&& otpEs[1].contains("Vale por 1 hora y solo se puede usar una vez.") && otpEs[1].contains(">IRIS<") && otpEs[1].contains(avatar)
+			&& otpEs[1].contains("CÓDIGO DE ACCESO"), "");
+		String dcShell = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null)[1];
+		ok("otp shares the Daily Challenge shell", otpEs[1].substring(0, otpEs[1].indexOf("<title>")).equals(dcShell.substring(0, dcShell.indexOf("<title>")))
+			&& otpEs[1].contains("class=\"tu-card\"") && dcShell.contains("class=\"tu-card\""), "");
+		String[] otpEn = TestULearningModule.loginCodeEmailContent(true, "", "Sully", null, "000123", "a@x.pe");
+		ok("otp en", "Your TestU sign-in code".equals(otpEn[0]) && otpEn[1].contains("It works for 1 hour and only once.") && otpEn[1].contains("Hi,")
+			&& otpEn[1].contains(">000123</span>") && !otpEn[1].contains("<img"), otpEn[0]);
+		ok("otp escapes", TestULearningModule.loginCodeEmailContent(false, "<b>", "IRIS", null, "1<2", "<x>")[1].contains("1&lt;2"), "");
+
 		// ---- previews (optional arg = output dir): the 5 weekdays in Spanish, Minsur/IRIS, Diego, with and without streak data
 		if (args.length > 0)
 		{
@@ -190,6 +205,16 @@ public class DailyChallengeEmailCheck
 					}
 				}
 				System.out.println("previews written to " + dir.toAbsolutePath());
+				if (args.length > 1) // the login-code email, es + en
+				{
+					java.nio.file.Path otp = java.nio.file.Files.createDirectories(java.nio.file.Paths.get(args[1]));
+					String av = TestULearningModule.absoluteUrl("http://localhost:8080/site/learn/", "/site/mediadb/testu/iris.png");
+					String[] es = TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", av, "482913", "diego@genailabs.tech");
+					String[] enm = TestULearningModule.loginCodeEmailContent(true, "Diego", "IRIS", av, "482913", "diego@genailabs.tech");
+					java.nio.file.Files.writeString(otp.resolve("codigo-es.html"), es[1].replace("<title>", "<title>[" + es[0] + "] "));
+					java.nio.file.Files.writeString(otp.resolve("code-en.html"), enm[1].replace("<title>", "<title>[" + enm[0] + "] "));
+					System.out.println("login-code previews written to " + otp.toAbsolutePath());
+				}
 			}
 			catch (java.io.IOException e)
 			{

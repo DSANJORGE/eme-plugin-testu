@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TestU's own login-code email (the OTP of services/authentication/sendusercode.json), for this site only: this file and
+     sendusercodeemail.html sit at /site/mediadb/authentication/ and so win over the stock
+     plugins/community/html/default/authentication/ ones, which every other app and catalog keeps. The body, subject and sender
+     come from TestULearningModule.loginCodeEmail (shared shell with the Daily Challenge email). -->
+<page>
+  <inner-layout />
+  <page-action name="TestULearningModule.loginCodeEmail"/>
+</page>

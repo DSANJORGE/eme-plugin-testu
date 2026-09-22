@@ -1840,48 +1840,128 @@ public class TestULearningModule extends TestUBaseModule
 				: (named ? "Hola " + inName + ", tu" : "Tu") + " desafío del " + dayname;
 		String hello = inEnglish ? (named ? "Hi " + inName + "," : "Hi,") : (named ? "Hola " + inName + ":" : "Hola:");
 		String recent = recentLine(inEnglish, inToday, inRecent);
-		String eyebrow = inEnglish ? "DAILY CHALLENGE" : "DESAFÍO DIARIO";
 		String button = inEnglish ? "Start my challenge" : "Empezar mi desafío";
 		String foot = inEnglish ? "You’re receiving this email because you have a TestU account. If the button doesn’t work, open the app and sign in with your email."
 				: "Recibes este correo porque tienes una cuenta en TestU. Si el botón no funciona, abre la app e ingresa con tu correo.";
+		String p = "<p style=\"margin:0 0 16px;" + SANS + "font-size:16px;line-height:1.6;color:#D6D4D0\">";
+		String inner = p + esc(hello) + "</p>" + p + esc(day[2]) + "</p>"
+				+ (recent == null ? ""
+						: "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 20px\"><tr>"
+								+ "<td bgcolor=\"#17171B\" style=\"background:#17171B;border:1px solid #222227;border-left:3px solid #E8703A;border-radius:8px;padding:12px 14px;"
+								+ SANS + "font-size:15px;line-height:1.5;color:#ECEBE7\">" + esc(recent) + "</td></tr></table>")
+				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:12px 0 28px\"><tr>"
+				+ "<td align=\"center\" bgcolor=\"#F4F2EE\" style=\"background:#F4F2EE;border-radius:8px\">"
+				+ "<a href=\"" + esc(inLink) + "\" style=\"display:block;padding:15px 20px;" + SANS + "font-size:15px;font-weight:700;letter-spacing:0.05em;"
+				+ "color:#0A0A0B;text-decoration:none;border-radius:8px\">" + esc(button) + "</a></td></tr></table>";
+		String html = emailShell(inEnglish, subject, day[0], inTutor, inAvatar, inEnglish ? "DAILY CHALLENGE" : "DESAFÍO DIARIO", day[1], inner, day[3], foot);
+		return new String[] {subject, html};
+	}
 
-		// Tokens: bg #0A0A0B, card #121215, line #222227, card2 #17171B, ink #ECEBE7, inkSoft #D6D4D0, mut #8B8F98, faint #6B6F78,
-		// orange #E8703A (brand/progress), CTA #F4F2EE on #0A0A0B. Sora = display, Geist = text, GeistMono = eyebrow labels.
-		String sans = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
-		String p = "<p style=\"margin:0 0 16px;" + sans + "font-size:16px;line-height:1.6;color:#D6D4D0\">";
-		String tutorCell = "<td style=\"vertical-align:middle\"><div style=\"" + sans + "font-size:15px;font-weight:600;color:#ECEBE7\">" + esc(inTutor) + "</div>"
-				+ "<div style=\"font-family:GeistMono,ui-monospace,Menlo,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0.12em;color:#8B8F98;padding-top:3px\">"
-				+ esc(eyebrow) + "</div></td>";
+	// Tokens (app-genailabs lib/testu/testu_theme.dart): bg #0A0A0B, card #121215, line #222227, card2 #17171B, ink #ECEBE7,
+	// inkSoft #D6D4D0, mut #8B8F98, faint #6B6F78, orange #E8703A (brand/progress), CTA #F4F2EE on #0A0A0B. Sora = display,
+	// Geist = text, GeistMono = eyebrow labels.
+	static final String SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
+	static final String MONO = "font-family:GeistMono,'Geist Mono',ui-monospace,Menlo,Consolas,monospace;";
+
+	/**
+	 * The TestU email shell every TestU email shares (Daily Challenge, login code): dark theme, table layout with inline CSS for
+	 * Gmail, Outlook and Apple Mail, 480px card that narrows on a phone. Header = tutor avatar (inAvatar, absolute URL; null = none)
+	 * + name + inEyebrow; then inHeading, inInnerHtml (already HTML), inClosing signed by the tutor, and inFoot under the card. Pure.
+	 */
+	public static String emailShell(boolean inEnglish, String inTitle, String inPreheader, String inTutor, String inAvatar, String inEyebrow, String inHeading,
+			String inInnerHtml, String inClosing, String inFoot)
+	{
+		String tutorCell = "<td style=\"vertical-align:middle\"><div style=\"" + SANS + "font-size:15px;font-weight:600;color:#ECEBE7\">" + esc(inTutor) + "</div>"
+				+ "<div style=\"" + MONO + "font-size:11px;font-weight:500;letter-spacing:0.12em;color:#8B8F98;padding-top:3px\">" + esc(inEyebrow) + "</div></td>";
 		String avatarCell = inAvatar == null ? ""
 				: "<td width=\"56\" style=\"width:56px;vertical-align:middle\"><img src=\"" + esc(inAvatar) + "\" width=\"44\" height=\"44\" alt=\"" + esc(inTutor)
 						+ "\" style=\"display:block;width:44px;height:44px;border-radius:22px;border:1px solid #2C2C33;object-fit:cover\"></td>";
-		String html = "<!DOCTYPE html><html lang=\"" + (inEnglish ? "en" : "es") + "\"><head><meta charset=\"utf-8\">"
+		return "<!DOCTYPE html><html lang=\"" + (inEnglish ? "en" : "es") + "\"><head><meta charset=\"utf-8\">"
 				+ "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark\">"
-				+ "<meta name=\"supported-color-schemes\" content=\"dark\"><title>" + esc(subject) + "</title>"
-				+ "<link href=\"https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@500&family=Sora:wght@700&display=swap\" rel=\"stylesheet\">"
+				+ "<meta name=\"supported-color-schemes\" content=\"dark\"><title>" + esc(inTitle) + "</title>"
+				+ "<link href=\"https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@500;600&family=Sora:wght@700&display=swap\" rel=\"stylesheet\">"
 				+ "<style>:root{color-scheme:dark}@media (max-width:520px){.tu-card{padding:28px 20px !important}.tu-h1{font-size:22px !important}}</style></head>"
 				+ "<body style=\"margin:0;padding:0;background:#0A0A0B\" bgcolor=\"#0A0A0B\">"
-				+ "<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:#0A0A0B\">" + esc(day[0]) + "</div>"
+				+ "<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:#0A0A0B\">" + esc(inPreheader) + "</div>"
 				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" bgcolor=\"#0A0A0B\" style=\"background:#0A0A0B\"><tr><td align=\"center\" style=\"padding:32px 12px\">"
 				+ "<table role=\"presentation\" width=\"480\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"width:100%;max-width:480px\"><tr>"
 				+ "<td class=\"tu-card\" bgcolor=\"#121215\" style=\"background:#121215;border:1px solid #222227;border-radius:14px;padding:32px 28px\">"
 				+ "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 0 28px\"><tr>" + avatarCell + tutorCell + "</tr></table>"
 				+ "<h1 class=\"tu-h1\" style=\"margin:0 0 18px;font-family:Sora,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:24px;font-weight:700;"
-				+ "line-height:1.25;letter-spacing:-0.01em;color:#ECEBE7\">" + esc(day[1]) + "</h1>"
-				+ p + esc(hello) + "</p>" + p + esc(day[2]) + "</p>"
-				+ (recent == null ? ""
-						: "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 20px\"><tr>"
-								+ "<td bgcolor=\"#17171B\" style=\"background:#17171B;border:1px solid #222227;border-left:3px solid #E8703A;border-radius:8px;padding:12px 14px;"
-								+ sans + "font-size:15px;line-height:1.5;color:#ECEBE7\">" + esc(recent) + "</td></tr></table>")
-				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:12px 0 28px\"><tr>"
-				+ "<td align=\"center\" bgcolor=\"#F4F2EE\" style=\"background:#F4F2EE;border-radius:8px\">"
-				+ "<a href=\"" + esc(inLink) + "\" style=\"display:block;padding:15px 20px;" + sans + "font-size:15px;font-weight:700;letter-spacing:0.05em;"
-				+ "color:#0A0A0B;text-decoration:none;border-radius:8px\">" + esc(button) + "</a></td></tr></table>"
-				+ "<p style=\"margin:0;" + sans + "font-size:16px;line-height:1.6;color:#D6D4D0\">" + esc(day[3]) + "</p>"
-				+ "<p style=\"margin:4px 0 0;" + sans + "font-size:15px;font-weight:600;color:#ECEBE7\">" + esc(inTutor) + "</p>"
-				+ "</td></tr><tr><td style=\"padding:20px 8px 0;" + sans + "font-size:12px;line-height:1.55;color:#6B6F78\">" + esc(foot) + "</td></tr></table>"
+				+ "line-height:1.25;letter-spacing:-0.01em;color:#ECEBE7\">" + esc(inHeading) + "</h1>"
+				+ inInnerHtml
+				+ "<p style=\"margin:0;" + SANS + "font-size:16px;line-height:1.6;color:#D6D4D0\">" + esc(inClosing) + "</p>"
+				+ "<p style=\"margin:4px 0 0;" + SANS + "font-size:15px;font-weight:600;color:#ECEBE7\">" + esc(inTutor) + "</p>"
+				+ "</td></tr><tr><td style=\"padding:20px 8px 0;" + SANS + "font-size:12px;line-height:1.55;color:#6B6F78\">" + esc(inFoot) + "</td></tr></table>"
 				+ "</td></tr></table></body></html>";
+	}
+
+	/** How long an eMe login code works: TempSecurityKeyAuthenticator accepts codes from the last hour; one use (it deletes them). */
+	public static final int LOGIN_CODE_HOURS = 1;
+
+	/**
+	 * {subject, html} of the TestU login-code email (copy: docs/copy/otp-email.es.md): the code big, in one piece so a copy takes
+	 * exactly it, its validity, and what to do if it was not asked for. Same shell as the Daily Challenge email. Pure.
+	 */
+	public static String[] loginCodeEmailContent(boolean inEnglish, String inName, String inTutor, String inAvatar, String inCode, String inEmail)
+	{
+		boolean named = inName != null && !inName.isEmpty();
+		String subject = inEnglish ? "Your TestU sign-in code" : "Tu código para entrar a TestU";
+		String hello = inEnglish ? (named ? "Hi " + inName + "," : "Hi,") : (named ? "Hola " + inName + ":" : "Hola:");
+		String use = inEnglish ? "Use this code to sign in to TestU:" : "Usa este código para entrar a TestU:";
+		String valid = inEnglish ? "It works for " + LOGIN_CODE_HOURS + " hour and only once." : "Vale por " + LOGIN_CODE_HOURS + " hora y solo se puede usar una vez.";
+		String notyou = inEnglish ? "If you didn’t ask for it, you can ignore this email: nobody can sign in without the code."
+				: "Si no lo pediste, puedes ignorar este correo: nadie puede entrar sin el código.";
+		String p = "<p style=\"margin:0 0 16px;" + SANS + "font-size:16px;line-height:1.6;color:#D6D4D0\">";
+		String inner = p + esc(hello) + "</p>" + p + esc(use) + "</p>"
+				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 16px\"><tr>"
+				+ "<td align=\"center\" bgcolor=\"#17171B\" style=\"background:#17171B;border:1px solid #2C2C33;border-radius:10px;padding:18px 12px\">"
+				+ "<span style=\"" + MONO + "font-size:34px;font-weight:600;letter-spacing:0.28em;padding-left:0.28em;color:#ECEBE7;-webkit-user-select:all;user-select:all\">"
+				+ esc(inCode == null ? "" : inCode) + "</span></td></tr></table>"
+				+ p + esc(valid) + "</p>"
+				+ "<p style=\"margin:0 0 24px;" + SANS + "font-size:14px;line-height:1.55;color:#8B8F98\">" + esc(notyou) + "</p>";
+		String foot = inEnglish ? "You’re receiving this email because a TestU sign-in code was requested for " + inEmail + "."
+				: "Recibes este correo porque se pidió un código para entrar a TestU con " + inEmail + ".";
+		String pre = inEnglish ? "Your code: " + inCode + " · valid for " + LOGIN_CODE_HOURS + " hour." : "Tu código: " + inCode + " · vale por " + LOGIN_CODE_HOURS + " hora.";
+		String html = emailShell(inEnglish, subject, pre, inTutor, inAvatar, inEnglish ? "SIGN-IN CODE" : "CÓDIGO DE ACCESO",
+				inEnglish ? "Your code to sign in" : "Tu código para entrar", inner, inEnglish ? "See you in the app." : "Nos vemos en la app.", foot);
 		return new String[] {subject, html};
+	}
+
+	/**
+	 * Page action of the TestU site's own login-code email template (webapp/site/mediadb/authentication/sendusercodeemail.xconf,
+	 * which overrides the stock community one for this site only): renders loginCodeEmailContent into page value testuloginhtml and
+	 * sets the email's subject, sender (testu_email_from, else system_from_email) and sender name (the tutor). The stock flow
+	 * (Admin.emailUserLoginCode -> PasswordHelper -> TemplateWebEmail) reads subject and sender after the template has rendered,
+	 * and sends the template as the HTML part only. Language: the user's, else the tutor persona's.
+	 */
+	public void loginCodeEmail(WebPageRequest inReq)
+	{
+		MediaArchive archive = getMediaArchive(inReq);
+		Object code = inReq.getPageValue("templogincode");
+		String email = (String) inReq.getPageValue("mail");
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		String tutor = persona == null || persona.getName() == null ? "TestU" : persona.getName();
+		User u = email == null ? null : getUserManager(inReq).getUserByEmail(email);
+		String lang = u == null ? null : u.get("language");
+		if (lang == null || lang.isEmpty())
+		{
+			lang = persona == null ? null : persona.get("tutorlanguage");
+		}
+		String learnurl = learnUrl(archive);
+		String avatar = learnurl == null || persona == null ? null : absoluteUrl(learnurl, persona.get("avatar"));
+		String[] m = loginCodeEmailContent(lang != null && lang.startsWith("en"), givenName(u == null ? null : u.getFirstName()), tutor, avatar,
+				code == null ? "" : String.valueOf(code), email == null ? "" : email);
+		Object settings = inReq.getPageValue("emailsettings"); // SendMailModule.EMAIL_SETTINGS, put by PasswordHelper before the render
+		if (settings instanceof org.entermediadb.email.WebEmail)
+		{
+			org.entermediadb.email.WebEmail w = (org.entermediadb.email.WebEmail) settings;
+			w.setSubject(m[0]);
+			w.setFrom(emailFrom(archive));
+			w.setFromName(tutor);
+		}
+		inReq.putPageValue("testuloginhtml", m[1]);
 	}
 
 	/**
