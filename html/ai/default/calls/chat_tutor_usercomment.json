@@ -12,6 +12,8 @@
 ## One copy for every provider (2026-09-21): ai/llama and ai/openai fall back here, and
 ## OpenAiConnection.stripLlamaExtensions() turns chat_template_kwargs into reasoning_effort
 ## for non-llama.cpp servers. max_tokens 2000 covers gpt-oss reasoning; rule 1 caps the reply.
+## Voice variant ($voice, from the app's context_voice=true): the schema gains a second field
+## "spoken", said aloud by speak.json; "message" stays the written reply (bubble, quote, boxes).
 #set($lesson = "")
 ## Built outside the literal: a directive inside #jesc("...") breaks the parse.
 #set($refs = "")
@@ -24,6 +26,15 @@ ${referenceexcerpts}")
 #foreach($h in $chathistory)
 #set($lesson = "${lesson}${h.content}
 ")
+#end
+## Voice mode: the spoken rules, appended after the written rules so the cached prefix holds.
+#set($voicerules = "")
+#set($voicetrailer = "")
+#if($voice)
+#set($voicerules = "
+
+VOICE MODE: the learner is talking to you and will hear the reply, not read it. Fill message exactly as rules 1 to 10 say, and also fill spoken: the same answer said out loud. Rules for spoken, replacing rules 2, 3, 4 and 6 for that field only: two or three short sentences, at most 45 words, natural spoken Spanish addressing the learner as tú; no brackets, no citation, no title, page or time, no markdown, no lists, no quoting; end with one short spoken question offering what to ask next, the offer of the first >> line of message said naturally. Rules 1, 5, 7, 8, 9 and 10 apply to spoken as to message: same small-talk sentence, same grounding, same not-found sentence.")
+#set($voicetrailer = " Also fill spoken: the same answer as two or three short spoken sentences, at most 45 words, no brackets, ending with one spoken question.")
 #end
 ## The site's tutor persona: same lookup as personas/scripts/me.groovy (tutorpersona row
 ## named by the catalog setting, default "iris"). Name and the personality field, which
@@ -59,7 +70,7 @@ RULES, all mandatory:
 7. The question in play: if the learner asks for a hint before answering, do NOT restate or paraphrase any option and do NOT say which one is right; name the principle the question tests and give one clue about where the options differ; the >> follow-ups must not point to any option either. If they already answered, explain why the correct option is right and why theirs was wrong, in relation to what they chose and how sure they were. A question about the question in play (why the other options are wrong, why theirs was wrong, what the correct one means) is always answered from its options and rationale: rule 5 never applies to it. An explanation taken from the question's rationale carries no citation, unless the Source of the question supports it, then cite that source.
 8. Never shame the learner. Never reply with a system-style refusal such as 'the provided context does not contain'.
 9. Mode: in evaluation mode, during the attempt, help only with how the app or the question format works; no concepts, hints, sources or content. In learn, improve and dailychallenge mode, rules 1 to 8 apply.
-10. Mastery: adapt depth to the learner's mastery band of the subtopic. Beginner: one plain concept with a concrete example from the lesson. Competent: the key distinction. Expert: the nuance or exception. Past wrong answers on this question given with confidence are a misconception to name gently.
+10. Mastery: adapt depth to the learner's mastery band of the subtopic. Beginner: one plain concept with a concrete example from the lesson. Competent: the key distinction. Expert: the nuance or exception. Past wrong answers on this question given with confidence are a misconception to name gently.${voicerules}
 
 LESSON CONTEXT (the lesson, the current question with its options, the correct option and its rationale, the learner's answer and confidence when given, and their progress):
 ${lesson}${refs}")
@@ -68,7 +79,7 @@ ${lesson}${refs}")
 			"role": "user",
 			"content": #jesc("${learnerprompt}
 
-[[Reply as ${tutorname}, in Spanish, two or three sentences and at most 60 words: answer this message with what the excerpts, the lesson or the question in play say about it, every claim from an excerpt with its [Title, p. N] citation, then up to two lines starting with >> offering what to ask next.]]")
+[[Reply as ${tutorname}, in Spanish, two or three sentences and at most 60 words: answer this message with what the excerpts, the lesson or the question in play say about it, every claim from an excerpt with its [Title, p. N] citation, then up to two lines starting with >> offering what to ask next.${voicetrailer}]]")
 		}
 	],
 	"temperature": 0.3,
@@ -82,9 +93,11 @@ ${lesson}${refs}")
 			"schema": {
 				"type": "object",
 				"properties": {
-					"message": { "type": "string" }
+					"message": { "type": "string" }#if($voice),
+					"spoken": { "type": "string" }#end
+
 				},
-				"required": ["message"],
+				"required": ["message"#if($voice), "spoken"#end],
 				"additionalProperties": false
 			}
 		}
