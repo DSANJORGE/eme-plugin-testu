@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- TestU tutor chat history: a free chat with the tutor is its own agenttutorchat channel marked
+     testuchat (sessions skip those, TopicManager/ChatModule). Merged with the plugin channel fields. -->
+<properties beanname="dataSearcher">
+  <property id="testuchat" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">TestU free chat</language><language id="es">Chat libre TestU</language></name></property>
+  <property id="testuhidden" index="true" stored="true" editable="true" type="boolean" datatype="boolean"><name><language id="en">Hidden by learner</language><language id="es">Oculto por el alumno</language></name></property>
+  <property id="testudocid" index="true" stored="true" editable="false"><name><language id="en">Document</language><language id="es">Documento</language></name></property>
+  <property id="testudoctitle" index="true" stored="true" editable="false"><name><language id="en">Document title</language><language id="es">Título del documento</language></name></property>
+  <property id="testudocpage" index="true" stored="true" editable="false"><name><language id="en">Document page</language><language id="es">Página del documento</language></name></property>
+</properties>
