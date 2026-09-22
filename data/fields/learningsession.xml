@@ -3,7 +3,8 @@
      answer.json / exposure.json require its id (learningsession) and accept only its questions; Learn also only the next unanswered one.
      The Daily Challenge session is its dailychallengeset row. questionlist = JSON array of question ids in served order;
      inputs = JSON policy context (policy, requiredlevel, policyversion, lockedquestions). Valid until expiresat (7 days).
-     entitytopic = the scope's topic; source = what started it: dailydone (the Daily Challenge "done" screen's recommendation), else empty. -->
+     entitytopic = the scope's topic; source = what started it: dailydone (the Daily Challenge "done" screen's recommendation), or the entry that brought the learner in:
+     email | push | app (usageevent session_start carries the same, with its campaign); else empty. -->
 <properties beanname="dataSearcher">
   <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
   <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>

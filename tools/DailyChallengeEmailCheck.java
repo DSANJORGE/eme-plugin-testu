@@ -22,8 +22,9 @@ import tech.genailabs.tutor.TestULearningModule;
  * Pure checks of the Daily Challenge email (no server): the weekday / 09:00 / timezone selection and the once-a-day key, the
  * sign-in link token, who receives it (master switch, role permission, test allowlist), the weekday copy with the streak line,
  * the "what to practise next" recommendation and the "done" screen funnel. From the server root, after bin/compile.sh:
- * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java [previewdir]
- * With previewdir, also writes the Spanish previews (one per weekday, with and without streak data) there.
+ * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java [previewdir [otppreviewdir]]
+ * With previewdir, also writes the Spanish previews (one per weekday, with and without streak data) there; with a second dir, the
+ * login-code email previews (es, en).
  */
 public class DailyChallengeEmailCheck
 {
@@ -156,6 +157,37 @@ public class DailyChallengeEmailCheck
 			&& "Ayer acertaste 4 de 5 en tu Desafío. ¡Vamos por otro!".equals(TestULearningModule.recentLine(false, thu, new int[] {1, 4, 5})), "");
 		ok("given name", "Renzo".equals(TestULearningModule.givenName("RENZO ALDAIR")) && "".equals(TestULearningModule.givenName(null)), TestULearningModule.givenName("RENZO ALDAIR"));
 
+		// ---- App Links / Universal Links: the two .well-known files
+		ok(".well-known content type", "application/json".equals(TestULearningModule.WELL_KNOWN_TYPE), "");
+		JSONObject aasa = TestULearningModule.appleAppSiteAssociation("VJ8RCF92K4.world.eme.genailabs", "/site/learn/");
+		Object parsed = org.json.simple.JSONValue.parse(aasa.toJSONString());
+		JSONObject detail = (JSONObject) ((java.util.List) ((JSONObject) ((JSONObject) parsed).get("applinks")).get("details")).get(0);
+		ok("AASA: applinks.details[0].appIDs", List.of("VJ8RCF92K4.world.eme.genailabs").equals(detail.get("appIDs")), aasa);
+		ok("AASA: scoped to the learn path", "/site/learn/*".equals(((JSONObject) ((java.util.List) detail.get("components")).get(0)).get("/"))
+			&& List.of("/site/learn/*").equals(detail.get("paths")), aasa);
+		ok("AASA: several app ids", ((java.util.List) ((JSONObject) ((java.util.List) ((JSONObject) TestULearningModule.appleAppSiteAssociation("A.x, B.y", "/l/").get("applinks"))
+			.get("details")).get(0)).get("appIDs")).size() == 2, "");
+		ok("assetlinks: [] without a signing fingerprint", TestULearningModule.assetLinks("world.eme.genailabs", null).isEmpty()
+			&& "[]".equals(TestULearningModule.assetLinks("p", " ").toJSONString()), "");
+		Object al = org.json.simple.JSONValue.parse(TestULearningModule.assetLinks("world.eme.genailabs", "aa:bb, CC:DD").toJSONString());
+		JSONObject st = (JSONObject) ((java.util.List) al).get(0), tg = (JSONObject) st.get("target");
+		ok("assetlinks: statement shape", List.of("delegate_permission/common.handle_all_urls").equals(st.get("relation")) && "android_app".equals(tg.get("namespace"))
+			&& "world.eme.genailabs".equals(tg.get("package_name")) && List.of("AA:BB", "CC:DD").equals(tg.get("sha256_cert_fingerprints")), al);
+
+		// ---- login-code (OTP) email: same shell, code big and whole, validity, language, escaping
+		String[] otpEs = TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", avatar, "482913", "diego@x.pe");
+		ok("otp es subject", "Tu código para entrar a TestU".equals(otpEs[0]), otpEs[0]);
+		ok("otp es: code whole and big, validity, tutor header", otpEs[1].contains(">482913</span>") && otpEs[1].contains("font-size:34px")
+			&& otpEs[1].contains("Vale por 1 hora y solo se puede usar una vez.") && otpEs[1].contains(">IRIS<") && otpEs[1].contains(avatar)
+			&& otpEs[1].contains("CÓDIGO DE ACCESO"), "");
+		String dcShell = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null)[1];
+		ok("otp shares the Daily Challenge shell", otpEs[1].substring(0, otpEs[1].indexOf("<title>")).equals(dcShell.substring(0, dcShell.indexOf("<title>")))
+			&& otpEs[1].contains("class=\"tu-card\"") && dcShell.contains("class=\"tu-card\""), "");
+		String[] otpEn = TestULearningModule.loginCodeEmailContent(true, "", "Sully", null, "000123", "a@x.pe");
+		ok("otp en", "Your TestU sign-in code".equals(otpEn[0]) && otpEn[1].contains("It works for 1 hour and only once.") && otpEn[1].contains("Hi,")
+			&& otpEn[1].contains(">000123</span>") && !otpEn[1].contains("<img"), otpEn[0]);
+		ok("otp escapes", TestULearningModule.loginCodeEmailContent(false, "<b>", "IRIS", null, "1<2", "<x>")[1].contains("1&lt;2"), "");
+
 		// ---- previews (optional arg = output dir): the 5 weekdays in Spanish, Minsur/IRIS, Diego, with and without streak data
 		if (args.length > 0)
 		{
@@ -173,6 +205,16 @@ public class DailyChallengeEmailCheck
 					}
 				}
 				System.out.println("previews written to " + dir.toAbsolutePath());
+				if (args.length > 1) // the login-code email, es + en
+				{
+					java.nio.file.Path otp = java.nio.file.Files.createDirectories(java.nio.file.Paths.get(args[1]));
+					String av = TestULearningModule.absoluteUrl("http://localhost:8080/site/learn/", "/site/mediadb/testu/iris.png");
+					String[] es = TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", av, "482913", "diego@genailabs.tech");
+					String[] enm = TestULearningModule.loginCodeEmailContent(true, "Diego", "IRIS", av, "482913", "diego@genailabs.tech");
+					java.nio.file.Files.writeString(otp.resolve("codigo-es.html"), es[1].replace("<title>", "<title>[" + es[0] + "] "));
+					java.nio.file.Files.writeString(otp.resolve("code-en.html"), enm[1].replace("<title>", "<title>[" + enm[0] + "] "));
+					System.out.println("login-code previews written to " + otp.toAbsolutePath());
+				}
 			}
 			catch (java.io.IOException e)
 			{
@@ -227,6 +269,23 @@ public class DailyChallengeEmailCheck
 		ok("funnel email", counts(f, "email").equals("shown=3 clicked=1 dismissed=1 started=1 completed=1 ownstarted=2 ownsame=1 owndifferent=1"), counts(f, "email"));
 		ok("funnel app", counts(f, "app").equals("shown=3 clicked=1 dismissed=2 started=1 completed=0 ownstarted=1 ownsame=0 owndifferent=1"), counts(f, "app"));
 
+		// ---- Daily Challenge opens by entry channel and platform (engagement.json dailyopens), Lima day 2026-09-21
+		List<DoneRow> opens = new ArrayList<>();
+		opens.add(new DoneRow("a", "iOS", "email", null, Date.from(Instant.parse("2026-09-21T15:00:00Z")), false));
+		opens.add(new DoneRow("a", "iOS", "app", null, Date.from(Instant.parse("2026-09-21T18:00:00Z")), false)); // same day: first entry wins
+		opens.add(new DoneRow("b", "android", "push", null, Date.from(Instant.parse("2026-09-21T15:00:00Z")), false));
+		opens.add(new DoneRow("c", "web", "app", null, Date.from(Instant.parse("2026-09-21T15:00:00Z")), false));
+		opens.add(new DoneRow("c", "web", null, null, Date.from(Instant.parse("2026-09-22T15:00:00Z")), false)); // next day, old app: app
+		opens.add(new DoneRow("d", "web", "email", null, Date.from(Instant.parse("2026-09-22T04:00:00Z")), false)); // 23:00 Lima on the 21st
+		java.util.Map<String, Boolean> complete = new java.util.HashMap<>();
+		complete.put("a_20260921", true);
+		complete.put("c_20260922", true);
+		complete.put("d_20260921", false);
+		JSONObject op = TestUAnalyticsModule.dailyOpens(opens, complete, LIMA);
+		ok("opens: email 2 (1 done, rate 0.5), push 1, app 2 (1 done)", opensOf(op, "channels").equals("app=2/1/0.5 email=2/1/0.5 push=1/0/0.0"), opensOf(op, "channels"));
+		ok("opens by platform", opensOf(op, "platforms").equals("android=1/0/0.0 ios=1/1/1.0 web=3/1/0.333"), opensOf(op, "platforms"));
+		ok("no opens: rate null", ((JSONObject) ((JSONObject) TestUAnalyticsModule.dailyOpens(List.of(), complete, LIMA).get("channels")).get("push")).get("rate") == null, "");
+
 		System.out.println(failures == 0 ? "all daily challenge email checks passed" : failures + " FAILED");
 		System.exit(failures == 0 ? 0 : 1);
 	}
@@ -279,6 +338,17 @@ public class DailyChallengeEmailCheck
 	static DoneRow session(String user, String source, String topic, String hhmm, boolean complete)
 	{
 		return new DoneRow(user, "improve", source, topic, Date.from(Instant.parse("2026-09-21T" + hhmm + ":00Z")), complete);
+	}
+
+	static String opensOf(JSONObject o, String k)
+	{
+		StringBuilder sb = new StringBuilder();
+		for (Object e : new java.util.TreeMap<Object, Object>((JSONObject) o.get(k)).entrySet())
+		{
+			JSONObject c = (JSONObject) ((java.util.Map.Entry) e).getValue();
+			sb.append(sb.length() == 0 ? "" : " ").append(((java.util.Map.Entry) e).getKey()).append('=').append(c.get("opens")).append('/').append(c.get("completed")).append('/').append(c.get("rate"));
+		}
+		return sb.toString();
 	}
 
 	static String counts(JSONObject f, String entry)

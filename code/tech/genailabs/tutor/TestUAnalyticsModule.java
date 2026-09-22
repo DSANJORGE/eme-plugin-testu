@@ -982,6 +982,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		Set<String> live = new HashSet<>();
 		List<DoneRow> doneEvents = new ArrayList<>();
+		List<DoneRow> dcOpens = new ArrayList<>(); // session_start of a Daily Challenge: type = platform, source = entry
 		Map<String, Date> placeAt = new HashMap<>();
 		Map<String, String> placeOf = new HashMap<>();
 		Map<String, Set<String>> platforms = new HashMap<>();
@@ -1002,6 +1003,12 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			if (type != null && type.startsWith("dailydone_"))
 			{
 				doneEvents.add(new DoneRow(u, type, e.get("source"), e.get("entitytopic"), d, false));
+				continue;
+			}
+			if ("session_start".equals(type))
+			{
+				if ("dailychallenge".equals(e.get("mode")))
+					dcOpens.add(new DoneRow(u, e.get("platform"), e.get("source"), null, d, false));
 				continue;
 			}
 			if ("iris_rate".equals(type))
@@ -1151,6 +1158,20 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			doneSessions.add(new DoneRow(s.get("user"), mode, s.get("source"), s.get("entitytopic"), d, complete));
 		}
 
+		// Daily Challenge sets of the period, complete when every question was answered in it (its answers carry the set id).
+		Map<String, Boolean> dcComplete = new HashMap<>();
+		HitTracker sh = archive.query("dailychallengeset").after("datecreated", new Date(from.getTime() - 86400000L)).search();
+		sh.enableBulkOperations();
+		for (Object o : sh)
+		{
+			Data s = (Data) o;
+			if (!users.contains(s.get("user")))
+				continue;
+			Object ql = org.json.simple.JSONValue.parse(String.valueOf(s.get("questionlist")));
+			dcComplete.put(s.getId(), ql instanceof List && !((List) ql).isEmpty() && answeredIn.getOrDefault(s.getId(), Set.of()).containsAll(
+				((List<Object>) ql).stream().map(q -> q instanceof Map ? String.valueOf(((Map) q).get("questionid")) : String.valueOf(q)).collect(java.util.stream.Collectors.toList())));
+		}
+
 		JSONObject social = new JSONObject();
 		social.put("comments", comments);
 		social.put("commenters", commenters.size());
@@ -1173,8 +1194,63 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("modes", modes);
 		resp.put("platforms", platformOut);
 		resp.put("social", social);
-		resp.put("dailydone", dailyDoneFunnel(doneEvents, doneSessions, (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]));
+		java.time.ZoneId orgzone = (java.time.ZoneId) new LearningEngine(archive).orgZone()[0];
+		resp.put("dailydone", dailyDoneFunnel(doneEvents, doneSessions, orgzone));
+		resp.put("dailyopens", dailyOpens(dcOpens, dcComplete, orgzone));
 		return resp;
+	}
+
+	/** Entry channels and platforms of the Daily Challenge card, in display order. */
+	static final List<String> OPEN_CHANNELS = List.of("email", "push", "app"), OPEN_PLATFORMS = List.of("web", "ios", "android");
+
+	/**
+	 * Daily Challenge opens and completions by entry channel (email | push | app) and platform (web | ios | android), with each
+	 * channel's completion rate. One open per learner and org-local day, attributed to that day's first session_start (the entry
+	 * that brought them in first); completed = that day's set (id <user>_<yyyyMMdd>) finished. inOpens: type = platform, source =
+	 * entry (anything else counts as app / other). Pure.
+	 */
+	public static JSONObject dailyOpens(List<DoneRow> inOpens, Map<String, Boolean> inComplete, java.time.ZoneId inZone)
+	{
+		List<DoneRow> opens = new ArrayList<>(inOpens);
+		opens.sort(java.util.Comparator.comparing(o -> o.at));
+		Set<String> seen = new HashSet<>();
+		Map<String, int[]> byChannel = new java.util.LinkedHashMap<>(), byPlatform = new java.util.LinkedHashMap<>();
+		for (String c : OPEN_CHANNELS)
+			byChannel.put(c, new int[2]);
+		for (String p : OPEN_PLATFORMS)
+			byPlatform.put(p, new int[2]);
+		for (DoneRow o : opens)
+		{
+			String key = o.user + "_" + o.at.toInstant().atZone(inZone).toLocalDate().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+			if (!seen.add(key))
+				continue;
+			String ch = o.source != null && OPEN_CHANNELS.contains(o.source) ? o.source : "app";
+			String pl = o.type == null ? "other" : o.type.toLowerCase();
+			int done = Boolean.TRUE.equals(inComplete.get(key)) ? 1 : 0;
+			for (int[] c : new int[][] {byChannel.get(ch), byPlatform.computeIfAbsent(OPEN_PLATFORMS.contains(pl) ? pl : "other", k -> new int[2])})
+			{
+				c[0]++;
+				c[1] += done;
+			}
+		}
+		JSONObject out = new JSONObject();
+		out.put("channels", countsJson(byChannel));
+		out.put("platforms", countsJson(byPlatform));
+		return out;
+	}
+
+	private static JSONObject countsJson(Map<String, int[]> inCounts)
+	{
+		JSONObject o = new JSONObject();
+		for (Map.Entry<String, int[]> e : inCounts.entrySet())
+		{
+			JSONObject c = new JSONObject();
+			c.put("opens", e.getValue()[0]);
+			c.put("completed", e.getValue()[1]);
+			c.put("rate", e.getValue()[0] == 0 ? null : Math.round(1000.0 * e.getValue()[1] / e.getValue()[0]) / 1000.0);
+			o.put(e.getKey(), c);
+		}
+		return o;
 	}
 
 	/** A dailydone_* usage event (type, source = email|app, topic = the recommended one) or a learn/improve session (type = mode,

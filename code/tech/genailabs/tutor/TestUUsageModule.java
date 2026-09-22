@@ -18,8 +18,8 @@ import org.openedit.users.User;
 
 public class TestUUsageModule extends TestUBaseModule
 {
-	private static final Set<String> USAGE_TYPES = new HashSet<>(Arrays.asList("open", "resume", "pause", "iris_rate", "source_open", "session_leave", "dailydone_shown", "dailydone_click", "dailydone_dismiss"));
-	private static final String[] EXTRA_FIELDS = new String[] {"channel", "componentsection", "entityquestion", "rating", "source", "platform", "appversion", "entitytopic", "mode"};
+	private static final Set<String> USAGE_TYPES = new HashSet<>(Arrays.asList("open", "resume", "pause", "iris_rate", "source_open", "session_leave", "dailydone_shown", "dailydone_click", "dailydone_dismiss", "session_start"));
+	private static final String[] EXTRA_FIELDS = new String[] {"channel", "componentsection", "entityquestion", "rating", "source", "platform", "appversion", "entitytopic", "mode", "campaign"};
 
 	public void trackUsage(WebPageRequest inReq)
 	{

@@ -9,4 +9,5 @@
   <usageeventtype id="dailydone_shown"><name><![CDATA[Ve "Desafío completado"]]></name></usageeventtype>
   <usageeventtype id="dailydone_click"><name><![CDATA[Acepta la recomendación de "Desafío completado"]]></name></usageeventtype>
   <usageeventtype id="dailydone_dismiss"><name><![CDATA[Descarta "Desafío completado"]]></name></usageeventtype>
+  <usageeventtype id="session_start"><name><![CDATA[Empieza una sesión (con su entrada: email, push o app)]]></name></usageeventtype>
 </usageeventtypes>
