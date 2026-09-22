@@ -54,6 +54,9 @@ public class TestULearningModule extends TestUBaseModule
 		reply(inReq, resp);
 	}
 
+	/** learningsession.source values (next.json source). */
+	static final Set<String> SESSION_SOURCES = Set.of("dailydone", "email", "push", "app");
+
 	public void next(WebPageRequest inReq)
 	{
 		User user = requireUser(inReq);
@@ -121,8 +124,9 @@ public class TestULearningModule extends TestUBaseModule
 			return;
 		}
 		String scopetype = section == null ? "topic" : "subtopic";
-		// Started from the Daily Challenge "done" screen's recommendation: tagged for the engagement funnel. Anything else = null.
-		String source = "dailydone".equals(param(inReq, "source")) ? "dailydone" : null;
+		// What started it: the Daily Challenge "done" screen's recommendation (dailydone, the engagement funnel), or the entry that
+		// brought the learner in (email | push | app). Anything else = null.
+		String source = SESSION_SOURCES.contains(String.valueOf(param(inReq, "source"))) ? param(inReq, "source") : null;
 		String scopeid = section == null ? topic.id : section.id;
 		if ("learn".equals(mode))
 		{
@@ -1606,7 +1610,7 @@ public class TestULearningModule extends TestUBaseModule
 		// The challenge days are org-local (LearningEngine.challengeDate), so the streak is counted on the org's calendar.
 		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), null);
 		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
-		String link = inLearnurl + "#/desafio?login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
+		String link = inLearnurl + "#/desafio?src=email&campaign=dailychallenge&login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
 		String avatar = absoluteUrl(inLearnurl, persona == null ? null : persona.get("avatar"));
 		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, avatar, link, today, recent);
 		return new String[] {m[0], m[1], link, tutor};

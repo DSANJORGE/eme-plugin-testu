@@ -244,6 +244,23 @@ public class DailyChallengeEmailCheck
 		ok("funnel email", counts(f, "email").equals("shown=3 clicked=1 dismissed=1 started=1 completed=1 ownstarted=2 ownsame=1 owndifferent=1"), counts(f, "email"));
 		ok("funnel app", counts(f, "app").equals("shown=3 clicked=1 dismissed=2 started=1 completed=0 ownstarted=1 ownsame=0 owndifferent=1"), counts(f, "app"));
 
+		// ---- Daily Challenge opens by entry channel and platform (engagement.json dailyopens), Lima day 2026-09-21
+		List<DoneRow> opens = new ArrayList<>();
+		opens.add(new DoneRow("a", "iOS", "email", null, Date.from(Instant.parse("2026-09-21T15:00:00Z")), false));
+		opens.add(new DoneRow("a", "iOS", "app", null, Date.from(Instant.parse("2026-09-21T18:00:00Z")), false)); // same day: first entry wins
+		opens.add(new DoneRow("b", "android", "push", null, Date.from(Instant.parse("2026-09-21T15:00:00Z")), false));
+		opens.add(new DoneRow("c", "web", "app", null, Date.from(Instant.parse("2026-09-21T15:00:00Z")), false));
+		opens.add(new DoneRow("c", "web", null, null, Date.from(Instant.parse("2026-09-22T15:00:00Z")), false)); // next day, old app: app
+		opens.add(new DoneRow("d", "web", "email", null, Date.from(Instant.parse("2026-09-22T04:00:00Z")), false)); // 23:00 Lima on the 21st
+		java.util.Map<String, Boolean> complete = new java.util.HashMap<>();
+		complete.put("a_20260921", true);
+		complete.put("c_20260922", true);
+		complete.put("d_20260921", false);
+		JSONObject op = TestUAnalyticsModule.dailyOpens(opens, complete, LIMA);
+		ok("opens: email 2 (1 done, rate 0.5), push 1, app 2 (1 done)", opensOf(op, "channels").equals("app=2/1/0.5 email=2/1/0.5 push=1/0/0.0"), opensOf(op, "channels"));
+		ok("opens by platform", opensOf(op, "platforms").equals("android=1/0/0.0 ios=1/1/1.0 web=3/1/0.333"), opensOf(op, "platforms"));
+		ok("no opens: rate null", ((JSONObject) ((JSONObject) TestUAnalyticsModule.dailyOpens(List.of(), complete, LIMA).get("channels")).get("push")).get("rate") == null, "");
+
 		System.out.println(failures == 0 ? "all daily challenge email checks passed" : failures + " FAILED");
 		System.exit(failures == 0 ? 0 : 1);
 	}
@@ -296,6 +313,17 @@ public class DailyChallengeEmailCheck
 	static DoneRow session(String user, String source, String topic, String hhmm, boolean complete)
 	{
 		return new DoneRow(user, "improve", source, topic, Date.from(Instant.parse("2026-09-21T" + hhmm + ":00Z")), complete);
+	}
+
+	static String opensOf(JSONObject o, String k)
+	{
+		StringBuilder sb = new StringBuilder();
+		for (Object e : new java.util.TreeMap<Object, Object>((JSONObject) o.get(k)).entrySet())
+		{
+			JSONObject c = (JSONObject) ((java.util.Map.Entry) e).getValue();
+			sb.append(sb.length() == 0 ? "" : " ").append(((java.util.Map.Entry) e).getKey()).append('=').append(c.get("opens")).append('/').append(c.get("completed")).append('/').append(c.get("rate"));
+		}
+		return sb.toString();
 	}
 
 	static String counts(JSONObject f, String entry)
