@@ -20,8 +20,10 @@ import tech.genailabs.tutor.TestULearningModule;
 
 /**
  * Pure checks of the Daily Challenge email (no server): the weekday / 09:00 / timezone selection and the once-a-day key, the
- * sign-in link token, the email copy, the "what to practise next" recommendation and the "done" screen funnel. From the server root, after bin/compile.sh:
- * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java
+ * sign-in link token, who receives it (master switch, role permission, test allowlist), the weekday copy with the streak line,
+ * the "what to practise next" recommendation and the "done" screen funnel. From the server root, after bin/compile.sh:
+ * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java [previewdir]
+ * With previewdir, also writes the Spanish previews (one per weekday, with and without streak data) there.
  */
 public class DailyChallengeEmailCheck
 {
@@ -77,17 +79,92 @@ public class DailyChallengeEmailCheck
 		ok("future-dated row rejected", !AdminModule.loginLinkFresh(new Date(now.getTime() + 60_000), now, 12), "");
 		ok("no date rejected", !AdminModule.loginLinkFresh(null, now, 12), "");
 
-		// ---- email copy: tutor and name from data, escaped, link in both parts
+		// ---- who gets it: master switch (off by default), role permission, test allowlist
+		List<String> can = List.of("view", TestULearningModule.EMAIL_PERMISSION), cannot = List.of("view");
+		ok("switch unset: nobody", !TestULearningModule.mayReceive(null, null, null, null) && !TestULearningModule.mayReceive(null, null, "a@x.pe", can), "");
+		ok("switch false / an old email list: nobody", !TestULearningModule.mayReceive("false", null, "a@x.pe", can) && !TestULearningModule.mayReceive("a@x.pe", "", "a@x.pe", can), "");
+		ok("switch on: roles with the permission", TestULearningModule.mayReceive(" true ", null, null, null) && TestULearningModule.mayReceive("true", null, "a@x.pe", can), "");
+		ok("switch on: a role without it is skipped", !TestULearningModule.mayReceive("true", null, "a@x.pe", cannot) && !TestULearningModule.mayReceive("true", null, "a@x.pe", null), "");
+		ok("allowlist works with the switch off", TestULearningModule.mayReceive(null, "Diego@X.pe, b@x.pe", "diego@x.pe", can) && TestULearningModule.mayReceive(null, "b@x.pe", null, null), "");
+		ok("allowlist excludes everyone else, switch on or off", !TestULearningModule.mayReceive("true", "b@x.pe", "a@x.pe", can) && !TestULearningModule.mayReceive(null, "b@x.pe", "a@x.pe", can), "");
+		ok("allowlist still needs the permission", !TestULearningModule.mayReceive(null, "a@x.pe", "a@x.pe", cannot), "");
+
+		// ---- streak and last score: workdays in a row ending on the workday before today; weekends neither count nor break it
+		java.time.LocalDate mon = java.time.LocalDate.parse("2026-09-21"), thu = java.time.LocalDate.parse("2026-09-24");
+		ok("previous workday of Monday is Friday", TestULearningModule.previousWorkday(mon).toString().equals("2026-09-18"), TestULearningModule.previousWorkday(mon));
+		java.util.Map<java.time.LocalDate, int[]> done = new java.util.HashMap<>();
+		ok("nothing finished: {0,0,0}", java.util.Arrays.toString(TestULearningModule.challengeStats(done, thu)).equals("[0, 0, 0]"), "");
+		done.put(java.time.LocalDate.parse("2026-09-17"), new int[] {3, 5}); // Thu
+		done.put(java.time.LocalDate.parse("2026-09-18"), new int[] {5, 5}); // Fri
+		done.put(java.time.LocalDate.parse("2026-09-21"), new int[] {2, 5}); // Mon
+		done.put(java.time.LocalDate.parse("2026-09-23"), new int[] {4, 5}); // Wed
+		ok("Thursday after Wednesday only (Tuesday missed): streak 1, 4 of 5", java.util.Arrays.toString(TestULearningModule.challengeStats(done, thu)).equals("[1, 4, 5]"),
+			java.util.Arrays.toString(TestULearningModule.challengeStats(done, thu)));
+		ok("Tuesday: Thu+Fri+Mon across the weekend = 3, Monday's 2 of 5",
+			java.util.Arrays.toString(TestULearningModule.challengeStats(done, java.time.LocalDate.parse("2026-09-22"))).equals("[3, 2, 5]"), "");
+		ok("Friday after a missed Thursday: no streak line", TestULearningModule.challengeStats(done, java.time.LocalDate.parse("2026-09-25"))[0] == 0, "");
+
+		// ---- email: subject/body/closing per learner-local weekday, tutor, avatar and name from data, escaped, HTML only
 		String link = "https://x.test/site/learn/#/desafio?login=" + a;
-		String[] es = TestULearningModule.emailContent(false, "Renzo", "IRIS", link);
-		ok("es subject", "Renzo, tu Desafío Diario te espera".equals(es[0]), es[0]);
-		ok("es body names the tutor and links", es[1].contains("IRIS") && es[1].contains(link) && es[2].contains(link) && es[1].contains("Empezar mi desafío"), es[2]);
-		ok("es never says Reto", !(es[0] + es[1] + es[2]).toLowerCase().contains("reto"), "");
-		String[] en = TestULearningModule.emailContent(true, "", "Sully", link);
-		ok("en without a name", "Your Daily Challenge is waiting".equals(en[0]) && en[2].startsWith("Hi,"), en[0]);
+		String avatar = TestULearningModule.absoluteUrl("https://x.test/site/learn/", "/site/mediadb/testu/iris.png");
+		ok("avatar made absolute from the learn url", "https://x.test/site/mediadb/testu/iris.png".equals(avatar), avatar);
+		ok("absolute avatar kept, none stays none", "https://cdn.test/a.png".equals(TestULearningModule.absoluteUrl("https://x.test/", "https://cdn.test/a.png"))
+			&& TestULearningModule.absoluteUrl("https://x.test/", null) == null && TestULearningModule.absoluteUrl("https://x.test/", "a.png") == null, "");
+		String[] days = {"lunes", "martes", "miércoles", "jueves", "viernes"}, daysEn = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"};
+		Set<String> bodies = new HashSet<>(), closings = new HashSet<>();
+		for (int i = 0; i < 5; i++)
+		{
+			java.time.LocalDate d = mon.plusDays(i);
+			String[] es = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, d, null);
+			ok("es subject " + days[i], ("Hola Diego, tu desafío del " + days[i]).equals(es[0]), es[0]);
+			ok("es " + days[i] + ": HTML only, button, link, tutor, avatar", es.length == 2 && es[1].contains(link) && es[1].contains("Empezar mi desafío")
+				&& es[1].contains(">IRIS<") && es[1].contains(avatar), "");
+			ok("es " + days[i] + " never says Reto", !(es[0] + es[1]).toLowerCase().matches("(?s).*\\breto\\b.*"), "");
+			ok("en subject " + daysEn[i], ("Hi Diego, your " + daysEn[i] + " challenge").equals(TestULearningModule.emailContent(true, "Diego", "Sully", null, link, d, null)[0]), "");
+			bodies.add(es[1].replaceAll("(?s).*<h1[^>]*>", "").replaceAll("(?s)</h1>.*", ""));
+			closings.add(es[1].replaceAll("(?s).*</a></td></tr></table><p[^>]*>", "").replaceAll("(?s)</p>.*", ""));
+		}
+		ok("five different headings", bodies.size() == 5, bodies);
+		ok("five different closings", closings.size() == 5, closings);
+		String[] monEs = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null);
+		ok("Monday: back from the weekend", monEs[1].contains("fin de semana"), "");
+		ok("Friday: enjoy the weekend", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon.plusDays(4), null)[1].contains("disfrutar"), "");
+		ok("no data: no streak line, no numbers", !monEs[1].contains("seguidos") && !monEs[1].contains("acertaste"), "");
+		ok("Monday streak 3, Friday 4 of 5", monEs.length == 2 && TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, new int[] {3, 4, 5})[1]
+			.contains("Llevas 3 días seguidos completando tu Desafío y el viernes acertaste 4 de 5."), "");
+		ok("Thursday streak 1: yesterday", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 4, 5})[1].contains("Ayer acertaste 4 de 5 en tu Desafío."), "");
+		ok("0 right: no score, just done", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 0, 5})[1].contains("Ayer completaste tu Desafío.")
+			&& !TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 0, 5})[1].contains("0 de 5"), "");
+		ok("en streak", TestULearningModule.emailContent(true, "Diego", "Sully", null, link, thu, new int[] {3, 4, 5})[1].contains("You’re on a 3-day streak, and yesterday you got 4 of 5 right."), "");
+		String[] en = TestULearningModule.emailContent(true, "", "Sully", null, link, thu, null);
+		ok("en without a name or avatar", "Your Thursday challenge".equals(en[0]) && en[1].contains("Hi,") && !en[1].contains("<img"), en[0]);
 		ok("en uses the org's tutor, no other", en[1].contains("Sully") && !en[1].contains("IRIS"), "");
-		ok("name is escaped", TestULearningModule.emailContent(false, "<b>x", "IRIS", link)[1].contains("&lt;b&gt;x"), "");
+		ok("name is escaped", TestULearningModule.emailContent(false, "<b>x", "IRIS", null, link, mon, null)[1].contains("&lt;b&gt;x"), "");
 		ok("given name", "Renzo".equals(TestULearningModule.givenName("RENZO ALDAIR")) && "".equals(TestULearningModule.givenName(null)), TestULearningModule.givenName("RENZO ALDAIR"));
+
+		// ---- previews (optional arg = output dir): the 5 weekdays in Spanish, Minsur/IRIS, Diego, with and without streak data
+		if (args.length > 0)
+		{
+			try
+			{
+				java.nio.file.Path dir = java.nio.file.Files.createDirectories(java.nio.file.Paths.get(args[0]));
+				String[] file = {"1-lunes", "2-martes", "3-miercoles", "4-jueves", "5-viernes"};
+				for (int i = 0; i < 5; i++)
+				{
+					for (boolean streak : new boolean[] {false, true})
+					{
+						String[] m = TestULearningModule.emailContent(false, "Diego", "IRIS", TestULearningModule.absoluteUrl("http://localhost:8080/site/learn/", "/site/mediadb/testu/iris.png"),
+							"http://localhost:8080/site/learn/#/desafio?login=PREVIEW", mon.plusDays(i), streak ? new int[] {3, 4, 5} : null);
+						java.nio.file.Files.writeString(dir.resolve(file[i] + (streak ? "-racha" : "") + ".html"), m[1].replace("<title>", "<title>" + "[" + m[0] + "] "));
+					}
+				}
+				System.out.println("previews written to " + dir.toAbsolutePath());
+			}
+			catch (java.io.IOException e)
+			{
+				ok("write previews", false, e);
+			}
+		}
 
 		// ---- recommendation after the day's challenge
 		Content c = content();
