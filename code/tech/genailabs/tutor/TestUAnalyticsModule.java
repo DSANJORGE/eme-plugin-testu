@@ -2496,7 +2496,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		return map;
 	}
 
-	private static String formatUserName(Data u)
+	static String formatUserName(Data u)
 	{
 		String fn = u.get("firstName");
 		String ln = u.get("lastName");

@@ -597,12 +597,25 @@ public class TestULearningModule extends TestUBaseModule
 	public void scheduleCertification(WebPageRequest inReq)
 	{
 		User user = requireUser(inReq);
-		if (user == null) { return; }
+		if (user == null)
+		{
+			return;
+		}
 		Object[] loaded = load(inReq, user);
-		LearningEngine engine = (LearningEngine) loaded[0]; LearningEngine.Content content = (LearningEngine.Content) loaded[1]; LearningEngine.Learner learner = (LearningEngine.Learner) loaded[2];
+		LearningEngine engine = (LearningEngine) loaded[0];
+		LearningEngine.Content content = (LearningEngine.Content) loaded[1];
+		LearningEngine.Learner learner = (LearningEngine.Learner) loaded[2];
 		LearningEngine.Topic topic = content.topics.get(param(inReq, "topicid"));
-		if (topic == null) { fail(inReq, 404, "unknown_topic"); return; }
-		if (!topic.certification()) { fail(inReq, 400, "not_certification_topic"); return; }
+		if (topic == null)
+		{
+			fail(inReq, 404, "unknown_topic");
+			return;
+		}
+		if (!topic.certification())
+		{
+			fail(inReq, 400, "not_certification_topic");
+			return;
+		}
 		ZoneId zone = (ZoneId) engine.orgZone()[0];
 		Date now = new Date();
 		String raw = param(inReq, "date");
@@ -610,23 +623,325 @@ public class TestULearningModule extends TestUBaseModule
 		if (raw != null)
 		{
 			day = LearningEngine.parseYmd(raw);
-			if (day == null) { fail(inReq, 400, "bad_date"); return; }
-			if (LearningEngine.endOfDay(day, zone).before(now)) { fail(inReq, 400, "date_past"); return; }
+			if (day == null)
+			{
+				fail(inReq, 400, "bad_date");
+				return;
+			}
+			if (LearningEngine.endOfDay(day, zone).before(now))
+			{
+				fail(inReq, 400, "date_past");
+				return;
+			}
 			LearningEngine.CertRow existing = learner.certifications.get(topic.id);
 			Date expiry = LearningEngine.expiryOf(existing, topic, zone);
 			// An already-expired cycle has no upper bound: only a still-current expiry (status not "expired") constrains the date.
 			boolean expired = "expired".equals(LearningEngine.certStatus(topic, existing, now, zone));
-			if (expiry != null && day.after(expiry) && !expired) { fail(inReq, 400, "date_after_expiry"); return; }
+			if (expiry != null && day.after(expiry) && !expired)
+			{
+				fail(inReq, 400, "date_after_expiry");
+				return;
+			}
 		}
 		LearningEngine.CertRow row = learner.certifications.get(topic.id);
-		if (row == null) { row = new LearningEngine.CertRow(); row.user = user.getId(); row.topicid = topic.id; }
+		if (row == null)
+		{
+			row = new LearningEngine.CertRow();
+			row.user = user.getId();
+			row.topicid = topic.id;
+		}
 		JSONObject before = LearningEngine.certificationStatus(topic, learner, now, zone);
 		row.scheduledfor = day;
 		synchronized (LearningEngine.WRITE_LOCK) { engine.saveCertification(row); }
 		learner.certifications.put(topic.id, row);
 		JSONObject after = LearningEngine.certificationStatus(topic, learner, now, zone);
 		audit(inReq, getMediaArchive(inReq), "certification.schedule", "certification", row.id(), before, after);
-		JSONObject resp = new JSONObject(); resp.put("ok", Boolean.TRUE); resp.put("certification", after); resp.put("now", LearningEngine.iso(now));
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("certification", after);
+		resp.put("now", LearningEngine.iso(now));
+		reply(inReq, resp);
+	}
+
+	/**
+	 * services/testu/learn/certifications.json?status&topicid&profile&team -- the admin compliance list (spec 2026-09-23): one row per
+	 * user x certification topic the caller may manage. Read-only; training_view (or training_manage) plus per-topic manageevaluations.
+	 */
+	public void certifications(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
+		boolean manage = canManageProgression(inReq);
+		if (!manage && (profile == null || !profile.hasPermission("training_view")))
+		{
+			fail(inReq, 403, "forbidden");
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		LearningEngine engine = new LearningEngine(archive);
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		String fstatus = param(inReq, "status"), ftopic = param(inReq, "topicid"), fprofile = param(inReq, "profile"), fteam = param(inReq, "team");
+		JSONArray rows = new JSONArray();
+		java.util.Map<String, Integer> counts = new java.util.TreeMap<>(java.util.Map.of("certified", 0, "renewal_due", 0, "expired", 0, "not_certified", 0));
+		for (Object o : archive.query("user").all().search())
+		{
+			Data u = (Data) o;
+			if ("agent".equals(u.get("role")) || !"true".equals(String.valueOf(u.get("enabled"))))
+			{
+				continue;
+			}
+			if (fteam != null && !fteam.equals(u.get("team")))
+			{
+				continue;
+			}
+			java.util.Collection<String> roles = LearningEngine.jobrolesOf(u);
+			if (fprofile != null && !roles.contains(fprofile))
+			{
+				continue;
+			}
+			if (roles.isEmpty())
+			{
+				continue;
+			}
+			// ponytail: loadContent per user; cache the Content once and clone topics if the roster grows past a few hundred.
+			// applyProfiles mutates Topic fields (position, assignedlevel, ...) per learner, so a shared Content would need a
+			// clone anyway -- per-user loadContent is the correct baseline until the roster size makes it worth optimizing.
+			LearningEngine.Content content = engine.loadContent();
+			LearningEngine.Learner l = engine.loadLearner(u.getId(), roles, LearningEngine.primaryJobroleOf(u));
+			engine.applyProfiles(content, l);
+			for (LearningEngine.Topic t : content.topics.values())
+			{
+				if (!t.certification() || (ftopic != null && !ftopic.equals(t.id)))
+				{
+					continue;
+				}
+				if (!canManageEvaluations(inReq, archive, t.id))
+				{
+					continue;
+				}
+				JSONObject c = LearningEngine.certificationStatus(t, l, now, zone);
+				if (fstatus != null && !fstatus.equals(c.get("status")))
+				{
+					continue;
+				}
+				counts.merge(String.valueOf(c.get("status")), 1, Integer::sum);
+				rows.add(certRow(u, t, l, c, now, zone));
+			}
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("canmanage", manage);
+		resp.put("counts", new JSONObject(counts));
+		resp.put("rows", rows);
+		resp.put("now", LearningEngine.iso(now));
+		reply(inReq, resp);
+	}
+
+	/** certifications.json row: certificationStatus() plus user/topic identity and per-row fields not on the pure status block. */
+	private static JSONObject certRow(Data u, LearningEngine.Topic t, LearningEngine.Learner l, JSONObject c, Date now, ZoneId zone)
+	{
+		JSONObject r = new JSONObject(c);
+		LearningEngine.CertRow row = l.certifications.get(t.id);
+		r.put("user", u.getId());
+		r.put("name", TestUAnalyticsModule.formatUserName(u));
+		r.put("team", u.get("team"));
+		r.put("topic", t.id);
+		r.put("topictitle", t.title);
+		r.put("scorepercent", row == null ? null : row.scorepercent);
+		r.put("extendeduntil", row == null ? null : LearningEngine.ymd(row.extendeduntil, zone));
+		r.put("extendreason", row == null ? null : row.extendreason);
+		r.put("attempts", LearningEngine.evaluationStatus(t, l, now, zone).get("attempts"));
+		return r;
+	}
+
+	/** training_view (reads) / training_manage (writes) + per-topic manageevaluations. null = already failed the request. */
+	private LearningEngine.Topic certAdminTopic(WebPageRequest inReq, boolean inWrite, LearningEngine.Content inContent, String inTopicid)
+	{
+		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
+		boolean manage = canManageProgression(inReq);
+		if (inWrite ? !manage : !(manage || (profile != null && profile.hasPermission("training_view"))))
+		{
+			fail(inReq, 403, "forbidden");
+			return null;
+		}
+		LearningEngine.Topic t = inContent.topics.get(inTopicid);
+		if (t == null)
+		{
+			fail(inReq, 404, "unknown_topic");
+			return null;
+		}
+		if (!canManageEvaluations(inReq, getMediaArchive(inReq), t.id))
+		{
+			fail(inReq, 403, "forbidden");
+			return null;
+		}
+		return t;
+	}
+
+	/**
+	 * services/testu/learn/extendcertification.json (POST user, topicid, until -- YYYY-MM-DD, reason) -- pushes the current cycle's
+	 * expiry out (spec 2026-09-23). training_manage + per-topic manageevaluations. Clears the 7d/1d/expired reminder flags so the
+	 * moved expiry gets its own reminders.
+	 */
+	public void extendCertification(WebPageRequest inReq)
+	{
+		User admin = requireUser(inReq);
+		if (admin == null)
+		{
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		LearningEngine engine = new LearningEngine(archive);
+		String userid = param(inReq, "user"), topicid = param(inReq, "topicid"), untilRaw = param(inReq, "until"), reason = param(inReq, "reason");
+		Data u = userid == null ? null : (Data) archive.getSearcher("user").searchById(userid);
+		if (u == null)
+		{
+			fail(inReq, 404, "unknown_user");
+			return;
+		}
+		LearningEngine.Content content = engine.loadContent();
+		LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+		engine.applyProfiles(content, l);
+		LearningEngine.Topic t = certAdminTopic(inReq, true, content, topicid);
+		if (t == null)
+		{
+			return;
+		}
+		if (!t.certification())
+		{
+			fail(inReq, 400, "not_certification_topic");
+			return;
+		}
+		if (reason == null)
+		{
+			fail(inReq, 400, "missing_reason");
+			return;
+		}
+		LearningEngine.CertRow row = l.certifications.get(t.id);
+		if (row == null || row.passedat == null)
+		{
+			fail(inReq, 400, "not_certified_yet");
+			return;
+		}
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		Date until = LearningEngine.parseYmd(untilRaw);
+		if (until == null)
+		{
+			fail(inReq, 400, "bad_date");
+			return;
+		}
+		Date current = LearningEngine.expiryOf(row, t, zone);
+		if (current != null && !LearningEngine.endOfDay(until, zone).after(current))
+		{
+			fail(inReq, 400, "date_not_later");
+			return;
+		}
+		if (until.after(LearningEngine.plusMonths(now, 12, zone)))
+		{
+			fail(inReq, 400, "date_too_far");
+			return;
+		}
+		JSONObject before = LearningEngine.certificationStatus(t, l, now, zone);
+		row.extendeduntil = until;
+		row.extendreason = reason;
+		row.extendedby = admin.getId();
+		row.reminderssent.removeIf(s -> s.equals("7d") || s.equals("1d") || s.equals("expired"));
+		synchronized (LearningEngine.WRITE_LOCK) { engine.saveCertification(row); }
+		JSONObject after = LearningEngine.certificationStatus(t, l, now, zone);
+		audit(inReq, archive, "certification.extend", "certification", row.id(), before, after);
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("row", certRow(u, t, l, after, now, zone));
+		resp.put("now", LearningEngine.iso(now));
+		reply(inReq, resp);
+	}
+
+	/**
+	 * services/testu/learn/manualcertification.json (POST user, topicid, passedat -- YYYY-MM-DD, reason) -- records an off-platform
+	 * pass (spec 2026-09-23): starts a fresh cycle (attemptid/scorepercent cleared, manual=true) and drops any prior extension.
+	 * training_manage + per-topic manageevaluations.
+	 */
+	public void manualCertification(WebPageRequest inReq)
+	{
+		User admin = requireUser(inReq);
+		if (admin == null)
+		{
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		LearningEngine engine = new LearningEngine(archive);
+		String userid = param(inReq, "user"), topicid = param(inReq, "topicid"), passedatRaw = param(inReq, "passedat"), reason = param(inReq, "reason");
+		Data u = userid == null ? null : (Data) archive.getSearcher("user").searchById(userid);
+		if (u == null)
+		{
+			fail(inReq, 404, "unknown_user");
+			return;
+		}
+		LearningEngine.Content content = engine.loadContent();
+		LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+		engine.applyProfiles(content, l);
+		LearningEngine.Topic t = certAdminTopic(inReq, true, content, topicid);
+		if (t == null)
+		{
+			return;
+		}
+		if (!t.certification())
+		{
+			fail(inReq, 400, "not_certification_topic");
+			return;
+		}
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		Date passedat = LearningEngine.parseYmd(passedatRaw);
+		if (passedat == null)
+		{
+			fail(inReq, 400, "bad_date");
+			return;
+		}
+		if (passedat.after(now)) // mirrors scheduleCertification's date_past: today (start of day, before now) is allowed, tomorrow+ is not
+		{
+			fail(inReq, 400, "date_future");
+			return;
+		}
+		if (reason == null)
+		{
+			fail(inReq, 400, "missing_reason");
+			return;
+		}
+		JSONObject before = LearningEngine.certificationStatus(t, l, now, zone);
+		LearningEngine.CertRow row = l.certifications.get(t.id);
+		if (row == null)
+		{
+			row = new LearningEngine.CertRow();
+			row.user = u.getId();
+			row.topicid = t.id;
+		}
+		row.passedat = passedat;
+		row.attemptid = null;
+		row.scorepercent = null;
+		row.manual = true;
+		row.manualby = admin.getId();
+		row.manualreason = reason;
+		row.validuntil = t.validitymonths == 0 ? null : LearningEngine.plusMonths(passedat, t.validitymonths, zone);
+		row.extendeduntil = null;
+		row.extendreason = null;
+		row.extendedby = null;
+		row.scheduledfor = null;
+		row.reminderssent = new java.util.ArrayList<>(); // Task 8: stagesAlreadyPast
+		l.certifications.put(t.id, row);
+		synchronized (LearningEngine.WRITE_LOCK) { engine.saveCertification(row); }
+		JSONObject after = LearningEngine.certificationStatus(t, l, now, zone);
+		audit(inReq, archive, "certification.manual", "certification", row.id(), before, after);
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("row", certRow(u, t, l, after, now, zone));
+		resp.put("now", LearningEngine.iso(now));
 		reply(inReq, resp);
 	}
 

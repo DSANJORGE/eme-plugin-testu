@@ -230,6 +230,8 @@ try:
     put_row("topicrequirement", ROW, {"id": ROW, "jobrole": ROLE, "entitytopic": T, "position": "1", "mandatory": "true",
             "afterfinish": "keep", "validitymonths": "6", "passpercent": "50", "renewalwindowdays": "30"})
     must("assign profile", call(admin, "POST", "/services/testu/personas/setprofiles.json", form={"user": USER, "primary": ROLE, "extras": "[]"}))
+    refresh()
+    VERSION[0] = max([int(es_doc("evaluationblueprint", i).get("blueprintversion", 0)) for i in es_ids("evaluationblueprint", {"term": {"entitytopic": T}})] or [0])
     blueprint(active="true", strategy="random", maxquestions="4", passpercent="90", requirelearncomplete="false", timerminutes="0", retakewaithours="0", maxattempts="0")
     refresh()
     me = login(USER, PASSWORD)
@@ -271,6 +273,27 @@ try:
     ok("audit certification.schedule", audits("certification.schedule", USER + "_" + T), "")
     clr = must("schedule clear", call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": ""}))
     ok("schedule: cleared", clr["certification"]["scheduledfor"] is None, clr)
+
+    # ---- admin: certifications.json, extendcertification.json, manualcertification.json (spec 2026-09-23) -- while the
+    # learner's row is still renewal_due (forced above), before it's pushed to expired below.
+    lst = must("certifications list", call(admin, "GET", f"/services/testu/learn/certifications.json?topicid={T}"))
+    mine = [r for r in lst["rows"] if r["user"] == USER]
+    ok("admin list: my row renewal_due with counts", mine and mine[0]["status"] == "renewal_due" and lst["counts"]["renewal_due"] >= 1, lst.get("counts"))
+    st4, b4 = call(me, "GET", f"/services/testu/learn/certifications.json")
+    ok("admin list: learner without training_view -> 403", st4 == 403, b4)
+    until = (NOW + datetime.timedelta(days=40)).strftime("%Y-%m-%d")
+    e1 = call(admin, "POST", "/services/testu/learn/extendcertification.json", form={"user": USER, "topicid": T, "until": until, "reason": ""})
+    ok("extend: missing_reason", e1[0] == 400 and e1[1]["error"] == "missing_reason", e1)
+    e2 = call(admin, "POST", "/services/testu/learn/extendcertification.json", form={"user": USER, "topicid": T, "until": "2020-01-01", "reason": "x"})
+    ok("extend: date_not_later", e2[0] == 400 and e2[1]["error"] == "date_not_later", e2)
+    e3 = must("extend", call(admin, "POST", "/services/testu/learn/extendcertification.json", form={"user": USER, "topicid": T, "until": until, "reason": "Annual leave"}))
+    ok("extend: expiry moved, status certified", e3["row"]["expiry"] == until and e3["row"]["status"] == "certified" and e3["row"]["extendeduntil"] == until, e3["row"])
+    ok("audit certification.extend", audits("certification.extend", USER + "_" + T), "")
+    m1 = call(admin, "POST", "/services/testu/learn/manualcertification.json", form={"user": USER, "topicid": T, "passedat": "2099-01-01", "reason": "x"})
+    ok("manual: date_future", m1[0] == 400 and m1[1]["error"] == "date_future", m1)
+    m2 = must("manual", call(admin, "POST", "/services/testu/learn/manualcertification.json", form={"user": USER, "topicid": T, "passedat": today_ymd(), "reason": "External course"}))
+    ok("manual: fresh cycle, manual true, extension cleared", m2["row"]["manual"] is True and m2["row"]["extendeduntil"] is None and m2["row"]["status"] == "certified", m2["row"])
+    ok("audit certification.manual", audits("certification.manual", USER + "_" + T), "")
 
     # controller ruling: an already-expired cycle has no upper bound -- any date from today onward is accepted.
     put_row("certification", USER + "_" + T, {"passedat": iso(NOW - datetime.timedelta(days=250))}); refresh()
