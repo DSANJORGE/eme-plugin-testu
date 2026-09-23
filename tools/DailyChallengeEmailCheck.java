@@ -31,7 +31,7 @@ public class DailyChallengeEmailCheck
 	static int failures = 0;
 	static final ZoneId LIMA = ZoneId.of("America/Lima"), MADRID = ZoneId.of("Europe/Madrid"), TOKYO = ZoneId.of("Asia/Tokyo");
 
-	public static void main(String[] args)
+	public static void main(String[] args) throws java.io.IOException
 	{
 		// ---- selection: Monday 2026-09-21 09:00 Lima = 14:00Z
 		Instant mon9Lima = Instant.parse("2026-09-21T14:00:00Z");
@@ -157,6 +157,76 @@ public class DailyChallengeEmailCheck
 			&& "Ayer acertaste 4 de 5 en tu Desafío. ¡Vamos por otro!".equals(TestULearningModule.recentLine(false, thu, new int[] {1, 4, 5})), "");
 		ok("given name", "Renzo".equals(TestULearningModule.givenName("RENZO ALDAIR")) && "".equals(TestULearningModule.givenName(null)), TestULearningModule.givenName("RENZO ALDAIR"));
 
+		// ---- the tutor's picture travels inside the message (Gmail's image proxy cannot reach a private host)
+		byte[] small = null;
+		java.nio.file.Path avatarfile = java.nio.file.Paths.get("webapp/site/mediadb/testu/iris.png");
+		if (java.nio.file.Files.exists(avatarfile))
+		{
+			try (java.io.InputStream in = java.nio.file.Files.newInputStream(avatarfile))
+			{
+				small = TestULearningModule.scaleAvatar(in, TestULearningModule.AVATAR_PX, TestULearningModule.AVATAR_MAX_BYTES);
+			}
+			ok("the avatar is scaled to " + TestULearningModule.AVATAR_PX + "px and stays under 40 KB", small != null && small.length < 40 * 1024,
+				small == null ? "null" : small.length + " bytes");
+			java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(small));
+			ok("it is a readable square PNG", img != null && img.getWidth() == TestULearningModule.AVATAR_PX && img.getHeight() == TestULearningModule.AVATAR_PX,
+				img == null ? "unreadable" : img.getWidth() + "x" + img.getHeight());
+			ok("an oversized cap of 1 KB is refused, not shipped", smallOrNull(avatarfile, 1024) == null, "");
+		}
+		else
+		{
+			ok("avatar file found (run from the server root)", false, avatarfile.toAbsolutePath());
+		}
+		ok("not an image: no inline part", TestULearningModule.scaleAvatar(new java.io.ByteArrayInputStream("not an image".getBytes()), 96, 40000) == null, "");
+		Object[] ref = TestULearningModule.avatarRef(small, "https://x.test/site/mediadb/testu/iris.png");
+		org.entermediadb.email.PostMail.InlineImage part = (org.entermediadb.email.PostMail.InlineImage) ref[1];
+		ok("embedded: src is the part's cid", ("cid:" + TestULearningModule.AVATAR_CID).equals(ref[0]) && part != null && TestULearningModule.AVATAR_CID.equals(part.cid)
+			&& "image/png".equals(part.contenttype) && part.data == small, ref[0]);
+		Object[] nobytes = TestULearningModule.avatarRef(null, "https://x.test/site/mediadb/testu/iris.png");
+		ok("unreadable picture: the absolute URL, no part", "https://x.test/site/mediadb/testu/iris.png".equals(nobytes[0]) && nobytes[1] == null, nobytes[0]);
+		Object[] none = TestULearningModule.avatarRef(null, null);
+		ok("no picture at all: no src, no part", none[0] == null && none[1] == null, none[0]);
+		String cidHtml = TestULearningModule.emailContent(false, "Diego", "IRIS", (String) ref[0], link, mon, null)[1];
+		ok("both emails reference the part, not a URL", cidHtml.contains("src=\"cid:" + TestULearningModule.AVATAR_CID + "\"")
+			&& TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", (String) ref[0], "482913", "d@x.pe")[1].contains("src=\"cid:" + TestULearningModule.AVATAR_CID + "\""), "");
+
+		// ---- the message PostMail builds: HTML and its picture in one multipart/related, nothing to fetch
+		try
+		{
+			javax.mail.Message msg = new javax.mail.internet.MimeMessage(javax.mail.Session.getInstance(new java.util.Properties()));
+			new org.entermediadb.email.PostMail().setBody(msg, cidHtml, null, java.util.Collections.singletonList(part));
+			msg.saveChanges(); // Transport.send does this before sending: it writes the Content-Type headers
+			ok("message is multipart/related", msg.getContentType().toLowerCase().startsWith("multipart/related"), msg.getContentType());
+			javax.mail.internet.MimeMultipart mp = (javax.mail.internet.MimeMultipart) msg.getContent();
+			javax.mail.BodyPart htmlpart = mp.getBodyPart(0), imagepart = mp.getBodyPart(1);
+			ok("two parts: the html, then the picture", mp.getCount() == 2 && htmlpart.getContentType().toLowerCase().startsWith("text/html")
+				&& imagepart.getContentType().toLowerCase().startsWith("image/png"), mp.getCount() + " " + imagepart.getContentType());
+			ok("the picture's Content-ID is the one the html points at",
+				java.util.Arrays.asList(imagepart.getHeader("Content-ID")).equals(List.of("<" + TestULearningModule.AVATAR_CID + ">"))
+					&& "inline".equalsIgnoreCase(imagepart.getDisposition()), java.util.Arrays.toString(imagepart.getHeader("Content-ID")));
+			java.io.ByteArrayOutputStream raw = new java.io.ByteArrayOutputStream();
+			imagepart.getDataHandler().writeTo(raw);
+			ok("the picture's bytes ride along, " + small.length + " bytes", raw.size() == small.length, raw.size() + " vs " + small.length);
+			// A file attachment alongside: mixed, with the related part inside, so other emails keep working.
+			javax.mail.Message withfile = new javax.mail.internet.MimeMessage(javax.mail.Session.getInstance(new java.util.Properties()));
+			new org.entermediadb.email.PostMail().setBody(withfile, cidHtml, "text body",
+				java.util.Arrays.asList(part, avatarfile.toAbsolutePath().toString()));
+			withfile.saveChanges();
+			javax.mail.internet.MimeMultipart mixed = (javax.mail.internet.MimeMultipart) withfile.getContent();
+			ok("text + picture + file: mixed around the related part", withfile.getContentType().toLowerCase().startsWith("multipart/mixed")
+				&& mixed.getCount() == 3 && mixed.getBodyPart(1).getContentType().toLowerCase().startsWith("multipart/related"),
+				withfile.getContentType() + " " + mixed.getCount());
+			// An email without a picture keeps the plain single-part HTML it had before.
+			javax.mail.Message plain = new javax.mail.internet.MimeMessage(javax.mail.Session.getInstance(new java.util.Properties()));
+			new org.entermediadb.email.PostMail().setBody(plain, "<p>x</p>", null, null);
+			plain.saveChanges();
+			ok("no attachments: one html part, as before", plain.getContentType().toLowerCase().startsWith("text/html"), plain.getContentType());
+		}
+		catch (Exception e)
+		{
+			ok("message shape", false, e);
+		}
+
 		// ---- App Links / Universal Links: the two .well-known files
 		ok(".well-known content type", "application/json".equals(TestULearningModule.WELL_KNOWN_TYPE), "");
 		JSONObject aasa = TestULearningModule.appleAppSiteAssociation("VJ8RCF92K4.world.eme.genailabs", "/site/learn/");
@@ -199,7 +269,8 @@ public class DailyChallengeEmailCheck
 				{
 					for (boolean streak : new boolean[] {false, true})
 					{
-						String[] m = TestULearningModule.emailContent(false, "Diego", "IRIS", TestULearningModule.absoluteUrl("http://localhost:8080/site/learn/", "/site/mediadb/testu/iris.png"),
+						// A browser cannot show the cid: part an email carries, so the preview inlines the same bytes as a data: URI.
+						String[] m = TestULearningModule.emailContent(false, "Diego", "IRIS", dataUri(small),
 							"http://localhost:8080/site/learn/#/desafio?login=PREVIEW", mon.plusDays(i), streak ? new int[] {3, 4, 5} : null);
 						java.nio.file.Files.writeString(dir.resolve(file[i] + (streak ? "-racha" : "") + ".html"), m[1].replace("<title>", "<title>" + "[" + m[0] + "] "));
 					}
@@ -208,7 +279,7 @@ public class DailyChallengeEmailCheck
 				if (args.length > 1) // the login-code email, es + en
 				{
 					java.nio.file.Path otp = java.nio.file.Files.createDirectories(java.nio.file.Paths.get(args[1]));
-					String av = TestULearningModule.absoluteUrl("http://localhost:8080/site/learn/", "/site/mediadb/testu/iris.png");
+					String av = dataUri(small);
 					String[] es = TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", av, "482913", "diego@genailabs.tech");
 					String[] enm = TestULearningModule.loginCodeEmailContent(true, "Diego", "IRIS", av, "482913", "diego@genailabs.tech");
 					java.nio.file.Files.writeString(otp.resolve("codigo-es.html"), es[1].replace("<title>", "<title>[" + es[0] + "] "));
@@ -288,6 +359,21 @@ public class DailyChallengeEmailCheck
 
 		System.out.println(failures == 0 ? "all daily challenge email checks passed" : failures + " FAILED");
 		System.exit(failures == 0 ? 0 : 1);
+	}
+
+	/** The embedded picture as a data: URI, so the preview files show it in a browser; null when there is none. */
+	static String dataUri(byte[] inSmall)
+	{
+		return inSmall == null ? null : "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(inSmall);
+	}
+
+	/** The scaled avatar under a byte cap, or null when it does not fit. */
+	static byte[] smallOrNull(java.nio.file.Path inFile, int inMax) throws java.io.IOException
+	{
+		try (java.io.InputStream in = java.nio.file.Files.newInputStream(inFile))
+		{
+			return TestULearningModule.scaleAvatar(in, TestULearningModule.AVATAR_PX, inMax);
+		}
 	}
 
 	/** Two topics x two subtopics x two questions; t1s1 = t1q1,t1q2, t1s2 = t1q3,t1q4. */
