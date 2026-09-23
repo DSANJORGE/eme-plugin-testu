@@ -691,7 +691,7 @@ public class TestULearningModule extends TestUBaseModule
 		for (Object o : archive.query("user").all().search())
 		{
 			Data u = (Data) o;
-			if ("agent".equals(u.get("role")) || !"true".equals(String.valueOf(u.get("enabled"))))
+			if ("agent".equals(u.get("role")) || "false".equals(String.valueOf(u.get("enabled"))))
 			{
 				continue;
 			}
@@ -904,7 +904,8 @@ public class TestULearningModule extends TestUBaseModule
 			fail(inReq, 400, "bad_date");
 			return;
 		}
-		if (passedat.after(now)) // mirrors scheduleCertification's date_past: today (start of day, before now) is allowed, tomorrow+ is not
+		Date today = LearningEngine.parseYmd(LearningEngine.ymd(now, zone)); // zone-aware day compare: today (org zone) is allowed, tomorrow+ is not
+		if (passedat.after(today))
 		{
 			fail(inReq, 400, "date_future");
 			return;
