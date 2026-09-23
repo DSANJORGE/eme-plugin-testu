@@ -94,7 +94,12 @@ public class LearningEngine
 		// Certifications (spec 2026-09-23), merged by applyProfiles: validitymonths null = not a certification for this learner.
 		public Integer validitymonths, certpasspercent;
 		public int renewalwindowdays = 30;
-		public boolean certification() { return validitymonths != null; }
+		// ponytail: zone rides on Topic so the pure finished() keeps its signature; set by the instance applyProfiles, null (-> UTC) for pure callers/checks.
+		public ZoneId zone;
+		public boolean certification()
+		{
+			return validitymonths != null;
+		}
 	}
 
 	public static class Content
@@ -856,7 +861,7 @@ public class LearningEngine
 	/** Learn complete AND (no level, or band >= assignedlevel with expert evidence when expert) AND (evaluation not required, or passed). */
 	public static boolean finished(Topic t, Learner l)
 	{
-		if (t.evaluationrequired && !evaluationPassed(l, t.id))
+		if (t.certification() ? !certFinishedConjunct(t, l, new Date(), t.zone == null ? ZoneId.of("UTC") : t.zone) : (t.evaluationrequired && !evaluationPassed(l, t.id)))
 		{
 			return false;
 		}
@@ -888,6 +893,11 @@ public class LearningEngine
 	/** loadProfiles + applyProfiles for the learner's own profiles. */
 	public void applyProfiles(Content c, Learner l)
 	{
+		ZoneId zone = (ZoneId) orgZone()[0];
+		for (Topic t : c.topics.values())
+		{
+			t.zone = zone;
+		}
 		applyProfiles(c, l, loadProfiles(l.jobroles));
 	}
 
@@ -1012,14 +1022,23 @@ public class LearningEngine
 	/** Certification rule merge: shortest validity (0 = never expires counts as longest), highest pass %, longest window. */
 	static void mergeCertification(Topic t, ProfileRow r)
 	{
-		if (r.validitymonths == null) { return; }
+		if (r.validitymonths == null)
+		{
+			return;
+		}
 		if (t.validitymonths == null || (r.validitymonths != 0 && (t.validitymonths == 0 || r.validitymonths < t.validitymonths)))
 		{
 			t.validitymonths = r.validitymonths;
 		}
-		if (r.passpercent != null && (t.certpasspercent == null || r.passpercent > t.certpasspercent)) { t.certpasspercent = r.passpercent; }
+		if (r.passpercent != null && (t.certpasspercent == null || r.passpercent > t.certpasspercent))
+		{
+			t.certpasspercent = r.passpercent;
+		}
 		int w = r.renewalwindowdays == null ? 30 : r.renewalwindowdays;
-		if (w > t.renewalwindowdays) { t.renewalwindowdays = w; }
+		if (w > t.renewalwindowdays)
+		{
+			t.renewalwindowdays = w;
+		}
 	}
 
 	/**
@@ -1164,7 +1183,7 @@ public class LearningEngine
 	public static class EvalAttempt
 	{
 		public String id, user, topicid, strategy, status = "inprogress", finalizedby;
-		public int version, number, total, answered, correct, scorepercent, exposed, reused;
+		public int version, number, total, answered, correct, scorepercent, exposed, reused, passpercent;
 		public boolean passed;
 		public List<String> questions = new ArrayList<>(); // served order
 		public Map<String, String> sectionOf = new HashMap<>(); // question -> section, as resolved at start
@@ -1211,7 +1230,10 @@ public class LearningEngine
 		public Integer scorepercent;
 		public boolean manual;
 		public List<String> reminderssent = new ArrayList<>();
-		public String id() { return user + "_" + topicid; }
+		public String id()
+		{
+			return user + "_" + topicid;
+		}
 	}
 
 	public static CertRow certRowOf(Data d)
@@ -1231,7 +1253,10 @@ public class LearningEngine
 		return r;
 	}
 
-	private static Date dateOf(Object v) { return v == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(v); }
+	private static Date dateOf(Object v)
+	{
+		return v == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(v);
+	}
 
 	/** Questions b may draw from: the sequence (random) or the reserved set (reserved), renderable, in a covered subtopic. */
 	public static List<Question> evaluationPool(Topic t, Blueprint b)
@@ -1489,6 +1514,12 @@ public class LearningEngine
 	 */
 	public static JSONObject scoreEvaluation(EvalAttempt a, Blueprint b, Map<String, String> inSectionTitles)
 	{
+		return scoreEvaluation(a, b, inSectionTitles, b.passpercent);
+	}
+
+	/** Same as the 3-arg overload, but scores against inPasspercent instead of b.passpercent (the certification pass-mark override). */
+	public static JSONObject scoreEvaluation(EvalAttempt a, Blueprint b, Map<String, String> inSectionTitles, int inPasspercent)
+	{
 		int correct = 0, answered = 0;
 		Map<String, int[]> bySection = new LinkedHashMap<>(); // section -> {questions, correct}
 		for (String qid : a.questions)
@@ -1508,7 +1539,7 @@ public class LearningEngine
 		}
 		int total = a.questions.size();
 		int score = percentOf(correct, total);
-		boolean passed = score >= b.passpercent;
+		boolean passed = score >= inPasspercent;
 		String failedrule = passed ? null : "overall";
 		JSONArray subs = new JSONArray();
 		List<JSONObject> order = new ArrayList<>();
@@ -1586,6 +1617,84 @@ public class LearningEngine
 		return a != null && a.passed;
 	}
 
+	/** Expiry of the learner's current cycle: max(passedat + validity, extendeduntil); null = never (validity 0, no extension). */
+	public static Date expiryOf(CertRow r, Topic t, ZoneId z)
+	{
+		if (r == null || r.passedat == null || t.validitymonths == null)
+		{
+			return null;
+		}
+		Date base = t.validitymonths == 0 ? null : endOfDay(plusMonths(r.passedat, t.validitymonths, z), z);
+		Date ext = r.extendeduntil == null ? null : endOfDay(r.extendeduntil, z);
+		if (base == null)
+		{
+			return ext;
+		}
+		return ext != null && ext.after(base) ? ext : base;
+	}
+
+	public static String certStatus(Topic t, CertRow r, Date now, ZoneId z)
+	{
+		if (r == null || r.passedat == null)
+		{
+			return "not_certified";
+		}
+		Date expiry = expiryOf(r, t, z);
+		if (expiry == null)
+		{
+			return "certified";
+		}
+		if (now.after(expiry))
+		{
+			return "expired";
+		}
+		long windowStart = expiry.getTime() - t.renewalwindowdays * 86400000L;
+		return now.getTime() >= windowStart ? "renewal_due" : "certified";
+	}
+
+	/** null when the topic is not a certification for this learner. */
+	public static JSONObject certificationStatus(Topic t, Learner l, Date now, ZoneId z)
+	{
+		if (!t.certification())
+		{
+			return null;
+		}
+		CertRow r = l.certifications.get(t.id);
+		JSONObject o = new JSONObject();
+		String status = certStatus(t, r, now, z);
+		boolean planinactive = t.blueprint == null || !t.blueprint.usable();
+		o.put("status", status);
+		o.put("reason", "not_certified".equals(status) ? (planinactive ? "plan_inactive" : "never") : null);
+		Date expiry = expiryOf(r, t, z);
+		o.put("passedat", r == null ? null : iso(r.passedat));
+		o.put("validuntil", r == null || r.passedat == null || t.validitymonths == 0 ? null : ymd(plusMonths(r.passedat, t.validitymonths, z), z));
+		o.put("expiry", expiry == null ? null : ymd(expiry, z));
+		o.put("windowopens", expiry == null ? null : ymd(new Date(expiry.getTime() - t.renewalwindowdays * 86400000L), z));
+		o.put("renewalwindowdays", t.renewalwindowdays);
+		o.put("scheduledfor", r == null ? null : ymd(r.scheduledfor, z));
+		o.put("passpercent", effectivePassPercent(t, t.blueprint));
+		o.put("validitymonths", t.validitymonths);
+		o.put("extended", r != null && r.extendeduntil != null);
+		o.put("manual", r != null && r.manual);
+		return o;
+	}
+
+	public static int effectivePassPercent(Topic t, Blueprint b)
+	{
+		if (t != null && t.certpasspercent != null)
+		{
+			return t.certpasspercent;
+		}
+		return b == null ? 70 : b.passpercent;
+	}
+
+	/** The evaluation conjunct of Finished for a certification topic: certified or due (expired is not finished). */
+	public static boolean certFinishedConjunct(Topic t, Learner l, Date now, ZoneId z)
+	{
+		String s = certStatus(t, l.certifications.get(t.id), now, z);
+		return "certified".equals(s) || "renewal_due".equals(s);
+	}
+
 	/** Every sequence question of t answered in learn or dailychallenge. */
 	public static boolean learnComplete(Topic t, Learner l)
 	{
@@ -1608,13 +1717,20 @@ public class LearningEngine
 	 */
 	public static JSONObject evaluationStatus(Topic t, Learner l, Date inNow)
 	{
+		return evaluationStatus(t, l, inNow, ZoneId.of("UTC"));
+	}
+
+	public static JSONObject evaluationStatus(Topic t, Learner l, Date inNow, ZoneId z)
+	{
 		Blueprint b = t.blueprint;
 		JSONObject o = new JSONObject();
 		o.put("required", t.evaluationrequired);
+		CertRow cert = t.certification() ? l.certifications.get(t.id) : null;
 		int finalized = 0;
 		for (EvalAttempt a : l.evaluations)
 		{
-			if (t.id.equals(a.topicid) && a.finalized())
+			// Per-cycle: an attempt from before the pass that started the current cycle doesn't count against this cycle's attempts.
+			if (t.id.equals(a.topicid) && a.finalized() && (cert == null || cert.passedat == null || (a.submitted != null && a.submitted.after(cert.passedat))))
 			{
 				finalized++;
 			}
@@ -1645,7 +1761,13 @@ public class LearningEngine
 			ip.put("answered", open.answers.size());
 			o.put("inprogress", ip);
 		}
-		else if (last != null && last.passed)
+		else if (t.certification() && "certified".equals(certStatus(t, cert, inNow, z)))
+		{
+			status = "not_available";
+			reason = "valid_until";
+			o.put("validuntil", ymd(expiryOf(cert, t, z), z));
+		}
+		else if (!t.certification() && last != null && last.passed)
 		{
 			status = "passed";
 		}
@@ -1744,6 +1866,7 @@ public class LearningEngine
 		a.scorepercent = intOr(d.get("scorepercent"), 0);
 		a.exposed = intOr(d.get("exposed"), 0);
 		a.reused = intOr(d.get("reused"), 0);
+		a.passpercent = intOr(d.get("passpercent"), 0);
 		a.passed = "true".equals(String.valueOf(d.get("passed")));
 		Object list = JSONValue.parse(String.valueOf(d.get("questionlist")));
 		if (list instanceof List)
@@ -1793,7 +1916,11 @@ public class LearningEngine
 	{
 		Searcher s = fieldArchive.getSearcher("certification");
 		Data d = (Data) s.searchById(r.id());
-		if (d == null) { d = s.createNewData(); d.setId(r.id()); }
+		if (d == null)
+		{
+			d = s.createNewData();
+			d.setId(r.id());
+		}
 		d.setValue("user", r.user); d.setValue("entitytopic", r.topicid); d.setValue("attemptid", r.attemptid);
 		d.setValue("passedat", r.passedat); d.setValue("validuntil", r.validuntil); d.setValue("extendeduntil", r.extendeduntil);
 		d.setValue("extendreason", r.extendreason); d.setValue("extendedby", r.extendedby);
@@ -1854,6 +1981,7 @@ public class LearningEngine
 		d.setValue("subtopicresults", a.subtopicresults.toJSONString());
 		d.setValue("exposed", a.exposed);
 		d.setValue("reused", a.reused);
+		d.setValue("passpercent", a.passpercent);
 		d.setValue("exposurerisk", a.exposed + a.reused > 0);
 		d.setValue("inputs", a.inputs.toJSONString());
 		searcher.saveData(d, null);
@@ -2031,7 +2159,9 @@ public class LearningEngine
 					titles.put(s.id, s.title);
 				}
 			}
-			JSONObject r = scoreEvaluation(a, b, titles);
+			int pass = effectivePassPercent(t, b);
+			a.passpercent = pass;
+			JSONObject r = scoreEvaluation(a, b, titles, pass);
 			a.answered = ((Number) r.get("answered")).intValue();
 			a.correct = ((Number) r.get("correct")).intValue();
 			a.scorepercent = ((Number) r.get("scorepercent")).intValue();
@@ -2039,7 +2169,7 @@ public class LearningEngine
 			a.subtopicresults = (JSONArray) r.get("subtopics");
 			a.inputs.put("failedrule", r.get("failedrule"));
 			a.inputs.put("weakest", r.get("weakest"));
-			a.inputs.put("passpercent", b.passpercent);
+			a.inputs.put("passpercent", pass);
 			a.inputs.put("subtopicminpercent", b.subtopicminpercent);
 			// Past its window the clock closed it, whoever asked: a late submit is an expired attempt, not a learner submission.
 			String by = a.expires != null && a.expires.before(new Date()) ? "timer" : inBy;
@@ -2050,6 +2180,23 @@ public class LearningEngine
 			saveEvalAttempt(a);
 			return a;
 		}
+	}
+
+	/** After a passed attempt on a certification topic: start a new cycle. Caller holds WRITE_LOCK. */
+	public CertRow recordCertificationPass(Topic t, EvalAttempt a, ZoneId z)
+	{
+		CertRow r = loadCertification(a.user, t.id);
+		if (r == null)
+		{
+			r = new CertRow();
+			r.user = a.user;
+			r.topicid = t.id;
+		}
+		r.passedat = a.submitted; r.attemptid = a.id; r.scorepercent = a.scorepercent; r.manual = false; r.manualby = null; r.manualreason = null;
+		r.validuntil = t.validitymonths == 0 ? null : plusMonths(a.submitted, t.validitymonths, z);
+		r.extendeduntil = null; r.extendreason = null; r.extendedby = null; r.scheduledfor = null; r.reminderssent = new ArrayList<>();
+		saveCertification(r);
+		return r;
 	}
 
 	/** Lazy finalization for one learner: every attempt in l past its window is scored by the timer; l.evaluations updated. */
@@ -3560,7 +3707,9 @@ public class LearningEngine
 		o.put("lockreason", t.locked ? "previous_topic_incomplete" : null);
 		o.put("afterfinish", t.position == null ? null : t.afterfinish);
 		o.put("finished", t.position == null ? null : Boolean.valueOf(t.finished));
-		o.put("evaluation", evaluationStatus(t, l, new Date()));
+		ZoneId zone = (ZoneId) orgZone()[0];
+		o.put("evaluation", evaluationStatus(t, l, new Date(), zone));
+		o.put("certification", certificationStatus(t, l, new Date(), zone));
 		String nextid = null;
 		Date last = null;
 		for (Question q : t.questions)
@@ -3637,7 +3786,10 @@ public class LearningEngine
 	// ponytail: a day value (parseYmd/plusMonths output) sits at exact UTC midnight; detecting that and reading it back via UTC
 	// (instead of z) is what keeps ymd/plusMonths zone-invariant for day values while still localizing real instants by z.
 	// Ceiling: a genuine instant landing exactly on a UTC-midnight millisecond is (mis)treated as a day value; negligible in practice.
-	private static boolean isDayValue(Date d) { return d.getTime() % 86400000L == 0; }
+	private static boolean isDayValue(Date d)
+	{
+		return d.getTime() % 86400000L == 0;
+	}
 
 	private static java.time.LocalDate localDateOf(Date d, ZoneId z)
 	{
@@ -3645,14 +3797,26 @@ public class LearningEngine
 	}
 
 	/** Renders a day value (parseYmd/plusMonths output) or a real instant, both correctly, per the convention above. */
-	public static String ymd(Date d, ZoneId z) { return d == null ? null : localDateOf(d, z).format(YMD); }
+	public static String ymd(Date d, ZoneId z)
+	{
+		return d == null ? null : localDateOf(d, z).format(YMD);
+	}
 
 	/** "YYYY-MM-DD" at start of day UTC (a day value; compare with endOfDay). null when blank or invalid. */
 	public static Date parseYmd(String s)
 	{
-		if (s == null || s.isBlank()) { return null; }
-		try { return Date.from(java.time.LocalDate.parse(s.trim(), YMD).atStartOfDay(ZoneId.of("UTC")).toInstant()); }
-		catch (java.time.format.DateTimeParseException e) { return null; }
+		if (s == null || s.isBlank())
+		{
+			return null;
+		}
+		try
+		{
+			return Date.from(java.time.LocalDate.parse(s.trim(), YMD).atStartOfDay(ZoneId.of("UTC")).toInstant());
+		}
+		catch (java.time.format.DateTimeParseException e)
+		{
+			return null;
+		}
 	}
 
 	public static Date endOfDay(Date day, ZoneId z)
@@ -3944,7 +4108,17 @@ public class LearningEngine
 
 	public static Integer intOrNull(Object v)
 	{
-		if (v == null || String.valueOf(v).isBlank()) { return null; }
-		try { return (int) Math.round(Double.parseDouble(String.valueOf(v))); } catch (NumberFormatException e) { return null; }
+		if (v == null || String.valueOf(v).isBlank())
+		{
+			return null;
+		}
+		try
+		{
+			return (int) Math.round(Double.parseDouble(String.valueOf(v)));
+		}
+		catch (NumberFormatException e)
+		{
+			return null;
+		}
 	}
 }

@@ -1071,6 +1071,44 @@ public class LearningEngineCheck
 		LearningEngine.Topic t2 = new LearningEngine.Topic(); t2.id = "t1"; t2.title = "T1"; t2.questions.add(q("q1", "s1", 1)); c2.topics.put("t1", t2);
 		LearningEngine.applyProfiles(c2, withProfiles(List.of(), "pn", "pn"), profiles(row("pn", "t1", 1, null, true, false, "keep")));
 		ok("cert no validity -> not a certification, window default 30", !t2.certification() && t2.renewalwindowdays == 30 && t2.certpasspercent == null, "");
+		// status precedence with day boundaries
+		LearningEngine.Topic ct = new LearningEngine.Topic(); ct.id = "t1"; ct.title = "T1"; ct.validitymonths = 6; ct.renewalwindowdays = 30;
+		ct.blueprint = bp("random", 9, 0, "proportional", 70, 0, 0, 0, 0, false);
+		LearningEngine.CertRow r = new LearningEngine.CertRow(); r.user = "u"; r.topicid = "t1";
+		Date now = LearningEngine.parseYmd("2026-09-23");
+		ok("cert status no row -> not_certified/never", "not_certified".equals(LearningEngine.certStatus(ct, null, now, lima)), "");
+		r.passedat = LearningEngine.parseYmd("2026-05-01"); // expiry 2026-11-01, window from 2026-10-02
+		ok("cert status certified", "certified".equals(LearningEngine.certStatus(ct, r, now, lima)), "");
+		ok("cert status renewal_due inside window", "renewal_due".equals(LearningEngine.certStatus(ct, r, LearningEngine.parseYmd("2026-10-15"), lima)), "");
+		ok("cert status still due on expiry day", "renewal_due".equals(LearningEngine.certStatus(ct, r, LearningEngine.endOfDay(LearningEngine.parseYmd("2026-11-01"), lima), lima)), "");
+		ok("cert status expired next day", "expired".equals(LearningEngine.certStatus(ct, r, LearningEngine.parseYmd("2026-11-03"), lima)), "");
+		r.extendeduntil = LearningEngine.parseYmd("2026-12-15");
+		ok("cert extension moves expiry", "certified".equals(LearningEngine.certStatus(ct, r, LearningEngine.parseYmd("2026-11-03"), lima)), "");
+		r.extendeduntil = null;
+		LearningEngine.Topic never = new LearningEngine.Topic(); never.id = "t1"; never.validitymonths = 0; never.blueprint = ct.blueprint;
+		ok("cert validity 0 never expires", "certified".equals(LearningEngine.certStatus(never, r, LearningEngine.parseYmd("2030-01-01"), lima)), "");
+		LearningEngine.Topic noplan = new LearningEngine.Topic(); noplan.id = "t1"; noplan.validitymonths = 6;
+		JSONObject np = LearningEngine.certificationStatus(noplan, learner(), now, lima);
+		ok("cert plan_inactive reason", "not_certified".equals(np.get("status")) && "plan_inactive".equals(np.get("reason")), np);
+		// canstart per status + attempts per cycle
+		LearningEngine.Learner cl = learner(); cl.certifications.put("t1", r);
+		JSONObject es = LearningEngine.evaluationStatus(ct, cl, now, lima);
+		ok("cert certified -> evaluation not available valid_until", "not_available".equals(es.get("status")) && "valid_until".equals(es.get("reason")) && !Boolean.TRUE.equals(es.get("canstart")), es);
+		JSONObject es2 = LearningEngine.evaluationStatus(ct, cl, LearningEngine.parseYmd("2026-10-15"), lima);
+		ok("cert renewal_due -> canstart", Boolean.TRUE.equals(es2.get("canstart")), es2);
+		LearningEngine.EvalAttempt old = new LearningEngine.EvalAttempt(); old.id = "u_t1_a1"; old.user = "u"; old.topicid = "t1"; old.status = "submitted"; old.passed = true; old.number = 1;
+		old.submitted = LearningEngine.parseYmd("2026-05-01"); old.created = old.submitted;
+		cl.evaluations.add(old);
+		JSONObject es3 = LearningEngine.evaluationStatus(ct, cl, LearningEngine.parseYmd("2026-10-15"), lima);
+		ok("cert attempts per cycle exclude the pass that started it", Integer.valueOf(0).equals(es3.get("attempts")), es3.get("attempts"));
+		// Finished: due still finished, expired not
+		ok("cert Finished when renewal_due", LearningEngine.certFinishedConjunct(ct, cl, LearningEngine.parseYmd("2026-10-15"), lima), "");
+		ok("cert not Finished when expired", !LearningEngine.certFinishedConjunct(ct, cl, LearningEngine.parseYmd("2026-11-03"), lima), "");
+		// pass mark override
+		ct.certpasspercent = 95;
+		ok("cert effective pass % = profile override", LearningEngine.effectivePassPercent(ct, ct.blueprint) == 95, "");
+		ct.certpasspercent = null;
+		ok("cert effective pass % = plan", LearningEngine.effectivePassPercent(ct, ct.blueprint) == 70, "");
 	}
 
 	/** Topic e1: 3 subtopics x 6 sequence questions (difficulty cycling beginner/competent/expert), es1q6 unrenderable, plus 2 reserved per subtopic. */
