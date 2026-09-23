@@ -27,4 +27,5 @@
   <property id="reused" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Reused questions</language><language id="es">Preguntas reutilizadas</language></name></property>
   <property id="exposurerisk" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Exposure risk</language><language id="es">Riesgo de exposición</language></name></property>
   <property id="inputs" index="true" stored="true" editable="false" type="text"><name><language id="en">Inputs (JSON)</language><language id="es">Entradas (JSON)</language></name></property>
+  <property id="passpercent" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Pass % used</language><language id="es">Aprobar % usado</language></name></property>
 </properties>

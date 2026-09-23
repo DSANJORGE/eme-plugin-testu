@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Certifications (spec 2026-09-23): one row per learner x topic, id <user>_<topicid>. passedat starts the current cycle
+     (from an evaluation pass or a manual certification); validuntil is informational, the engine recomputes expiry from
+     passedat + the merged validity; extendeduntil is an admin extension; scheduledfor the learner's chosen day;
+     reminderssent the stage ids already sent this cycle. -->
+<properties beanname="dataSearcher">
+  <property id="id" index="true" stored="true" editable="false" keyword="true"><name><language id="en">ID</language></name></property>
+  <property id="user" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">User</language><language id="es">Usuario</language></name></property>
+  <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
+  <property id="passedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Passed</language><language id="es">Aprobada</language></name></property>
+  <property id="attemptid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Attempt</language><language id="es">Intento</language></name></property>
+  <property id="scorepercent" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Score %</language><language id="es">Puntaje %</language></name></property>
+  <property id="validuntil" index="true" stored="true" editable="false" type="date"><name><language id="en">Valid until</language><language id="es">Vigente hasta</language></name></property>
+  <property id="extendeduntil" index="true" stored="true" editable="false" type="date"><name><language id="en">Extended until</language><language id="es">Extendida hasta</language></name></property>
+  <property id="extendreason" index="true" stored="true" editable="false" type="text"><name><language id="en">Extension reason</language><language id="es">Motivo de la extensión</language></name></property>
+  <property id="extendedby" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Extended by</language><language id="es">Extendida por</language></name></property>
+  <property id="manual" index="true" stored="true" editable="false" type="boolean" datatype="boolean"><name><language id="en">Manual</language><language id="es">Manual</language></name></property>
+  <property id="manualby" index="true" stored="true" editable="false" type="list" listid="user"><name><language id="en">Certified by</language><language id="es">Certificada por</language></name></property>
+  <property id="manualreason" index="true" stored="true" editable="false" type="text"><name><language id="en">Manual reason</language><language id="es">Motivo</language></name></property>
+  <property id="scheduledfor" index="true" stored="true" editable="false" type="date"><name><language id="en">Scheduled for</language><language id="es">Programada para</language></name></property>
+  <property id="reminderssent" index="false" stored="true" editable="false" type="text"><name><language id="en">Reminders sent</language><language id="es">Recordatorios enviados</language></name></property>
+  <property id="datemodified" index="true" stored="true" editable="false" type="date"><name><language id="en">Modified</language><language id="es">Modificada</language></name></property>
+</properties>

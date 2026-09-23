@@ -8,4 +8,5 @@
   <learnernotificationtype id="flagreply"><name><![CDATA[Respuesta a tu reporte]]></name></learnernotificationtype>
   <learnernotificationtype id="fixed"><name><![CDATA[Corrigieron la pregunta que reportaste]]></name></learnernotificationtype>
   <learnernotificationtype id="reviewed"><name><![CDATA[Revisaron la pregunta que reportaste]]></name></learnernotificationtype>
+  <learnernotificationtype id="certification"><name><![CDATA[Certificación]]></name></learnernotificationtype>
 </learnernotificationtypes>
