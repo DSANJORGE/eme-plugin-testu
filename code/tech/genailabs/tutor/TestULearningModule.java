@@ -1576,13 +1576,18 @@ public class TestULearningModule extends TestUBaseModule
 		return url.endsWith("/") ? url : url + "/";
 	}
 
-	/** Mints u's sign-in link and mails the Daily Challenge email to u, HTML only; returns {subject, html, link, fromname}. */
-	protected String[] sendDailyChallengeEmail(MediaArchive archive, Data u, String inLearnurl) throws Exception
+	/** Mints u's sign-in link and mails the Daily Challenge email to u, HTML only; returns {subject, html, link, fromname, image}. */
+	protected Object[] sendDailyChallengeEmail(MediaArchive archive, Data u, String inLearnurl) throws Exception
 	{
-		String[] mail = dailyChallengeMail(archive, u, inLearnurl);
+		Object[] mail = dailyChallengeMail(archive, u, inLearnurl);
 		org.entermediadb.email.PostMail pm = (org.entermediadb.email.PostMail) getModuleManager().getBean("postMail");
+		javax.mail.internet.InternetAddress from = new javax.mail.internet.InternetAddress();
+		from.setAddress(emailFrom(archive));
+		from.setPersonal(String.valueOf(mail[3]));
 		// No text part: PostMail wraps text + html in multipart/mixed (not alternative), so Gmail showed both, one after the other.
-		pm.postMail(new String[] {u.get("email")}, mail[0], mail[1], null, emailFrom(archive), mail[3]);
+		// The tutor's picture travels with the message (multipart/related), so no mail client has to fetch it.
+		pm.postMail(pm.parseEmails(new String[] {u.get("email")}), mail[0] == null ? null : String.valueOf(mail[0]), String.valueOf(mail[1]), null, from,
+			mail[4] == null ? null : java.util.Collections.singletonList(mail[4]), null);
 		return mail;
 	}
 
@@ -1593,8 +1598,8 @@ public class TestULearningModule extends TestUBaseModule
 		return from == null || from.trim().isEmpty() ? archive.getCatalogSettingValue("system_from_email") : from.trim();
 	}
 
-	/** {subject, html, link, fromname} for u on u's local today, with a freshly minted sign-in link (which replaces u's previous one). */
-	protected String[] dailyChallengeMail(MediaArchive archive, Data u, String inLearnurl)
+	/** {subject, html, link, fromname, inline image or null} for u on u's local today, with a freshly minted sign-in link (which replaces u's previous one). */
+	protected Object[] dailyChallengeMail(MediaArchive archive, Data u, String inLearnurl)
 	{
 		String personaId = archive.getCatalogSettingValue("tutorpersona");
 		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
@@ -1611,9 +1616,88 @@ public class TestULearningModule extends TestUBaseModule
 		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), null);
 		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
 		String link = inLearnurl + "#/desafio?src=email&campaign=dailychallenge&login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
-		String avatar = absoluteUrl(inLearnurl, persona == null ? null : persona.get("avatar"));
-		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, avatar, link, today, recent);
-		return new String[] {m[0], m[1], link, tutor};
+		Object[] avatar = avatarRef(archive, persona, inLearnurl);
+		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, (String) avatar[0], link, today, recent);
+		return new Object[] {m[0], m[1], link, tutor, avatar[1]};
+	}
+
+	/** Content-ID of the tutor's picture inside a TestU email; the HTML points at it with src="cid:...". */
+	public static final String AVATAR_CID = "tutoravatar";
+
+	/** Width and height of the embedded picture (shown at 44px, twice that for retina) and the cap on its bytes. */
+	public static final int AVATAR_PX = 96, AVATAR_MAX_BYTES = 40 * 1024;
+
+	// One small copy per avatar path, built on the first email and kept until the next restart.
+	// ponytail: no invalidation; a changed persona picture needs a restart to show up in emails.
+	private static final java.util.Map<String, byte[]> AVATAR_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+	/**
+	 * {src for the HTML, PostMail.InlineImage or null} of inPersona's picture: embedded in the message (src="cid:") when a small
+	 * copy could be made, otherwise its absolute URL (which a mail client behind an image proxy may fail to fetch), and {null, null}
+	 * without a picture. Never throws: an email is worth more than its picture.
+	 */
+	protected Object[] avatarRef(MediaArchive archive, Data inPersona, String inLearnurl)
+	{
+		String path = inPersona == null ? null : inPersona.get("avatar");
+		byte[] small = null;
+		try
+		{
+			small = path == null || path.trim().isEmpty() ? null : AVATAR_CACHE.computeIfAbsent(path.trim(), k -> smallAvatar(archive, k));
+		}
+		catch (Exception e)
+		{
+			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).error("testu email avatar " + path, e);
+		}
+		return avatarRef(small, absoluteUrl(inLearnurl, path));
+	}
+
+	/** {src, inline image or null} from the small copy (null = fall back to inUrl, which may itself be null). Pure. */
+	public static Object[] avatarRef(byte[] inSmall, String inUrl)
+	{
+		if (inSmall == null || inSmall.length == 0)
+		{
+			return new Object[] {inUrl, null};
+		}
+		return new Object[] {"cid:" + AVATAR_CID, new org.entermediadb.email.PostMail.InlineImage(AVATAR_CID, "image/png", inSmall)};
+	}
+
+	/** The site file at inPath (e.g. /site/mediadb/testu/iris.png) as an AVATAR_PX PNG, or null when it cannot be read or scaled. */
+	protected static byte[] smallAvatar(MediaArchive archive, String inPath)
+	{
+		try (java.io.InputStream in = archive.getPageManager().getPage(inPath).getInputStream())
+		{
+			return scaleAvatar(in, AVATAR_PX, AVATAR_MAX_BYTES);
+		}
+		catch (Exception e)
+		{
+			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).error("testu email avatar " + inPath, e);
+			return null;
+		}
+	}
+
+	/**
+	 * inImage scaled to inSize x inSize as a PNG, keeping its transparency; null when it is not an image or still bigger than
+	 * inMaxBytes (then the email links the picture instead of carrying it). Pure.
+	 */
+	public static byte[] scaleAvatar(java.io.InputStream inImage, int inSize, int inMaxBytes) throws java.io.IOException
+	{
+		java.awt.image.BufferedImage source = javax.imageio.ImageIO.read(inImage);
+		if (source == null)
+		{
+			return null;
+		}
+		// Square crop first, so a portrait is not squashed into the circle.
+		int side = Math.min(source.getWidth(), source.getHeight());
+		java.awt.image.BufferedImage square = source.getSubimage((source.getWidth() - side) / 2, (source.getHeight() - side) / 2, side, side);
+		java.awt.image.BufferedImage small = new java.awt.image.BufferedImage(inSize, inSize, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = small.createGraphics();
+		g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+		g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+		g.drawImage(square.getScaledInstance(inSize, inSize, java.awt.Image.SCALE_SMOOTH), 0, 0, null);
+		g.dispose();
+		java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+		javax.imageio.ImageIO.write(small, "png", out);
+		return out.size() > inMaxBytes ? null : out.toByteArray();
 	}
 
 	/** inPath made absolute against inBase's origin ("/site/x.png" -> "https://host/site/x.png"); http(s) kept; else null. Pure. */
@@ -1949,9 +2033,8 @@ public class TestULearningModule extends TestUBaseModule
 		{
 			lang = persona == null ? null : persona.get("tutorlanguage");
 		}
-		String learnurl = learnUrl(archive);
-		String avatar = learnurl == null || persona == null ? null : absoluteUrl(learnurl, persona.get("avatar"));
-		String[] m = loginCodeEmailContent(lang != null && lang.startsWith("en"), givenName(u == null ? null : u.getFirstName()), tutor, avatar,
+		Object[] avatar = avatarRef(archive, persona, learnUrl(archive));
+		String[] m = loginCodeEmailContent(lang != null && lang.startsWith("en"), givenName(u == null ? null : u.getFirstName()), tutor, (String) avatar[0],
 				code == null ? "" : String.valueOf(code), email == null ? "" : email);
 		Object settings = inReq.getPageValue("emailsettings"); // SendMailModule.EMAIL_SETTINGS, put by PasswordHelper before the render
 		if (settings instanceof org.entermediadb.email.WebEmail)
@@ -1960,6 +2043,11 @@ public class TestULearningModule extends TestUBaseModule
 			w.setSubject(m[0]);
 			w.setFrom(emailFrom(archive));
 			w.setFromName(tutor);
+			if (avatar[1] != null && w instanceof org.entermediadb.email.TemplateWebEmail)
+			{
+				// PostMail puts an InlineImage of the attachment list into the message itself (multipart/related).
+				((org.entermediadb.email.TemplateWebEmail) w).getFileAttachments().add(avatar[1]);
+			}
 		}
 		inReq.putPageValue("testuloginhtml", m[1]);
 	}
@@ -2124,7 +2212,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		Data u = freshUser(archive, user);
 		boolean send = "true".equals(inReq.getRequestParameter("send")) && inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
-		String[] mail = send ? sendDailyChallengeEmail(archive, u, learnurl) : dailyChallengeMail(archive, u, learnurl);
+		Object[] mail = send ? sendDailyChallengeEmail(archive, u, learnurl) : dailyChallengeMail(archive, u, learnurl);
 		JSONObject out = new JSONObject();
 		out.put("ok", Boolean.TRUE);
 		out.put("to", u.get("email"));
@@ -2132,6 +2220,7 @@ public class TestULearningModule extends TestUBaseModule
 		out.put("subject", mail[0]);
 		out.put("html", mail[1]);
 		out.put("link", mail[2]);
+		out.put("embeddedavatarbytes", mail[4] == null ? null : ((org.entermediadb.email.PostMail.InlineImage) mail[4]).data.length);
 		out.put("eligible", mayReceive(archive.getCatalogSettingValue("testu_dailychallengeemail"), archive.getCatalogSettingValue("testu_dailychallengeemail_only"),
 				u.get("email"), rolePermissions(archive, u.getId(), new java.util.HashMap<>())));
 		out.put("sent", send);
