@@ -1,3 +1,4 @@
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -161,6 +162,7 @@ public class LearningEngineCheck
 		contentAndRetentionChecks();
 		profileChecks();
 		evaluationChecks();
+		certificationChecks();
 
 		System.out.println(failures == 0 ? "ok: LearningEngineCheck all passed" : "FAIL: " + failures + " LearningEngineCheck assertion(s)");
 		System.exit(failures == 0 ? 0 : 1);
@@ -192,6 +194,17 @@ public class LearningEngineCheck
 		r.requiresprevious = reqPrev;
 		r.afterfinish = after;
 		return r;
+	}
+
+	static Question q(String id, String sectionid, int weight)
+	{
+		Question q = new Question();
+		q.id = id;
+		q.componentid = "c" + id;
+		q.sectionid = sectionid;
+		q.difficulty = "beginner";
+		q.weight = weight;
+		return q;
 	}
 
 	static Learner withProfiles(List<Attempt> at, String primary, String... all)
@@ -1030,6 +1043,34 @@ public class LearningEngineCheck
 		ok("finished: evaluation required and passed -> true", LearningEngine.finished(f, learned), "");
 		f.evaluationrequired = false;
 		ok("finished: not required -> unchanged rule", LearningEngine.finished(f, learner(allLearned(f))), "");
+	}
+
+	// ---- certifications (spec 2026-09-23): date helpers and profile-row merge
+
+	static void certificationChecks()
+	{
+		ZoneId lima = ZoneId.of("America/Lima");
+		Date d = LearningEngine.parseYmd("2026-11-03");
+		ok("cert ymd round trip", "2026-11-03".equals(LearningEngine.ymd(d, lima)), LearningEngine.ymd(d, lima));
+		ok("cert parseYmd invalid -> null", LearningEngine.parseYmd("3/11/2026") == null && LearningEngine.parseYmd(null) == null, "");
+		Date eod = LearningEngine.endOfDay(d, lima);
+		ok("cert endOfDay is 23:59:59 Lima", "2026-11-03".equals(LearningEngine.ymd(eod, lima)) && eod.after(d), eod);
+		ok("cert plusMonths 6", "2027-05-03".equals(LearningEngine.ymd(LearningEngine.plusMonths(d, 6, lima), lima)), "");
+		// merge: shortest validity, highest pass %, longest window; 0 = never expires counts as longest
+		LearningEngine.Content c = new LearningEngine.Content();
+		LearningEngine.Topic t = new LearningEngine.Topic(); t.id = "t1"; t.title = "T1"; t.questions.add(q("q1", "s1", 1)); c.topics.put("t1", t);
+		LearningEngine.ProfileRow a = row("pa", "t1", 1, null, true, false, "keep"); a.validitymonths = 6; a.passpercent = 95; a.renewalwindowdays = 30;
+		LearningEngine.ProfileRow b = row("pb", "t1", 1, null, true, false, "keep"); b.validitymonths = 3; b.passpercent = 80; b.renewalwindowdays = 45;
+		LearningEngine.ProfileRow z = row("pz", "t1", 1, null, true, false, "keep"); z.validitymonths = 0;
+		LearningEngine.applyProfiles(c, withProfiles(List.of(), "pa", "pa", "pb", "pz"), profiles(a, b, z));
+		ok("cert merge shortest validity 3", Integer.valueOf(3).equals(t.validitymonths), t.validitymonths);
+		ok("cert merge highest pass 95", Integer.valueOf(95).equals(t.certpasspercent), t.certpasspercent);
+		ok("cert merge longest window 45", t.renewalwindowdays == 45, t.renewalwindowdays);
+		ok("cert merge certification() true", t.certification(), "");
+		LearningEngine.Content c2 = new LearningEngine.Content();
+		LearningEngine.Topic t2 = new LearningEngine.Topic(); t2.id = "t1"; t2.title = "T1"; t2.questions.add(q("q1", "s1", 1)); c2.topics.put("t1", t2);
+		LearningEngine.applyProfiles(c2, withProfiles(List.of(), "pn", "pn"), profiles(row("pn", "t1", 1, null, true, false, "keep")));
+		ok("cert no validity -> not a certification, window default 30", !t2.certification() && t2.renewalwindowdays == 30 && t2.certpasspercent == null, "");
 	}
 
 	/** Topic e1: 3 subtopics x 6 sequence questions (difficulty cycling beginner/competent/expert), es1q6 unrenderable, plus 2 reserved per subtopic. */

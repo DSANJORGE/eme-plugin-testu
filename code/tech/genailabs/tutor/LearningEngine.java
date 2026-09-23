@@ -1,6 +1,7 @@
 package tech.genailabs.tutor;
 
 import java.text.SimpleDateFormat;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -90,6 +91,10 @@ public class LearningEngine
 		public Blueprint blueprint;
 		public boolean evaluationrequired;
 		public List<Question> reserved = new ArrayList<>();
+		// Certifications (spec 2026-09-23), merged by applyProfiles: validitymonths null = not a certification for this learner.
+		public Integer validitymonths, certpasspercent;
+		public int renewalwindowdays = 30;
+		public boolean certification() { return validitymonths != null; }
 	}
 
 	public static class Content
@@ -475,6 +480,7 @@ public class LearningEngine
 		public Collection<String> jobroles = new ArrayList<>();
 		public String primaryjobrole; // orders the assignment; null = none (extras alone, by name)
 		public List<EvalAttempt> evaluations = new ArrayList<>(); // the learner's evaluation attempts, oldest first (loadLearner)
+		public Map<String, CertRow> certifications = new HashMap<>(); // by topic id (loadLearner)
 	}
 
 	/** learn | dailychallenge | improve. Legacy (unverified) and evaluation attempts are not learning attempts. */
@@ -539,6 +545,11 @@ public class LearningEngine
 			l.evaluations.add(evalAttemptOf((Data) o));
 		}
 		l.evaluations.sort(Comparator.comparing(a -> a.created == null ? new Date(0) : a.created));
+		for (Object o : fieldArchive.query("certification").exact("user", inUserid).search())
+		{
+			CertRow r = certRowOf((Data) o);
+			l.certifications.put(r.topicid, r);
+		}
 		if (inJobroles != null)
 		{
 			l.jobroles = inJobroles;
@@ -770,6 +781,7 @@ public class LearningEngine
 		public String jobrole, topicid, requiredlevel, afterfinish = "keep";
 		public int position;
 		public boolean mandatory = true, requiresprevious, evaluationrequired;
+		public Integer validitymonths, passpercent, renewalwindowdays;
 	}
 
 	/** Every row of the learner's profiles, and profile id -> name. */
@@ -791,6 +803,9 @@ public class LearningEngine
 		r.requiresprevious = "true".equals(String.valueOf(d.get("requiresprevious")));
 		r.afterfinish = "remove".equals(d.get("afterfinish")) ? "remove" : "keep";
 		r.evaluationrequired = "true".equals(String.valueOf(d.get("evaluationrequired")));
+		r.validitymonths = intOrNull(d.get("validitymonths"));
+		r.passpercent = intOrNull(d.get("passpercent"));
+		r.renewalwindowdays = intOrNull(d.get("renewalwindowdays"));
 		return r;
 	}
 
@@ -926,6 +941,7 @@ public class LearningEngine
 					}
 					t.mandatory |= r.mandatory;
 					t.evaluationrequired |= r.evaluationrequired;
+					mergeCertification(t, r);
 					if ("keep".equals(r.afterfinish))
 					{
 						t.afterfinish = "keep";
@@ -940,6 +956,7 @@ public class LearningEngine
 					t.mandatory = r.mandatory;
 					t.afterfinish = r.afterfinish;
 					t.evaluationrequired = r.evaluationrequired;
+					mergeCertification(t, r);
 					t.requiresprevious = r.requiresprevious && prev != null;
 					t.previoustopic = t.requiresprevious ? prev : null;
 					assigned.put(t.id, t);
@@ -990,6 +1007,19 @@ public class LearningEngine
 			}
 		}
 		c.topics = reordered;
+	}
+
+	/** Certification rule merge: shortest validity (0 = never expires counts as longest), highest pass %, longest window. */
+	static void mergeCertification(Topic t, ProfileRow r)
+	{
+		if (r.validitymonths == null) { return; }
+		if (t.validitymonths == null || (r.validitymonths != 0 && (t.validitymonths == 0 || r.validitymonths < t.validitymonths)))
+		{
+			t.validitymonths = r.validitymonths;
+		}
+		if (r.passpercent != null && (t.certpasspercent == null || r.passpercent > t.certpasspercent)) { t.certpasspercent = r.passpercent; }
+		int w = r.renewalwindowdays == null ? 30 : r.renewalwindowdays;
+		if (w > t.renewalwindowdays) { t.renewalwindowdays = w; }
 	}
 
 	/**
@@ -1172,6 +1202,36 @@ public class LearningEngine
 			return o;
 		}
 	}
+
+	/** One certification row (table certification): the learner's current cycle on a topic. */
+	public static class CertRow
+	{
+		public String user, topicid, attemptid, extendreason, extendedby, manualby, manualreason;
+		public Date passedat, validuntil, extendeduntil, scheduledfor;
+		public Integer scorepercent;
+		public boolean manual;
+		public List<String> reminderssent = new ArrayList<>();
+		public String id() { return user + "_" + topicid; }
+	}
+
+	public static CertRow certRowOf(Data d)
+	{
+		CertRow r = new CertRow();
+		r.user = d.get("user"); r.topicid = d.get("entitytopic"); r.attemptid = d.get("attemptid");
+		r.extendreason = d.get("extendreason"); r.extendedby = d.get("extendedby"); r.manualby = d.get("manualby"); r.manualreason = d.get("manualreason");
+		r.passedat = dateOf(d.getValue("passedat")); r.validuntil = dateOf(d.getValue("validuntil"));
+		r.extendeduntil = dateOf(d.getValue("extendeduntil")); r.scheduledfor = dateOf(d.getValue("scheduledfor"));
+		r.scorepercent = intOrNull(d.get("scorepercent"));
+		r.manual = "true".equals(String.valueOf(d.get("manual")));
+		Object sent = d.get("reminderssent");
+		if (sent != null && !String.valueOf(sent).isBlank())
+		{
+			for (Object o : (JSONArray) JSONValue.parse(String.valueOf(sent))) { r.reminderssent.add(String.valueOf(o)); }
+		}
+		return r;
+	}
+
+	private static Date dateOf(Object v) { return v == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(v); }
 
 	/** Questions b may draw from: the sequence (random) or the reserved set (reserved), renderable, in a covered subtopic. */
 	public static List<Question> evaluationPool(Topic t, Blueprint b)
@@ -1721,6 +1781,27 @@ public class LearningEngine
 		a.expires = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("expiresat"));
 		a.submitted = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("submitted"));
 		return a;
+	}
+
+	public CertRow loadCertification(String inUser, String inTopicid)
+	{
+		Data d = (Data) fieldArchive.getSearcher("certification").searchById(inUser + "_" + inTopicid);
+		return d == null ? null : certRowOf(d);
+	}
+
+	public void saveCertification(CertRow r)
+	{
+		Searcher s = fieldArchive.getSearcher("certification");
+		Data d = (Data) s.searchById(r.id());
+		if (d == null) { d = s.createNewData(); d.setId(r.id()); }
+		d.setValue("user", r.user); d.setValue("entitytopic", r.topicid); d.setValue("attemptid", r.attemptid);
+		d.setValue("passedat", r.passedat); d.setValue("validuntil", r.validuntil); d.setValue("extendeduntil", r.extendeduntil);
+		d.setValue("extendreason", r.extendreason); d.setValue("extendedby", r.extendedby);
+		d.setValue("manual", r.manual); d.setValue("manualby", r.manualby); d.setValue("manualreason", r.manualreason);
+		d.setValue("scheduledfor", r.scheduledfor); d.setValue("scorepercent", r.scorepercent);
+		JSONArray sent = new JSONArray(); sent.addAll(r.reminderssent); d.setValue("reminderssent", sent.toJSONString());
+		d.setValue("datemodified", new Date());
+		s.saveData(d, null);
 	}
 
 	/** Realtime get by id; null when no such attempt. */
@@ -3551,6 +3632,41 @@ public class LearningEngine
 		return f.format(d);
 	}
 
+	private static final java.time.format.DateTimeFormatter YMD = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
+
+	// ponytail: a day value (parseYmd/plusMonths output) sits at exact UTC midnight; detecting that and reading it back via UTC
+	// (instead of z) is what keeps ymd/plusMonths zone-invariant for day values while still localizing real instants by z.
+	// Ceiling: a genuine instant landing exactly on a UTC-midnight millisecond is (mis)treated as a day value; negligible in practice.
+	private static boolean isDayValue(Date d) { return d.getTime() % 86400000L == 0; }
+
+	private static java.time.LocalDate localDateOf(Date d, ZoneId z)
+	{
+		return d.toInstant().atZone(isDayValue(d) ? ZoneId.of("UTC") : z).toLocalDate();
+	}
+
+	/** Renders a day value (parseYmd/plusMonths output) or a real instant, both correctly, per the convention above. */
+	public static String ymd(Date d, ZoneId z) { return d == null ? null : localDateOf(d, z).format(YMD); }
+
+	/** "YYYY-MM-DD" at start of day UTC (a day value; compare with endOfDay). null when blank or invalid. */
+	public static Date parseYmd(String s)
+	{
+		if (s == null || s.isBlank()) { return null; }
+		try { return Date.from(java.time.LocalDate.parse(s.trim(), YMD).atStartOfDay(ZoneId.of("UTC")).toInstant()); }
+		catch (java.time.format.DateTimeParseException e) { return null; }
+	}
+
+	public static Date endOfDay(Date day, ZoneId z)
+	{
+		java.time.LocalDate ld = day.toInstant().atZone(ZoneId.of("UTC")).toLocalDate();
+		return Date.from(ld.atTime(23, 59, 59).atZone(z).toInstant());
+	}
+
+	/** Adds months to a day value or a real instant (localized by z), returning a day value (midnight UTC). */
+	public static Date plusMonths(Date d, int months, ZoneId z)
+	{
+		return Date.from(localDateOf(d, z).plusMonths(months).atStartOfDay(ZoneId.of("UTC")).toInstant());
+	}
+
 	// ---------------------------------------------------------------- stored tutormastery (computemastery event, pass 1)
 
 	/**
@@ -3824,5 +3940,11 @@ public class LearningEngine
 		{
 			return inDefault;
 		}
+	}
+
+	public static Integer intOrNull(Object v)
+	{
+		if (v == null || String.valueOf(v).isBlank()) { return null; }
+		try { return (int) Math.round(Double.parseDouble(String.valueOf(v))); } catch (NumberFormatException e) { return null; }
 	}
 }
