@@ -1,0 +1,4 @@
+<page>
+  <path-action name="TestULearningModule.scheduleCertification"/>
+  <permission name="view"><user/></permission>
+</page>

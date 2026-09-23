@@ -414,7 +414,8 @@ public class TestULearningModule extends TestUBaseModule
 			return;
 		}
 		engine.expireStale(learner, content);
-		JSONObject resp = LearningEngine.evaluationStatus(topic, learner, new Date());
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		JSONObject resp = LearningEngine.evaluationStatus(topic, learner, new Date(), zone);
 		resp.put("ok", Boolean.TRUE);
 		resp.put("topic", topic.id);
 		resp.put("blueprint", topic.blueprint.usable() ? topic.blueprint.toJson() : null);
@@ -475,7 +476,8 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		engine.expireStale(learner, content);
 		Date now = new Date();
-		JSONObject status = LearningEngine.evaluationStatus(topic, learner, now);
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		JSONObject status = LearningEngine.evaluationStatus(topic, learner, now, zone);
 		boolean maycreate = Boolean.TRUE.equals(status.get("canstart"));
 		if (!"in_progress".equals(status.get("status")) && !maycreate)
 		{
@@ -493,7 +495,7 @@ public class TestULearningModule extends TestUBaseModule
 				fail(inReq, 409, "pool_insufficient"); // the blueprint selects no question from this topic; nothing was created
 				return;
 			}
-			notAvailable(inReq, LearningEngine.evaluationStatus(topic, learner, new Date()));
+			notAvailable(inReq, LearningEngine.evaluationStatus(topic, learner, new Date(), zone));
 			return;
 		}
 		boolean isNew = true;
@@ -584,6 +586,47 @@ public class TestULearningModule extends TestUBaseModule
 			audit(inReq, getMediaArchive(inReq), "evaluation.submit", "evaluationattempt", a.id, null, a.toResultJson());
 			notifyUser(user.getId(), "progress", null);
 		}
+		reply(inReq, resp);
+	}
+
+	/**
+	 * services/testu/learn/schedulecertification.json (POST topicid, date -- YYYY-MM-DD, blank clears) -- the learner's commitment
+	 * for the renewal (spec 2026-09-23). date_past when the date isn't today-or-later; date_after_expiry when it falls past the
+	 * current cycle's expiry -- except an already-expired cycle accepts any date from today onward (controller ruling).
+	 */
+	public void scheduleCertification(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null) { return; }
+		Object[] loaded = load(inReq, user);
+		LearningEngine engine = (LearningEngine) loaded[0]; LearningEngine.Content content = (LearningEngine.Content) loaded[1]; LearningEngine.Learner learner = (LearningEngine.Learner) loaded[2];
+		LearningEngine.Topic topic = content.topics.get(param(inReq, "topicid"));
+		if (topic == null) { fail(inReq, 404, "unknown_topic"); return; }
+		if (!topic.certification()) { fail(inReq, 400, "not_certification_topic"); return; }
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		String raw = param(inReq, "date");
+		Date day = null;
+		if (raw != null)
+		{
+			day = LearningEngine.parseYmd(raw);
+			if (day == null) { fail(inReq, 400, "bad_date"); return; }
+			if (LearningEngine.endOfDay(day, zone).before(now)) { fail(inReq, 400, "date_past"); return; }
+			LearningEngine.CertRow existing = learner.certifications.get(topic.id);
+			Date expiry = LearningEngine.expiryOf(existing, topic, zone);
+			// An already-expired cycle has no upper bound: only a still-current expiry (status not "expired") constrains the date.
+			boolean expired = "expired".equals(LearningEngine.certStatus(topic, existing, now, zone));
+			if (expiry != null && day.after(expiry) && !expired) { fail(inReq, 400, "date_after_expiry"); return; }
+		}
+		LearningEngine.CertRow row = learner.certifications.get(topic.id);
+		if (row == null) { row = new LearningEngine.CertRow(); row.user = user.getId(); row.topicid = topic.id; }
+		JSONObject before = LearningEngine.certificationStatus(topic, learner, now, zone);
+		row.scheduledfor = day;
+		synchronized (LearningEngine.WRITE_LOCK) { engine.saveCertification(row); }
+		learner.certifications.put(topic.id, row);
+		JSONObject after = LearningEngine.certificationStatus(topic, learner, now, zone);
+		audit(inReq, getMediaArchive(inReq), "certification.schedule", "certification", row.id(), before, after);
+		JSONObject resp = new JSONObject(); resp.put("ok", Boolean.TRUE); resp.put("certification", after); resp.put("now", LearningEngine.iso(now));
 		reply(inReq, resp);
 	}
 

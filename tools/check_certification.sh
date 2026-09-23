@@ -82,6 +82,14 @@ def refresh():
 
 USER_TABLES = ("tutoranswer", "tutorexposure", "dailychallengeset", "learningsession", "tutormastery", "tutordaily", "subtopicunlock", "evaluationattempt")
 
+import datetime
+
+NOW = datetime.datetime.utcnow()
+
+
+def iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
 
 def wipe_user_rows(user):
     refresh()
@@ -249,6 +257,28 @@ try:
     ok("evaluation: certified -> not_available valid_until", e["status"] == "not_available" and e["reason"] == "valid_until" and e.get("validuntil"), e)
     st4, body = call(me, "POST", "/services/testu/learn/startevaluation.json", form={"topicid": T})
     ok("start: 409 valid_until", st4 == 409 and body.get("reason") == "valid_until", body)
+
+    put_row("certification", USER + "_" + T, {"passedat": iso(NOW - datetime.timedelta(days=170))}); refresh()   # expiry in ~10 days
+    st3 = state(T)["certification"]
+    ok("forced: renewal_due", st3["status"] == "renewal_due", st3)
+    bad = call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": "2020-01-01"})
+    ok("schedule: date_past", bad[0] == 400 and bad[1]["error"] == "date_past", bad)
+    late = call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": "2099-01-01"})
+    ok("schedule: date_after_expiry", late[0] == 400 and late[1]["error"] == "date_after_expiry", late)
+    day = (NOW + datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+    good = must("schedule", call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": day}))
+    ok("schedule: stored", good["certification"]["scheduledfor"] == day, good)
+    ok("audit certification.schedule", audits("certification.schedule", USER + "_" + T), "")
+    clr = must("schedule clear", call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": ""}))
+    ok("schedule: cleared", clr["certification"]["scheduledfor"] is None, clr)
+
+    # controller ruling: an already-expired cycle has no upper bound -- any date from today onward is accepted.
+    put_row("certification", USER + "_" + T, {"passedat": iso(NOW - datetime.timedelta(days=250))}); refresh()
+    st5 = state(T)["certification"]
+    ok("forced: expired", st5["status"] == "expired", st5)
+    nextweek = (NOW + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+    resumed = must("schedule after expiry", call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": nextweek}))
+    ok("schedule: expired cycle accepts a future date", resumed["certification"]["scheduledfor"] == nextweek, resumed)
 finally:
     cleanup()
 print("certification checks: " + ("PASS" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"))
