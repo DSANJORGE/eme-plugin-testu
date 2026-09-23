@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- Learning engine v1: per-topic band thresholds; blank = org default (masterylevel.minpercent). -->
-<properties beanname="dataSearcher">
-  <property id="competentmin" index="true" stored="true" editable="true" type="number" datatype="number"><name><language id="en">Competent from %</language><language id="es">Competente desde %</language></name></property>
-  <property id="expertmin" index="true" stored="true" editable="true" type="number" datatype="number"><name><language id="en">Expert from %</language><language id="es">Experto desde %</language></name></property>
-</properties>

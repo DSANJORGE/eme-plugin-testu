@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- Learning engine v1: org default band thresholds (minpercent on the masterylevel list rows). -->
-<properties>
-  <property id="id" editable="true" index="true" stored="true"><name><language id="en">Id</language></name></property>
-  <property id="name" editable="true" index="true" stored="true" multilanguage="true"><name><language id="en">Name</language><language id="es">Nombre</language></name></property>
-  <property id="minpercent" editable="true" index="true" stored="true" type="number" datatype="number"><name><language id="en">Minimum %</language><language id="es">Mínimo %</language></name></property>
-</properties>

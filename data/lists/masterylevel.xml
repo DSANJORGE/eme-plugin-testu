@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<masterylevels>
-  <masterylevel id="beginner" minpercent="0"><name><![CDATA[Principiante]]></name></masterylevel>
-  <masterylevel id="competent" minpercent="60"><name><![CDATA[Competente]]></name></masterylevel>
-  <masterylevel id="expert" minpercent="85"><name><![CDATA[Experto]]></name></masterylevel>
-</masterylevels>

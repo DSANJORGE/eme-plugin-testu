@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<evaluationstrategys>
-  <evaluationstrategy id="random"><name><![CDATA[Aleatoria por persona]]></name></evaluationstrategy>
-  <evaluationstrategy id="reserved"><name><![CDATA[Preguntas reservadas]]></name></evaluationstrategy>
-</evaluationstrategys>
