@@ -1726,10 +1726,10 @@ public class LearningEngine
 			{
 				due.add("expired");
 			}
-		}
-		if (r.scheduledfor != null && !now.before(r.scheduledfor) && !now.after(endOfDay(r.scheduledfor, z)))
-		{
-			due.add("scheduled_day");
+			if (r.scheduledfor != null && !now.before(r.scheduledfor) && !now.after(endOfDay(r.scheduledfor, z)))
+			{
+				due.add("scheduled_day");
+			}
 		}
 		due.removeAll(r.reminderssent);
 		return due;

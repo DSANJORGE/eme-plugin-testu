@@ -1120,7 +1120,17 @@ public class LearningEngineCheck
 		rr.scheduledfor = LearningEngine.parseYmd("2026-10-20");
 		ok("stages: scheduled_day on the day", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-10-20"), lima).contains("scheduled_day"), "");
 		ok("stages: none when validity 0", LearningEngine.dueStages(rr, never, LearningEngine.parseYmd("2030-01-01"), lima).isEmpty(), "");
-		ok("stagesAlreadyPast excludes expired", !LearningEngine.stagesAlreadyPast(new LearningEngine.CertRow() {{ passedat = LearningEngine.parseYmd("2026-04-20"); }}, ct, LearningEngine.parseYmd("2026-10-26"), lima).contains("expired"), "");
+		LearningEngine.CertRow zeroRow = new LearningEngine.CertRow(); zeroRow.user = "u"; zeroRow.topicid = "t1";
+		zeroRow.passedat = LearningEngine.parseYmd("2026-01-01"); zeroRow.scheduledfor = LearningEngine.parseYmd("2026-09-23");
+		ok("stages: validity 0 + scheduledfor today -> still none (no expiry = no stages)",
+				LearningEngine.dueStages(zeroRow, never, LearningEngine.parseYmd("2026-09-23"), lima).isEmpty(),
+				LearningEngine.dueStages(zeroRow, never, LearningEngine.parseYmd("2026-09-23"), lima));
+		LearningEngine.CertRow lateRow = new LearningEngine.CertRow(); lateRow.passedat = LearningEngine.parseYmd("2026-04-20"); // expiry 2026-10-20
+		List<String> lateDue = LearningEngine.dueStages(lateRow, ct, LearningEngine.parseYmd("2026-11-03"), lima);
+		ok("dueStages: expired among the stages when very late", lateDue.contains("expired"), lateDue);
+		ok("stagesAlreadyPast: exactly window_open,7d,1d (expired excluded) when very late",
+				LearningEngine.stagesAlreadyPast(lateRow, ct, LearningEngine.parseYmd("2026-11-03"), lima).equals(List.of("window_open", "7d", "1d")),
+				LearningEngine.stagesAlreadyPast(lateRow, ct, LearningEngine.parseYmd("2026-11-03"), lima));
 	}
 
 	/** Topic e1: 3 subtopics x 6 sequence questions (difficulty cycling beginner/competent/expert), es1q6 unrenderable, plus 2 reserved per subtopic. */
