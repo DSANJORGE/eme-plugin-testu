@@ -1,0 +1,8 @@
+<page>
+  <property name="eventname">TestU: certification reminders</property>
+  <property name="eventdescription">Certification reminder stages (window_open, 7d, 1d, expired, scheduled_day), one learnernotification per stage per cycle</property>
+  <property name="enabled">true</property>
+  <property name="period">15m</property>
+  <property name="delay">4m</property>
+  <path-action name="Script.run"><script>/${catalogid}/events/scripts/testu/certificationreminders.groovy</script></path-action>
+</page>

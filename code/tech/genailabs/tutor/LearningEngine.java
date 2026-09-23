@@ -1695,6 +1695,54 @@ public class LearningEngine
 		return "certified".equals(s) || "renewal_due".equals(s);
 	}
 
+	/** Reminder stages due now and not yet sent this cycle, in send order. No expiry (validity 0) = nothing. */
+	public static List<String> dueStages(CertRow r, Topic t, Date now, ZoneId z)
+	{
+		List<String> due = new ArrayList<>();
+		if (r == null || r.passedat == null)
+		{
+			return due;
+		}
+		Date expiry = expiryOf(r, t, z);
+		if (expiry != null)
+		{
+			// Day-granularity milestones: compare calendar dates in z (like endOfDay/plusMonths), not raw ms. A ms diff would
+			// misfire under a negative UTC offset (e.g. Lima, UTC-5): a UTC-midnight "now" sits a few hours before local
+			// midnight of the same calendar day, so it can miss a same-day threshold that already elapsed in z.
+			long daysUntilExpiry = java.time.temporal.ChronoUnit.DAYS.between(localDateOf(now, z), localDateOf(expiry, z));
+			if (daysUntilExpiry <= t.renewalwindowdays)
+			{
+				due.add("window_open");
+			}
+			if (daysUntilExpiry <= 7)
+			{
+				due.add("7d");
+			}
+			if (daysUntilExpiry <= 1)
+			{
+				due.add("1d");
+			}
+			if (now.after(expiry))
+			{
+				due.add("expired");
+			}
+		}
+		if (r.scheduledfor != null && !now.before(r.scheduledfor) && !now.after(endOfDay(r.scheduledfor, z)))
+		{
+			due.add("scheduled_day");
+		}
+		due.removeAll(r.reminderssent);
+		return due;
+	}
+
+	/** For a row created mid-cycle (manual certification): mark past stages as sent without sending, except expired. */
+	public static List<String> stagesAlreadyPast(CertRow r, Topic t, Date now, ZoneId z)
+	{
+		List<String> past = dueStages(r, t, now, z);
+		past.remove("expired");
+		return past;
+	}
+
 	/** Every sequence question of t answered in learn or dailychallenge. */
 	public static boolean learnComplete(Topic t, Learner l)
 	{

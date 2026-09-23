@@ -934,7 +934,7 @@ public class TestULearningModule extends TestUBaseModule
 		row.extendreason = null;
 		row.extendedby = null;
 		row.scheduledfor = null;
-		row.reminderssent = new java.util.ArrayList<>(); // Task 8: stagesAlreadyPast
+		row.reminderssent = LearningEngine.stagesAlreadyPast(row, t, now, zone);
 		l.certifications.put(t.id, row);
 		synchronized (LearningEngine.WRITE_LOCK) { engine.saveCertification(row); }
 		JSONObject after = LearningEngine.certificationStatus(t, l, now, zone);
@@ -1734,9 +1734,7 @@ public class TestULearningModule extends TestUBaseModule
 		Calendar cal = Calendar.getInstance(TimeZone.getTimeZone(tzid == null || tzid.isEmpty() ? "America/Lima" : tzid));
 		int hour = cal.get(Calendar.HOUR_OF_DAY);
 		String today = String.format("%04d%02d%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH));
-		String personaId = archive.getCatalogSettingValue("tutorpersona");
-		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
-		String tutor = persona == null || persona.getName() == null ? "IRIS" : persona.getName();
+		String tutor = tutorName(archive);
 		Searcher ob = archive.getSearcher("learneronboarding");
 		Searcher ns = archive.getSearcher("learnernotification");
 		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
@@ -1782,6 +1780,122 @@ public class TestULearningModule extends TestUBaseModule
 			sent++;
 		}
 		return sent;
+	}
+
+	/** The org's configured tutor persona name (catalog setting tutorpersona, default iris); "IRIS" when unset/unnamed. */
+	String tutorName(MediaArchive archive)
+	{
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		return persona == null || persona.getName() == null ? "IRIS" : persona.getName();
+	}
+
+	/** audit(archive, actor, ...) with actor "system", for background jobs that have no signed-in user. */
+	private void auditSystem(MediaArchive archive, String action, String targettype, String targetid, Object before, Object after)
+	{
+		audit(archive, "system", action, targettype, targetid, before, after);
+	}
+
+	/** 15-minute event: certification reminders (spec 2026-09-23). One learnernotification per stage per cycle; expired also audits. */
+	public int certificationReminders(MediaArchive archive)
+	{
+		LearningEngine engine = new LearningEngine(archive);
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
+		Searcher ns = archive.getSearcher("learnernotification");
+		int sent = 0;
+		java.util.Map<String, Data> users = new java.util.HashMap<>();
+		for (Object o : archive.query("user").all().search())
+		{
+			Data u = (Data) o;
+			users.put(u.getId(), u);
+		}
+		for (Object o : archive.query("certification").all().search())
+		{
+			LearningEngine.CertRow r = LearningEngine.certRowOf((Data) o);
+			Data u = users.get(r.user);
+			if (u == null || !"true".equals(String.valueOf(u.get("enabled"))))
+			{
+				continue;
+			}
+			LearningEngine.Content content = engine.loadContent();
+			LearningEngine.Learner l = engine.loadLearner(r.user, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+			engine.applyProfiles(content, l);
+			LearningEngine.Topic t = content.topics.get(r.topicid);
+			if (t == null || !t.certification() || t.blueprint == null || !t.blueprint.usable())
+			{
+				continue;
+			}
+			java.util.List<String> due = LearningEngine.dueStages(r, t, now, zone);
+			if (due.isEmpty())
+			{
+				continue;
+			}
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				for (String stage : due)
+				{
+					Data n = ns.createNewData();
+					n.setId(r.id() + "_" + stage + "_" + LearningEngine.ymd(r.passedat, zone));
+					n.setValue("user", r.user);
+					n.setValue("actor", "tutor");
+					n.setValue("actorname", tutorName(archive));
+					n.setValue("type", "certification");
+					n.setValue("datecreated", now);
+					n.setValue("read", false);
+					n.setValue("entitytopic", t.id);
+					n.setValue("text", certificationText(stage, t.title, LearningEngine.ymd(LearningEngine.expiryOf(r, t, zone), zone)));
+					ns.saveData(n, null);
+					social.push(archive, n);
+					if ("expired".equals(stage))
+					{
+						auditSystem(archive, "certification.expire", "certification", r.id(), null, LearningEngine.certificationStatus(t, l, now, zone));
+					}
+					sent++;
+				}
+				r.reminderssent.addAll(due);
+				engine.saveCertification(r);
+			}
+			notifyUser(r.user, "notifications", null);
+		}
+		return sent;
+	}
+
+	static String certificationText(String stage, String topic, String expiry)
+	{
+		return switch (stage)
+		{
+			case "window_open" -> "Ya puedes renovar tu certificación de " + topic + " (vence el " + expiry + ").";
+			case "7d" -> "Tu certificación de " + topic + " vence en 7 días. Rinde la evaluación esta semana.";
+			case "1d" -> "Tu certificación de " + topic + " vence mañana.";
+			case "expired" -> "Tu certificación de " + topic + " venció. Rinde la evaluación para renovarla.";
+			default -> "Hoy es el día que elegiste para renovar tu certificación de " + topic + ".";
+		};
+	}
+
+	/**
+	 * services/testu/learn/certificationreminders.json (GET) -- runs certificationReminders(archive) on demand: how the 15-minute
+	 * event is exercised from check_certification.sh, and how an admin can kick reminders right after a bulk certification import.
+	 * training_manage.
+	 */
+	public void runCertificationReminders(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		if (!canManageProgression(inReq))
+		{
+			fail(inReq, 403, "forbidden");
+			return;
+		}
+		int sent = certificationReminders(getMediaArchive(inReq));
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("sent", sent);
+		reply(inReq, resp);
 	}
 
 	/** Local hour of the Daily Challenge email. */

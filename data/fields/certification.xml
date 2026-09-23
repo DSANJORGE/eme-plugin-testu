@@ -9,7 +9,10 @@
   <property id="entitytopic" index="true" stored="true" editable="false" type="list" listid="entitytopic"><name><language id="en">Topic</language><language id="es">Tema</language></name></property>
   <property id="passedat" index="true" stored="true" editable="false" type="date"><name><language id="en">Passed</language><language id="es">Aprobada</language></name></property>
   <property id="attemptid" index="true" stored="true" editable="false" keyword="true"><name><language id="en">Attempt</language><language id="es">Intento</language></name></property>
-  <property id="scorepercent" index="true" stored="true" editable="false" type="number" datatype="number"><name><language id="en">Score %</language><language id="es">Puntaje %</language></name></property>
+  <!-- datatype="long", not "number": BaseElasticSearcher's datatype="number" save path defaults a null value to 0
+       (org.entermediadb.elasticsearch.searchers.BaseElasticSearcher ~L3324 "Object val = 0;"), which would turn a manual
+       certification's blank score into "0" instead of null (see Task 7). ES mapping is already "long" (verified). -->
+  <property id="scorepercent" index="true" stored="true" editable="false" type="number" datatype="long"><name><language id="en">Score %</language><language id="es">Puntaje %</language></name></property>
   <property id="validuntil" index="true" stored="true" editable="false" type="date"><name><language id="en">Valid until</language><language id="es">Vigente hasta</language></name></property>
   <property id="extendeduntil" index="true" stored="true" editable="false" type="date"><name><language id="en">Extended until</language><language id="es">Extendida hasta</language></name></property>
   <property id="extendreason" index="true" stored="true" editable="false" type="text"><name><language id="en">Extension reason</language><language id="es">Motivo de la extensión</language></name></property>

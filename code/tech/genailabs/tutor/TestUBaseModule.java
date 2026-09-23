@@ -66,17 +66,23 @@ public class TestUBaseModule extends BaseMediaModule
 
 	public void audit(WebPageRequest inReq, MediaArchive archive, String action, String targettype, String targetid, Object before, Object after)
 	{
+		User actor = inReq.getUser();
+		audit(archive, actor != null ? actor.getId() : null, action, targettype, targetid, before, after);
+	}
+
+	/** Request-less overload for background jobs (catalog events): actor is a plain id (e.g. "system"), not a signed-in User. */
+	public void audit(MediaArchive archive, String actor, String action, String targettype, String targetid, Object before, Object after)
+	{
 		Searcher s = archive.getSearcher("auditevent");
 		Data e = s.createNewData();
 		e.setValue("datecreated", new Date());
-		User actor = inReq.getUser();
-		e.setValue("actor", actor != null ? actor.getId() : null);
+		e.setValue("actor", actor);
 		e.setValue("action", action);
 		e.setValue("targettype", targettype);
 		e.setValue("targetid", targetid);
 		e.setValue("before", before == null ? "" : toJsonString(before));
 		e.setValue("after", after == null ? "" : toJsonString(after));
-		s.saveData(e, actor);
+		s.saveData(e, null);
 	}
 
 	/** The user's stored record (fresh read by id), falling back to inUser when the lookup misses (deleted mid-request, index lag) so callers never

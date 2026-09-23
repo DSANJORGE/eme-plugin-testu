@@ -291,9 +291,29 @@ try:
     ok("audit certification.extend", audits("certification.extend", USER + "_" + T), "")
     m1 = call(admin, "POST", "/services/testu/learn/manualcertification.json", form={"user": USER, "topicid": T, "passedat": "2099-01-01", "reason": "x"})
     ok("manual: date_future", m1[0] == 400 and m1[1]["error"] == "date_future", m1)
+    tomorrow = (NOW + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    m1b = call(admin, "POST", "/services/testu/learn/manualcertification.json", form={"user": USER, "topicid": T, "passedat": tomorrow, "reason": "x"})
+    ok("manual: tomorrow (org zone) -> date_future", m1b[0] == 400 and m1b[1]["error"] == "date_future", m1b)
     m2 = must("manual", call(admin, "POST", "/services/testu/learn/manualcertification.json", form={"user": USER, "topicid": T, "passedat": today_ymd(), "reason": "External course"}))
     ok("manual: fresh cycle, manual true, extension cleared", m2["row"]["manual"] is True and m2["row"]["extendeduntil"] is None and m2["row"]["status"] == "certified", m2["row"])
     ok("audit certification.manual", audits("certification.manual", USER + "_" + T), "")
+    # Task 7/8: scorepercent datatype="long" (not "number") so a manual certification's cleared score persists as null, not 0 --
+    # reloaded from the index (certifications.json), not the in-memory response, so this actually exercises the ES round trip.
+    lst2 = must("certifications list after manual", call(admin, "GET", f"/services/testu/learn/certifications.json?topicid={T}"))
+    mine2 = [r for r in lst2["rows"] if r["user"] == USER]
+    ok("manual: scorepercent null after reload (not 0)", mine2 and mine2[0]["scorepercent"] is None, mine2)
+
+    # reminder stages + 15-minute event (Task 8, spec 2026-09-23) -- while validitymonths is still 6/renewalwindowdays 30
+    # (the profile edit below changes them), so a passedat 200 days ago is ~20 days past expiry.
+    put_row("certification", USER + "_" + T, {"passedat": iso(NOW - datetime.timedelta(days=200)), "reminderssent": "[]"}); refresh()
+    must("run reminders", call(admin, "GET", "/services/testu/learn/certificationreminders.json"))
+    refresh()
+    notes = es_ids("learnernotification", {"bool": {"must": [{"term": {"user": USER}}, {"term": {"type": "certification"}}]}})
+    ok("reminders: window_open,7d,1d,expired written once", len(notes) == 4, notes)
+    must("run reminders again", call(admin, "GET", "/services/testu/learn/certificationreminders.json")); refresh()
+    ok("reminders: idempotent", len(es_ids("learnernotification", {"bool": {"must": [{"term": {"user": USER}}, {"term": {"type": "certification"}}]}})) == 4, "")
+    ok("audit certification.expire", audits("certification.expire", USER + "_" + T), "")
+    BP_EXTRA += [("learnernotification", i) for i in notes]
 
     # controller ruling: an already-expired cycle has no upper bound -- any date from today onward is accepted.
     put_row("certification", USER + "_" + T, {"passedat": iso(NOW - datetime.timedelta(days=250))}); refresh()

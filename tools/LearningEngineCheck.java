@@ -1109,6 +1109,18 @@ public class LearningEngineCheck
 		ok("cert effective pass % = profile override", LearningEngine.effectivePassPercent(ct, ct.blueprint) == 95, "");
 		ct.certpasspercent = null;
 		ok("cert effective pass % = plan", LearningEngine.effectivePassPercent(ct, ct.blueprint) == 70, "");
+		// reminder stages (Task 8, spec 2026-09-23)
+		LearningEngine.CertRow rr = new LearningEngine.CertRow(); rr.user = "u"; rr.topicid = "t1"; rr.passedat = LearningEngine.parseYmd("2026-05-01"); // expiry 2026-11-01
+		ok("stages: none before window", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-09-01"), lima).isEmpty(), "");
+		ok("stages: window_open at window start", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-10-05"), lima).equals(List.of("window_open")), LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-10-05"), lima));
+		rr.reminderssent.add("window_open");
+		ok("stages: 7d", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-10-26"), lima).equals(List.of("7d")), "");
+		rr.reminderssent.add("7d");
+		ok("stages: 1d and expired together when first run is late", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-11-03"), lima).equals(List.of("1d", "expired")), "");
+		rr.scheduledfor = LearningEngine.parseYmd("2026-10-20");
+		ok("stages: scheduled_day on the day", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-10-20"), lima).contains("scheduled_day"), "");
+		ok("stages: none when validity 0", LearningEngine.dueStages(rr, never, LearningEngine.parseYmd("2030-01-01"), lima).isEmpty(), "");
+		ok("stagesAlreadyPast excludes expired", !LearningEngine.stagesAlreadyPast(new LearningEngine.CertRow() {{ passedat = LearningEngine.parseYmd("2026-04-20"); }}, ct, LearningEngine.parseYmd("2026-10-26"), lima).contains("expired"), "");
 	}
 
 	/** Topic e1: 3 subtopics x 6 sequence questions (difficulty cycling beginner/competent/expert), es1q6 unrenderable, plus 2 reserved per subtopic. */
