@@ -6,7 +6,7 @@
      with the stock user fields. -->
 <!-- TestU Personas: team is the only extension of user. Ids are slugs [a-z0-9]+. -->
 <properties>
-  <property id="email" index="true" stored="true" keyword="true" editable="true" indextype="not_analyzed">Email</property>
+  <property id="email" index="true" stored="true" keyword="true" editable="true">Email</property>
   <property id="team" index="true" stored="true" editable="true" type="list" viewtype="list" datatype="list" listid="team" indextype="not_analyzed">Team</property>
   <!-- Learning engine v1: job roles drive topicrequirement (strictest wins). -->
   <property id="jobrole" index="true" stored="true" editable="true" type="list" viewtype="multiselect" datatype="list" listid="jobrole" indextype="not_analyzed">Job role</property>
