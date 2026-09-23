@@ -1624,12 +1624,12 @@ public class LearningEngine
 		{
 			return null;
 		}
-		Date base = t.validitymonths == 0 ? null : endOfDay(plusMonths(r.passedat, t.validitymonths, z), z);
-		Date ext = r.extendeduntil == null ? null : endOfDay(r.extendeduntil, z);
-		if (base == null)
+		if (t.validitymonths == 0)
 		{
-			return ext;
+			return null; // never expires: an extension of a cycle that has no end is meaningless (extendcertification refuses it)
 		}
+		Date base = endOfDay(plusMonths(r.passedat, t.validitymonths, z), z);
+		Date ext = r.extendeduntil == null ? null : endOfDay(r.extendeduntil, z);
 		return ext != null && ext.after(base) ? ext : base;
 	}
 
@@ -1648,8 +1648,9 @@ public class LearningEngine
 		{
 			return "expired";
 		}
-		long windowStart = expiry.getTime() - t.renewalwindowdays * 86400000L;
-		return now.getTime() >= windowStart ? "renewal_due" : "certified";
+		// Calendar days in z, the same rule dueStages uses. A raw ms offset off expiry (23:59:59 local) put the window start at
+		// 23:59:59 of its day, so window_open fired a whole day before the status turned renewal_due.
+		return java.time.temporal.ChronoUnit.DAYS.between(localDateOf(now, z), localDateOf(expiry, z)) <= t.renewalwindowdays ? "renewal_due" : "certified";
 	}
 
 	/** null when the topic is not a certification for this learner. */
@@ -1669,7 +1670,7 @@ public class LearningEngine
 		o.put("passedat", r == null ? null : iso(r.passedat));
 		o.put("validuntil", r == null || r.passedat == null || t.validitymonths == 0 ? null : ymd(plusMonths(r.passedat, t.validitymonths, z), z));
 		o.put("expiry", expiry == null ? null : ymd(expiry, z));
-		o.put("windowopens", expiry == null ? null : ymd(new Date(expiry.getTime() - t.renewalwindowdays * 86400000L), z));
+		o.put("windowopens", expiry == null ? null : localDateOf(expiry, z).minusDays(t.renewalwindowdays).format(YMD));
 		o.put("renewalwindowdays", t.renewalwindowdays);
 		o.put("scheduledfor", r == null ? null : ymd(r.scheduledfor, z));
 		o.put("passpercent", effectivePassPercent(t, t.blueprint));
@@ -1726,7 +1727,7 @@ public class LearningEngine
 			{
 				due.add("expired");
 			}
-			if (r.scheduledfor != null && !now.before(r.scheduledfor) && !now.after(endOfDay(r.scheduledfor, z)))
+			if (r.scheduledfor != null && !now.before(startOfDay(r.scheduledfor, z)) && !now.after(endOfDay(r.scheduledfor, z)))
 			{
 				due.add("scheduled_day");
 			}
@@ -1770,12 +1771,22 @@ public class LearningEngine
 
 	/**
 	 * True when a still counts against cert's current certification cycle: every attempt counts when cert is null (not a
-	 * certification, or the learner never passed it); once a cycle starts, an attempt from before the pass that started it no
-	 * longer counts. Shared by evaluationStatus's finalized-attempt count and startEvaluation's own (storage-backed) one.
+	 * certification, or the learner never passed it); once a cycle starts, only attempts submitted after passedat count, and once
+	 * the certificate has lapsed, only attempts submitted after the expiry -- an expired certification starts a fresh attempt
+	 * budget, so a learner who burned every renewal attempt inside the window can sit the evaluation again once it lapses. Shared by evaluationStatus's finalized-attempt count and
+	 * startEvaluation's own (storage-backed) one.
 	 */
-	private static boolean countsInCycle(EvalAttempt a, CertRow cert)
+	private static boolean countsInCycle(EvalAttempt a, CertRow cert, Topic t, Date now, ZoneId z)
 	{
-		return cert == null || cert.passedat == null || (a.submitted != null && a.submitted.after(cert.passedat));
+		if (cert == null || cert.passedat == null)
+		{
+			return true;
+		}
+		Date expiry = expiryOf(cert, t, z);
+		// max(passedat, expiry), but expiry only once it is in the past: while the certificate is still valid the renewals
+		// attempted inside the window are exactly what maxattempts limits; the budget resets when the certificate lapses.
+		Date from = expiry != null && now.after(expiry) && expiry.after(cert.passedat) ? expiry : cert.passedat;
+		return a.submitted != null && a.submitted.after(from);
 	}
 
 	public static JSONObject evaluationStatus(Topic t, Learner l, Date inNow, ZoneId z)
@@ -1788,7 +1799,7 @@ public class LearningEngine
 		for (EvalAttempt a : l.evaluations)
 		{
 			// Per-cycle: an attempt from before the pass that started the current cycle doesn't count against this cycle's attempts.
-			if (t.id.equals(a.topicid) && a.finalized() && countsInCycle(a, cert))
+			if (t.id.equals(a.topicid) && a.finalized() && countsInCycle(a, cert, t, inNow, z))
 			{
 				finalized++;
 			}
@@ -2074,6 +2085,7 @@ public class LearningEngine
 		{
 			Searcher searcher = fieldArchive.getSearcher("evaluationattempt");
 			CertRow cert = t.certification() ? l.certifications.get(t.id) : null;
+			ZoneId zone = (ZoneId) orgZone()[0];
 			int n = 0;
 			for (EvalAttempt a : l.evaluations)
 			{
@@ -2107,7 +2119,7 @@ public class LearningEngine
 				{
 					// Per-cycle, same rule as evaluationStatus: an attempt from before the pass that started the current
 					// certification cycle doesn't count against maxattempts for it.
-					if (countsInCycle(latest, cert))
+					if (countsInCycle(latest, cert, t, inNow, zone))
 					{
 						finalized++;
 					}
@@ -3887,6 +3899,13 @@ public class LearningEngine
 	{
 		java.time.LocalDate ld = day.toInstant().atZone(ZoneId.of("UTC")).toLocalDate();
 		return Date.from(ld.atTime(23, 59, 59).atZone(z).toInstant());
+	}
+
+	/** 00:00:00 of a day value in z. The day value itself is UTC midnight, which is the previous evening in a negative offset. */
+	public static Date startOfDay(Date day, ZoneId z)
+	{
+		java.time.LocalDate ld = day.toInstant().atZone(ZoneId.of("UTC")).toLocalDate();
+		return Date.from(ld.atStartOfDay(z).toInstant());
 	}
 
 	/** Adds months to a day value or a real instant (localized by z), returning a day value (midnight UTC). */

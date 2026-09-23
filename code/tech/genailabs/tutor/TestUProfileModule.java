@@ -76,6 +76,7 @@ public class TestUProfileModule extends TestUBaseModule
 		LearningEngine.Content content = new LearningEngine(archive).loadContent();
 		List<LearningEngine.ProfileRow> rows = new ArrayList<>();
 		Set<String> seen = new HashSet<>();
+		Set<String> evalomitted = new HashSet<>(); // topics whose posted row carried no evaluationrequired key
 		for (Object o : (List) parsed)
 		{
 			if (!(o instanceof Map))
@@ -106,20 +107,24 @@ public class TestUProfileModule extends TestUBaseModule
 			r.mandatory = !"false".equals(String.valueOf(m.get("mandatory")));
 			r.requiresprevious = "true".equals(String.valueOf(m.get("requiresprevious")));
 			r.evaluationrequired = "true".equals(String.valueOf(m.get("evaluationrequired")));
+			if (!m.containsKey("evaluationrequired"))
+			{
+				evalomitted.add(r.topicid); // the console stopped posting the field; carry the stored value forward below
+			}
 			r.validitymonths = LearningEngine.intOrNull(m.get("validitymonths"));
-			if (r.validitymonths != null && (r.validitymonths < 0 || r.validitymonths > 120))
+			if (badNumber(m.get("validitymonths"), r.validitymonths, 0, 120))
 			{
 				fail(inReq, 400, "bad_validitymonths");
 				return;
 			}
 			r.passpercent = LearningEngine.intOrNull(m.get("passpercent"));
-			if (r.passpercent != null && (r.passpercent < 1 || r.passpercent > 100))
+			if (badNumber(m.get("passpercent"), r.passpercent, 1, 100))
 			{
 				fail(inReq, 400, "bad_passpercent");
 				return;
 			}
 			r.renewalwindowdays = LearningEngine.intOrNull(m.get("renewalwindowdays"));
-			if (r.renewalwindowdays != null && (r.renewalwindowdays < 0 || r.renewalwindowdays > 365))
+			if (badNumber(m.get("renewalwindowdays"), r.renewalwindowdays, 0, 365))
 			{
 				fail(inReq, 400, "bad_renewalwindowdays");
 				return;
@@ -181,7 +186,11 @@ public class TestUProfileModule extends TestUBaseModule
 			{
 				String rid = id + "_" + r.topicid;
 				keep.add(rid);
-				Data d = (Data) req.searchById(rid);
+				Data existing = (Data) req.searchById(rid);
+				// A row posted without the key keeps whatever is stored: the console no longer sends evaluationrequired, and a save
+				// from it must not silently drop a legacy requirement. Only a validity can newly set it.
+				boolean evalrequired = evalomitted.contains(r.topicid) ? existing != null && "true".equals(String.valueOf(existing.get("evaluationrequired"))) : r.evaluationrequired;
+				Data d = existing;
 				if (d == null)
 				{
 					d = req.createNewData();
@@ -197,7 +206,7 @@ public class TestUProfileModule extends TestUBaseModule
 				d.setValue("passpercent", r.passpercent);
 				d.setValue("renewalwindowdays", r.renewalwindowdays);
 				// compat for one release: evaluationrequired also implied by validitymonths (certification topics require evaluation)
-				d.setValue("evaluationrequired", (r.validitymonths != null || r.evaluationrequired) ? "true" : "false");
+				d.setValue("evaluationrequired", (r.validitymonths != null || evalrequired) ? "true" : "false");
 				d.setValue("afterfinish", r.afterfinish);
 				req.saveData(d, inReq.getUser());
 			}
@@ -344,6 +353,19 @@ public class TestUProfileModule extends TestUBaseModule
 	static String str(Object o)
 	{
 		return o == null ? "" : String.valueOf(o);
+	}
+
+	/**
+	 * A posted numeric profile field is bad when it is non-blank but did not parse (intOrNull returns null for "abc" exactly as it
+	 * does for a blank, which used to save the field blank instead of rejecting it), or when it parsed outside [inMin, inMax].
+	 */
+	static boolean badNumber(Object inPosted, Integer inParsed, int inMin, int inMax)
+	{
+		if (inParsed == null)
+		{
+			return inPosted != null && !String.valueOf(inPosted).isBlank();
+		}
+		return inParsed < inMin || inParsed > inMax;
 	}
 
 	static List<Data> profileList(MediaArchive archive)

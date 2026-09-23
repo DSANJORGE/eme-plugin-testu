@@ -282,6 +282,12 @@ try:
     st4, b4 = call(me, "GET", f"/services/testu/learn/certifications.json")
     ok("admin list: learner without training_view -> 403", st4 == 403, b4)
     until = (NOW + datetime.timedelta(days=40)).strftime("%Y-%m-%d")
+    # 2026-09-23 review: the permission check runs before the user lookup, so a learner probing other accounts gets 403, never a
+    # 404 that tells them whether the account exists.
+    e0 = call(me, "POST", "/services/testu/learn/extendcertification.json", form={"user": "nobody." + secrets.token_hex(4) + "@testu.local", "topicid": T, "until": until, "reason": "x"})
+    ok("extend: learner -> 403 before the user lookup (not 404)", e0[0] == 403, e0)
+    m0 = call(me, "POST", "/services/testu/learn/manualcertification.json", form={"user": "nobody." + secrets.token_hex(4) + "@testu.local", "topicid": T, "passedat": today_ymd(), "reason": "x"})
+    ok("manual: learner -> 403 before the user lookup (not 404)", m0[0] == 403, m0)
     e1 = call(admin, "POST", "/services/testu/learn/extendcertification.json", form={"user": USER, "topicid": T, "until": until, "reason": ""})
     ok("extend: missing_reason", e1[0] == 400 and e1[1]["error"] == "missing_reason", e1)
     e2 = call(admin, "POST", "/services/testu/learn/extendcertification.json", form={"user": USER, "topicid": T, "until": "2020-01-01", "reason": "x"})
@@ -330,6 +336,11 @@ try:
     ok("profiles.json: rule fields", prow["validitymonths"] == 6 and prow["passpercent"] == 50 and prow["renewalwindowdays"] == 30 and prow["evaluationrequired"] is True, prow)
     badp = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "validitymonths": "200"}])})
     ok("saveprofile: bad_validitymonths", badp[0] == 400 and badp[1]["error"] == "bad_validitymonths", badp)
+    # 2026-09-23 review: a non-blank, non-numeric value used to fall through intOrNull as null and save the field blank.
+    badn = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "validitymonths": "abc"}])})
+    ok("saveprofile: non-numeric validitymonths -> bad_validitymonths", badn[0] == 400 and badn[1]["error"] == "bad_validitymonths", badn)
+    badw = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "renewalwindowdays": "soon"}])})
+    ok("saveprofile: non-numeric renewalwindowdays -> bad_renewalwindowdays", badw[0] == 400 and badw[1]["error"] == "bad_renewalwindowdays", badw)
     okp = must("saveprofile", call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "mandatory": True, "afterfinish": "keep", "validitymonths": 12, "passpercent": "", "renewalwindowdays": 15}])}))
     r2 = okp["profile"]["rows"][0]
     ok("saveprofile: stored 12 / blank / 15", r2["validitymonths"] == 12 and r2["passpercent"] is None and r2["renewalwindowdays"] == 15, r2)
@@ -337,6 +348,22 @@ try:
     per = must("person", call(admin, "GET", f"/services/testu/analytics/person.json?user={quote(USER)}"))
     rt = [x for x in per["risk"]["requiredtopics"] if x["id"] == T][0]
     ok("person.json: certification block + evaluationmet", rt["certification"]["status"] in ("certified", "renewal_due") and rt["evaluationmet"] is True, rt)
+
+    # ---- 2026-09-23 review. These rewrite the profile row, so they run last.
+    # A save that omits evaluationrequired keeps the stored value: the console stopped posting the field and must not clear a
+    # legacy requirement. Seeded straight on the row (evaluationrequired true, no validity = not a certification).
+    put_row("topicrequirement", ROW, {"jobrole": ROLE, "entitytopic": T, "position": "1", "mandatory": "true", "afterfinish": "keep",
+            "evaluationrequired": "true", "validitymonths": "", "passpercent": "", "renewalwindowdays": ""}); refresh()
+    kept = must("saveprofile without evaluationrequired", call(admin, "POST", "/services/testu/personas/saveprofile.json",
+            form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "mandatory": True, "afterfinish": "keep"}])}))
+    ok("saveprofile: legacy evaluationrequired kept when the key is absent", kept["profile"]["rows"][0]["evaluationrequired"] is True, kept["profile"]["rows"][0])
+    ok("saveprofile: stored row still evaluationrequired true", (es_doc("topicrequirement", ROW) or {}).get("evaluationrequired") in (True, "true"), es_doc("topicrequirement", ROW))
+    # Validity 0 never expires, so there is no expiry to extend.
+    must("saveprofile validity 0", call(admin, "POST", "/services/testu/personas/saveprofile.json",
+            form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "mandatory": True, "afterfinish": "keep", "validitymonths": 0}])}))
+    refresh()
+    nev = call(admin, "POST", "/services/testu/learn/extendcertification.json", form={"user": USER, "topicid": T, "until": until, "reason": "x"})
+    ok("extend: never_expires for a validity-0 topic", nev[0] == 400 and nev[1]["error"] == "never_expires", nev)
 finally:
     cleanup()
 print("certification checks: " + ("PASS" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"))

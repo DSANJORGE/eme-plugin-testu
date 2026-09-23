@@ -18,6 +18,8 @@ import org.openedit.users.User;
 /** services/testu/learn/{state,next,exposure,answer,subtopicpolicy,unlockbackfill}.json -- thin wrappers over LearningEngine for the signed-in user. */
 public class TestULearningModule extends TestUBaseModule
 {
+	private static final org.apache.commons.logging.Log log = org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class);
+
 	public void state(WebPageRequest inReq)
 	{
 		User user = requireUser(inReq);
@@ -688,6 +690,7 @@ public class TestULearningModule extends TestUBaseModule
 		String fstatus = param(inReq, "status"), ftopic = param(inReq, "topicid"), fprofile = param(inReq, "profile"), fteam = param(inReq, "team");
 		JSONArray rows = new JSONArray();
 		java.util.Map<String, Integer> counts = new java.util.TreeMap<>(java.util.Map.of("certified", 0, "renewal_due", 0, "expired", 0, "not_certified", 0));
+		java.util.Set<String> hidden = new java.util.HashSet<>(); // certification topics dropped by manageevaluations -- distinct topics, the check is per topic, not per learner
 		for (Object o : archive.query("user").all().search())
 		{
 			Data u = (Data) o;
@@ -708,9 +711,10 @@ public class TestULearningModule extends TestUBaseModule
 			{
 				continue;
 			}
-			// ponytail: loadContent per user; cache the Content once and clone topics if the roster grows past a few hundred.
-			// applyProfiles mutates Topic fields (position, assignedlevel, ...) per learner, so a shared Content would need a
-			// clone anyway -- per-user loadContent is the correct baseline until the roster size makes it worth optimizing.
+			// ponytail: loadContent per user. Re-checked in the 2026-09-23 review: LearningEngine has no copy constructor or
+			// loadContent(Content base), and applyProfiles mutates Topic per learner (assignment order, finished, locked), so
+			// memoizing by sorted-jobroles key would hand two learners the same mutated Topic. Ceiling: O(roster) content loads;
+			// upgrade path is a Content/Topic deep copy in the engine, worth writing only when the roster passes a few hundred.
 			LearningEngine.Content content = engine.loadContent();
 			LearningEngine.Learner l = engine.loadLearner(u.getId(), roles, LearningEngine.primaryJobroleOf(u));
 			engine.applyProfiles(content, l);
@@ -722,6 +726,7 @@ public class TestULearningModule extends TestUBaseModule
 				}
 				if (!canManageEvaluations(inReq, archive, t.id))
 				{
+					hidden.add(t.id);
 					continue;
 				}
 				JSONObject c = LearningEngine.certificationStatus(t, l, now, zone);
@@ -737,6 +742,7 @@ public class TestULearningModule extends TestUBaseModule
 		resp.put("ok", Boolean.TRUE);
 		resp.put("canmanage", manage);
 		resp.put("counts", new JSONObject(counts));
+		resp.put("hidden", Integer.valueOf(hidden.size()));
 		resp.put("rows", rows);
 		resp.put("now", LearningEngine.iso(now));
 		reply(inReq, resp);
@@ -795,6 +801,11 @@ public class TestULearningModule extends TestUBaseModule
 		{
 			return;
 		}
+		if (!canManageProgression(inReq))
+		{
+			fail(inReq, 403, "forbidden"); // before any lookup: a learner probing other users must not learn who exists (404 vs 403)
+			return;
+		}
 		MediaArchive archive = getMediaArchive(inReq);
 		LearningEngine engine = new LearningEngine(archive);
 		String userid = param(inReq, "user"), topicid = param(inReq, "topicid"), untilRaw = param(inReq, "until"), reason = param(inReq, "reason");
@@ -815,6 +826,11 @@ public class TestULearningModule extends TestUBaseModule
 		if (!t.certification())
 		{
 			fail(inReq, 400, "not_certification_topic");
+			return;
+		}
+		if (t.validitymonths == 0)
+		{
+			fail(inReq, 400, "never_expires"); // validity 0 has no expiry to push out; expiryOf ignores extendeduntil for it
 			return;
 		}
 		if (reason == null)
@@ -872,6 +888,11 @@ public class TestULearningModule extends TestUBaseModule
 		User admin = requireUser(inReq);
 		if (admin == null)
 		{
+			return;
+		}
+		if (!canManageProgression(inReq))
+		{
+			fail(inReq, 403, "forbidden"); // before any lookup: a learner probing other users must not learn who exists (404 vs 403)
 			return;
 		}
 		MediaArchive archive = getMediaArchive(inReq);
@@ -934,6 +955,9 @@ public class TestULearningModule extends TestUBaseModule
 		row.extendreason = null;
 		row.extendedby = null;
 		row.scheduledfor = null;
+		// Fresh cycle first: stagesAlreadyPast subtracts what reminderssent already holds, so last cycle's stages would come back
+		// un-marked here and re-fire against the new expiry.
+		row.reminderssent = new java.util.ArrayList<>();
 		row.reminderssent = LearningEngine.stagesAlreadyPast(row, t, now, zone);
 		l.certifications.put(t.id, row);
 		synchronized (LearningEngine.WRITE_LOCK) { engine.saveCertification(row); }
@@ -1814,50 +1838,58 @@ public class TestULearningModule extends TestUBaseModule
 		for (Object o : archive.query("certification").all().search())
 		{
 			LearningEngine.CertRow r = LearningEngine.certRowOf((Data) o);
-			Data u = users.get(r.user);
-			if (u == null || !"true".equals(String.valueOf(u.get("enabled"))))
+			try
 			{
-				continue;
-			}
-			LearningEngine.Content content = engine.loadContent();
-			LearningEngine.Learner l = engine.loadLearner(r.user, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-			engine.applyProfiles(content, l);
-			LearningEngine.Topic t = content.topics.get(r.topicid);
-			if (t == null || !t.certification() || t.blueprint == null || !t.blueprint.usable())
-			{
-				continue;
-			}
-			java.util.List<String> due = LearningEngine.dueStages(r, t, now, zone);
-			if (due.isEmpty())
-			{
-				continue;
-			}
-			synchronized (LearningEngine.WRITE_LOCK)
-			{
-				for (String stage : due)
+				Data u = users.get(r.user);
+				// Missing enabled = enabled, as certifications() reads it: only an explicit "false" is disabled.
+				if (u == null || "false".equals(String.valueOf(u.get("enabled"))))
 				{
-					Data n = ns.createNewData();
-					n.setId(r.id() + "_" + stage + "_" + LearningEngine.ymd(r.passedat, zone));
-					n.setValue("user", r.user);
-					n.setValue("actor", "tutor");
-					n.setValue("actorname", tutorName(archive));
-					n.setValue("type", "certification");
-					n.setValue("datecreated", now);
-					n.setValue("read", false);
-					n.setValue("entitytopic", t.id);
-					n.setValue("text", certificationText(stage, t.title, LearningEngine.ymd(LearningEngine.expiryOf(r, t, zone), zone)));
-					ns.saveData(n, null);
-					social.push(archive, n);
-					if ("expired".equals(stage))
-					{
-						auditSystem(archive, "certification.expire", "certification", r.id(), null, LearningEngine.certificationStatus(t, l, now, zone));
-					}
-					sent++;
+					continue;
 				}
-				r.reminderssent.addAll(due);
-				engine.saveCertification(r);
+				LearningEngine.Content content = engine.loadContent();
+				LearningEngine.Learner l = engine.loadLearner(r.user, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+				engine.applyProfiles(content, l);
+				LearningEngine.Topic t = content.topics.get(r.topicid);
+				if (t == null || !t.certification() || t.blueprint == null || !t.blueprint.usable())
+				{
+					continue;
+				}
+				java.util.List<String> due = LearningEngine.dueStages(r, t, now, zone);
+				if (due.isEmpty())
+				{
+					continue;
+				}
+				synchronized (LearningEngine.WRITE_LOCK)
+				{
+					for (String stage : due)
+					{
+						Data n = ns.createNewData();
+						n.setId(r.id() + "_" + stage + "_" + LearningEngine.ymd(r.passedat, zone));
+						n.setValue("user", r.user);
+						n.setValue("actor", "tutor");
+						n.setValue("actorname", tutorName(archive));
+						n.setValue("type", "certification");
+						n.setValue("datecreated", now);
+						n.setValue("read", false);
+						n.setValue("entitytopic", t.id);
+						n.setValue("text", certificationText(stage, t.title, LearningEngine.ymd(LearningEngine.expiryOf(r, t, zone), zone)));
+						ns.saveData(n, null);
+						social.push(archive, n);
+						if ("expired".equals(stage))
+						{
+							auditSystem(archive, "certification.expire", "certification", r.id(), null, LearningEngine.certificationStatus(t, l, now, zone));
+						}
+						sent++;
+					}
+					r.reminderssent.addAll(due);
+					engine.saveCertification(r);
+				}
+				notifyUser(r.user, "notifications", null);
 			}
-			notifyUser(r.user, "notifications", null);
+			catch (Exception e)
+			{
+				log.error("certification reminders: row " + r.id(), e); // one bad row must not stop the sweep for the other learners
+			}
 		}
 		return sent;
 	}

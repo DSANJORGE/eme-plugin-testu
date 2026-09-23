@@ -1118,7 +1118,9 @@ public class LearningEngineCheck
 		rr.reminderssent.add("7d");
 		ok("stages: 1d and expired together when first run is late", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-11-03"), lima).equals(List.of("1d", "expired")), "");
 		rr.scheduledfor = LearningEngine.parseYmd("2026-10-20");
-		ok("stages: scheduled_day on the day", LearningEngine.dueStages(rr, ct, LearningEngine.parseYmd("2026-10-20"), lima).contains("scheduled_day"), "");
+		// A real instant, not a day value: a day value is UTC midnight, which is 19:00 of the day before in Lima and no longer
+		// inside the scheduled day (the window now starts at local midnight -- see certificationBoundaryChecks).
+		ok("stages: scheduled_day on the day", LearningEngine.dueStages(rr, ct, at("2026-10-20", 8, lima), lima).contains("scheduled_day"), LearningEngine.dueStages(rr, ct, at("2026-10-20", 8, lima), lima));
 		ok("stages: none when validity 0", LearningEngine.dueStages(rr, never, LearningEngine.parseYmd("2030-01-01"), lima).isEmpty(), "");
 		LearningEngine.CertRow zeroRow = new LearningEngine.CertRow(); zeroRow.user = "u"; zeroRow.topicid = "t1";
 		zeroRow.passedat = LearningEngine.parseYmd("2026-01-01"); zeroRow.scheduledfor = LearningEngine.parseYmd("2026-09-23");
@@ -1131,6 +1133,72 @@ public class LearningEngineCheck
 		ok("stagesAlreadyPast: exactly window_open,7d,1d (expired excluded) when very late",
 				LearningEngine.stagesAlreadyPast(lateRow, ct, LearningEngine.parseYmd("2026-11-03"), lima).equals(List.of("window_open", "7d", "1d")),
 				LearningEngine.stagesAlreadyPast(lateRow, ct, LearningEngine.parseYmd("2026-11-03"), lima));
+		certificationBoundaryChecks(lima);
+	}
+
+	/**
+	 * The 2026-09-23 review fixes: status and window_open must open on the same calendar day, scheduled_day must start at local
+	 * midnight, an expired certification hands back a fresh attempt budget, and validity 0 ignores an extension.
+	 */
+	static void certificationBoundaryChecks(ZoneId lima)
+	{
+		LearningEngine.Topic ct = new LearningEngine.Topic(); ct.id = "t1"; ct.title = "T1"; ct.validitymonths = 6; ct.renewalwindowdays = 30;
+		ct.blueprint = bp("random", 9, 0, "proportional", 70, 0, 0, 0, 2, false);
+		LearningEngine.CertRow r = new LearningEngine.CertRow(); r.user = "u"; r.topicid = "t1";
+		r.passedat = LearningEngine.parseYmd("2026-05-01"); // expiry day 2026-11-01, window from 2026-10-02
+		// Window boundary: on the window-start day, at any hour, status and the window_open stage must agree.
+		for (int hour : new int[] {0, 9, 23})
+		{
+			Date onStart = at("2026-10-02", hour, lima);
+			ok("cert window start day " + hour + "h -> renewal_due", "renewal_due".equals(LearningEngine.certStatus(ct, r, onStart, lima)), LearningEngine.certStatus(ct, r, onStart, lima));
+			ok("cert window start day " + hour + "h -> window_open due", LearningEngine.dueStages(r, ct, onStart, lima).contains("window_open"), LearningEngine.dueStages(r, ct, onStart, lima));
+			Date dayBefore = at("2026-10-01", hour, lima);
+			ok("cert day before window " + hour + "h -> certified", "certified".equals(LearningEngine.certStatus(ct, r, dayBefore, lima)), LearningEngine.certStatus(ct, r, dayBefore, lima));
+			ok("cert day before window " + hour + "h -> no stages", LearningEngine.dueStages(r, ct, dayBefore, lima).isEmpty(), LearningEngine.dueStages(r, ct, dayBefore, lima));
+		}
+		LearningEngine.Learner wl = learner(); wl.certifications.put("t1", r);
+		JSONObject cs = LearningEngine.certificationStatus(ct, wl, at("2026-09-23", 9, lima), lima);
+		ok("cert windowopens is the window start day", "2026-10-02".equals(cs.get("windowopens")) && "2026-11-01".equals(cs.get("expiry")), cs);
+		// scheduled_day starts at local midnight, not at the day value's UTC midnight (19:00 the previous day in Lima).
+		r.scheduledfor = LearningEngine.parseYmd("2026-10-20");
+		ok("scheduled_day not due the evening before in Lima", !LearningEngine.dueStages(r, ct, at("2026-10-19", 21, lima), lima).contains("scheduled_day"), LearningEngine.dueStages(r, ct, at("2026-10-19", 21, lima), lima));
+		ok("scheduled_day due on the day in Lima", LearningEngine.dueStages(r, ct, at("2026-10-20", 8, lima), lima).contains("scheduled_day"), LearningEngine.dueStages(r, ct, at("2026-10-20", 8, lima), lima));
+		r.scheduledfor = null;
+		// Attempts per cycle restart at expiry: maxattempts renewals burned inside the window, then the certificate lapses.
+		LearningEngine.Learner el = learner(); el.certifications.put("t1", r);
+		el.evaluations.add(attempt("u_t1_a1", 1, at("2026-10-10", 9, lima), false));
+		el.evaluations.add(attempt("u_t1_a2", 2, at("2026-10-20", 9, lima), false));
+		ok("cert exhausted after 2 failed renewals inside the window", "exhausted".equals(LearningEngine.evaluationStatus(ct, el, at("2026-10-25", 9, lima), lima).get("status")),
+				LearningEngine.evaluationStatus(ct, el, at("2026-10-25", 9, lima), lima));
+		ok("cert available again the day after expiry (fresh attempt budget)", "available".equals(LearningEngine.evaluationStatus(ct, el, at("2026-11-02", 9, lima), lima).get("status")),
+				LearningEngine.evaluationStatus(ct, el, at("2026-11-02", 9, lima), lima));
+		// Validity 0 never expires: an extension on the row is ignored rather than inventing an expiry.
+		LearningEngine.Topic never = new LearningEngine.Topic(); never.id = "t1"; never.validitymonths = 0; never.blueprint = ct.blueprint;
+		LearningEngine.CertRow ext = new LearningEngine.CertRow(); ext.user = "u"; ext.topicid = "t1";
+		ext.passedat = LearningEngine.parseYmd("2026-01-01"); ext.extendeduntil = LearningEngine.parseYmd("2026-02-01");
+		ok("validity 0 ignores extendeduntil -> no expiry", LearningEngine.expiryOf(ext, never, lima) == null, LearningEngine.expiryOf(ext, never, lima));
+		ok("validity 0 with an extension stays certified", "certified".equals(LearningEngine.certStatus(never, ext, at("2030-01-01", 9, lima), lima)), "");
+	}
+
+	/** An instant at inHour local time in z (not a day value: exercises the times of day a day-value comparison gets wrong). */
+	static Date at(String inDay, int inHour, ZoneId z)
+	{
+		return Date.from(java.time.LocalDate.parse(inDay).atTime(inHour, 0).atZone(z).toInstant());
+	}
+
+	/** A finalized, failed evaluation attempt submitted at inSubmitted. */
+	static LearningEngine.EvalAttempt attempt(String inId, int inNumber, Date inSubmitted, boolean inPassed)
+	{
+		LearningEngine.EvalAttempt a = new LearningEngine.EvalAttempt();
+		a.id = inId;
+		a.user = "u";
+		a.topicid = "t1";
+		a.number = inNumber;
+		a.status = "submitted";
+		a.passed = inPassed;
+		a.created = inSubmitted;
+		a.submitted = inSubmitted;
+		return a;
 	}
 
 	/** Topic e1: 3 subtopics x 6 sequence questions (difficulty cycling beginner/competent/expert), es1q6 unrenderable, plus 2 reserved per subtopic. */
