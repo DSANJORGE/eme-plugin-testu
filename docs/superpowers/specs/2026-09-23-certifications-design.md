@@ -13,17 +13,18 @@ Product-first rule: one generic model. With no `validitymonths` anywhere, engine
 
 `topicrequirement` (profile × topic) gains:
 
-- `validitymonths` (number, 0–120, blank = the topic is not a certification for this profile; 0 = certified once, never expires).
-- `passpercent` (number, 1–100, blank = the plan's `passpercent`).
-- `renewalwindowdays` (number, 0–365, default 30).
+- `validitymonths` (number/long, 0–120, blank = the topic is not a certification for this profile; 0 = certified once, never expires).
+- `passpercent` (number/long, 1–100, blank = the plan's `passpercent`).
+- `renewalwindowdays` (number/long, 0–365, default 30).
 - `evaluationrequired` is superseded: it reads as `validitymonths != blank` for one release (the app stops writing it), then is dropped.
+(All numeric fields use datatype `long` because eMe's `number` persists a blank as 0; for these fields, blank means "inherit" or "not set", not "zero".)
 
 Merge across a learner's profiles (same shape as `requiredlevel`): certification required iff any row has `validitymonths`; `validitymonths` = shortest non-blank (0 counts as longest); `passpercent` = highest set, else the plan's; `renewalwindowdays` = longest.
 
 New table `certification` (`data/fields/certification.xml`), one row per learner × topic, id `<user>_<topicid>`. `user` is `type="list" listid="user"` (shared index trap, see evaluation-mode memory).
 
 - `user`, `entitytopic`.
-- `passedat` (date), `attemptid`, `scorepercent` — the pass that started the current cycle.
+- `passedat` (date), `attemptid`, `scorepercent` (long, blank for manual certifications) — the pass that started the current cycle.
 - `validuntil` (date) = `passedat` + merged `validitymonths` at the time of the pass; blank when `validitymonths` = 0.
 - `extendeduntil` (date), `extendreason`, `extendedby` — admin extension of the current cycle.
 - `manual` (boolean), `manualby`, `manualreason` — certified without an attempt (`passedat` = the date given).
@@ -49,7 +50,7 @@ Behaviour:
 - **On pass** (`submitevaluation`, under the write lock): upsert the `certification` row: `passedat = submitted`, `attemptid`, `scorepercent`, `validuntil` = `passedat` + validity (blank for 0), clear `extendeduntil`, `extendreason`, `scheduledfor`, `reminderssent`; keep `manual = false`. Audited `certification.pass`. A failed attempt leaves the row untouched.
 - **Finished(topic)**: the evaluation conjunct becomes "status ∈ {`certified`, `renewal_due`}" for certification topics (due but valid still counts; `expired` does not). Non-certification topics with a blueprint: unchanged (latest finalized attempt passed).
 - **Profile changes** are applied on read: a shorter validity can move a row straight to `renewal_due` or `expired`; a profile removed from the learner leaves the row in place (history) and the topic stops being a certification for them. Multiple profiles: the merged rule, one expiry.
-- **Reminders** (server, the existing 15-minute `computemastery` event, under the write lock, idempotent): for every learner × certification topic with an expiry, stages `window_open` (first run with the window open), `7d`, `1d`, `expired` (first run past expiry, also writes `certification.expire`), and `scheduled_day` (first run on `scheduledfor`). Each stage is sent once per cycle (append to `reminderssent`) through `learnernotification` + the existing email/push path (`learnernotificationtype` gains `certification`). No reminders while `plan_inactive`. Stages already passed when a row is created (e.g. a manual certification entered 5 days before its expiry) are marked sent without sending, except `expired`.
+- **Reminders** (server, the existing 15-minute `computemastery` event, under the write lock, idempotent): for every learner × certification topic with an expiry, stages `window_open` (first run with the window open), `7d`, `1d`, `expired` (first run past expiry, also writes `certification.expire`), and `scheduled_day` (first run on `scheduledfor`). Stage thresholds are evaluated on calendar days in the organization timezone (window start day, 7 days before, 1 day before, the day after expiry, the scheduled day), not raw millisecond offsets. Each stage is sent once per cycle (append to `reminderssent`) through `learnernotification` + the existing email/push path (`learnernotificationtype` gains `certification`). No reminders while `plan_inactive`. Stages already passed when a row is created (e.g. a manual certification entered 5 days before its expiry) are marked sent without sending, except `expired`.
 - **Analytics**: `person.json` required-topic rows add the certification block; `requiredgaps` counts `expired` and `not_certified` certification topics (not `renewal_due`); `evaluationmet` = status ∈ {`certified`, `renewal_due`} for certification topics.
 
 ## Endpoints (`services/testu/`, `TestULearningModule` / `TestUUserModule` patterns)
@@ -59,7 +60,7 @@ Learner (signed-in user; 401 as today):
 - `state.json`: per topic `certification: {status, reason, passedat, validuntil, expiry, windowopens, renewalwindowdays, scheduledfor, passpercent, validitymonths, extended: bool} | null` (null = not a certification for this learner); top level `certifications: [{topic, title, status, expiry, scheduledfor, canstart}]` ordered `expired`, `renewal_due` (soonest expiry first), `not_certified`, `certified`.
 - `evaluation.json`, `startevaluation.json`: unchanged shapes; `canstart` / 409 `evaluation_not_available` follow the rules above.
 - `submitevaluation.json`: adds `certification` (block above) and `passpercent` (the value used).
-- New `schedulecertification.json` (POST `topicid`, `date` = `YYYY-MM-DD` or blank to clear) → `{ok, certification}`. 400 `not_certification_topic` | `bad_date` | `date_past` | `date_after_expiry`; 404 `unknown_topic`. Audited `certification.schedule`.
+- New `schedulecertification.json` (POST `topicid`, `date` = `YYYY-MM-DD` or blank to clear) → `{ok, certification}`. 400 `not_certification_topic` | `bad_date` | `date_past` | `date_after_expiry` (while not yet expired; an expired certification may schedule any day from today on); 404 `unknown_topic`. Audited `certification.schedule`.
 
 Admin (reads `training_view`, writes `training_manage`; every topic also passes the per-topic `manageevaluations` entity permission, so a trainer sees only their topics):
 
@@ -75,16 +76,15 @@ Admin (reads `training_view`, writes `training_manage`; every topic also passes 
   - **Planes**: today's `admin_evaluations.dart` table and blueprint editor, unchanged.
   - **Personas**: the compliance table from `certifications.json`. Header counts (certified / due / expired / not certified). Filters status, topic, profile, team. Columns: person, team, topic, status pill (`Vigente` · `Vence en N d` · `Vencida hace N d` · `Sin certificar`), last score, expiry (with an "extended" glyph and the reason on hover), scheduled day, attempts this cycle. Row actions (only with `training_manage`): **Extender…** (date + reason sheet) and **Certificar manualmente…** (date + reason sheet). Rows for `plan_inactive` topics show a warning glyph linking to the plan.
 - Profile editor (`admin_profiles.dart`): the "Evaluation: Required" column becomes **Validez** (months, blank = no certification), **Aprobar %** (blank = plan's), **Ventana** (days, default 30). Rows with the legacy `evaluationrequired = true` and blank validity show a hint "Required evaluation without validity: set a validity to make it a certification".
-- Person page (`admin_person.dart`): required-topic rows show the certification pill and the same two actions.
+- Person page (`admin_person.dart`): required-topic rows show the certification pill (no actions in v1; Extend and Mark-certified live only on the Certificaciones › Personas table).
 - Models/API (`admin_models.dart`, `admin_api.dart`): `CertificationRow`, `ProfileRow.validityMonths / passPercent / renewalWindowDays`; `certifications(filters)`, `extendCertification(...)`, `manualCertification(...)`.
 
 ## Learner app (`app-genailabs/lib/testu/`)
 
 - `testu_client.dart`: `TopicState.certification` (`CertificationState`: status, reason, passedAt, validUntil, expiry, windowOpens, scheduledFor, passPercent, validityMonths, extended), state-level `certifications`; `scheduleCertification(topicId, date)`.
-- New tab **Certificaciones** (between Temas and Perfil), shown only when `certifications` is non-empty, so learners without certification topics see no change. Groups: **Por vencer** (`renewal_due`, soonest first), **Vigentes** (`certified`), **Pendientes** (`expired`, then `not_certified`). Row: topic, status line ("Vence el 3 nov · en 12 días", "Vigente hasta …", "Vencida hace 3 días", "Sin certificar"), CTA **Rendir ahora** when `canstart`, else **Programar** (date picker → `schedulecertification.json`; shows "Programada: jueves 30") or nothing when `certified`. Tapping a row opens the topic's existing evaluation sheet.
-- Today: an amber card for the most urgent `expired` / `renewal_due` certification (prototype card): title "El certificado de <topic> vence en N días" / "venció hace N días", tutor line, CTA as above. Absent when none.
+- New tab **Certificaciones** (appended after Dashboard, index 4), shown only when `certifications` is non-empty, so learners without certification topics see no change. Groups: **Por vencer** (`renewal_due`, soonest first), **Vigentes** (`certified`), **Pendientes** (`expired`, then `not_certified`). Row: topic, status line ("Vence el 3 nov · en 12 días", "Vigente hasta …", "Vencida hace 3 días", "Sin certificar"), CTA **Rendir ahora** when `canstart`, else **Programar** (date picker → `schedulecertification.json`; shows "Programada: jueves 30") or nothing when `certified`. Tapping a row opens the topic's existing evaluation sheet.
+- Today: an amber card for the most urgent `expired` / `renewal_due` certification (prototype card): title "El certificado de <topic> vence en N días" / "venció hace N días", CTA as above. Absent when none.
 - Dashboard: the stubbed "Certificados" line becomes live: "N vigentes · M por vencer" (amber when M > 0 or any expired).
-- Tutor prompt (`TestUTutorModule` context): one line per due/expired certification with the scheduled day, e.g. "Certificación Ciberseguridad vence en 12 días, programada para el jueves". No new tutor behaviour.
 - Copy stays Spanish for product text, both languages through `L()` as today.
 
 ## Errors and edge cases
@@ -105,9 +105,9 @@ Admin (reads `training_view`, writes `training_manage`; every topic also passes 
 ## Migration and rollout
 
 - New fields blank, new table empty: no migration. Live Minsur is unchanged until a profile row gets a validity.
-- `permissionentityassigned` rows for `manageevaluations` (per-topic trainer scope) must exist on the target server before trainers use the Personas tab; see the entity-permissions notes (rows do not auto-load on an existing table).
+- `permissionentityassigned` rows for `manageevaluations` (per-topic trainer scope) must exist on the target server before trainers use the Personas tab; this includes an explicit grant for administrators (rows do not auto-load on an existing table; the local DB needed an explicit administrators grant for topics to appear).
 - Data files: `plugins/testu/data/fields/certification.xml`, `topicrequirement.xml`, `evaluationattempt.xml` (`passpercent`), `lists/learnernotificationtype.xml`, and their `webapp/WEB-INF/data` copies as the deploy expects.
 
 ## Out of scope (v1)
 
-Calendar integration and tutor-negotiated scheduling (later, on `scheduledfor`); multi-topic certifications; hand-picked "common form" evaluations; revoking a certificate; manager escalation; certificate PDFs; per-learner overrides of validity or pass %.
+Calendar integration and tutor-negotiated scheduling (later, on `scheduledfor`); multi-topic certifications; hand-picked "common form" evaluations; revoking a certificate; manager escalation; certificate PDFs; per-learner overrides of validity or pass %; tutor context line (the learner context is built by eMe core's chat history builder — needs a hook there or a client-sent context field; the Today card and Certificaciones tab carry the message).
