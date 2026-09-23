@@ -1689,7 +1689,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			ev.put("scorepercent", evfull == null ? null : evfull.get("scorepercent"));
 			ev.put("passedat", evfull == null ? null : evfull.get("passedat"));
 			ev.put("attempts", evfull == null ? null : evfull.get("attempts"));
-			boolean evmet = !t.evaluationrequired || (evfull != null && Boolean.TRUE.equals(evfull.get("passed")));
+			JSONObject cert = (JSONObject) st.get("certification");
+			ro.put("certification", cert);
+			boolean evmet = cert != null
+				? ("certified".equals(cert.get("status")) || "renewal_due".equals(cert.get("status")))
+				: (!t.evaluationrequired || (evfull != null && Boolean.TRUE.equals(evfull.get("passed"))));
 			ro.put("evaluationrequired", Boolean.valueOf(t.evaluationrequired));
 			ro.put("evaluation", ev);
 			ro.put("evaluationmet", Boolean.valueOf(evmet));

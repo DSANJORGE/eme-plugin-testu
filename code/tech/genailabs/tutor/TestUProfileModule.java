@@ -106,6 +106,24 @@ public class TestUProfileModule extends TestUBaseModule
 			r.mandatory = !"false".equals(String.valueOf(m.get("mandatory")));
 			r.requiresprevious = "true".equals(String.valueOf(m.get("requiresprevious")));
 			r.evaluationrequired = "true".equals(String.valueOf(m.get("evaluationrequired")));
+			r.validitymonths = LearningEngine.intOrNull(m.get("validitymonths"));
+			if (r.validitymonths != null && (r.validitymonths < 0 || r.validitymonths > 120))
+			{
+				fail(inReq, 400, "bad_validitymonths");
+				return;
+			}
+			r.passpercent = LearningEngine.intOrNull(m.get("passpercent"));
+			if (r.passpercent != null && (r.passpercent < 1 || r.passpercent > 100))
+			{
+				fail(inReq, 400, "bad_passpercent");
+				return;
+			}
+			r.renewalwindowdays = LearningEngine.intOrNull(m.get("renewalwindowdays"));
+			if (r.renewalwindowdays != null && (r.renewalwindowdays < 0 || r.renewalwindowdays > 365))
+			{
+				fail(inReq, 400, "bad_renewalwindowdays");
+				return;
+			}
 			String af = trim(str(m.get("afterfinish")));
 			if (af.isEmpty())
 			{
@@ -175,7 +193,11 @@ public class TestUProfileModule extends TestUBaseModule
 				d.setValue("position", String.valueOf(r.position));
 				d.setValue("mandatory", r.mandatory ? "true" : "false");
 				d.setValue("requiresprevious", r.requiresprevious ? "true" : "false");
-				d.setValue("evaluationrequired", r.evaluationrequired ? "true" : "false");
+				d.setValue("validitymonths", r.validitymonths);
+				d.setValue("passpercent", r.passpercent);
+				d.setValue("renewalwindowdays", r.renewalwindowdays);
+				// compat for one release: evaluationrequired also implied by validitymonths (certification topics require evaluation)
+				d.setValue("evaluationrequired", (r.validitymonths != null || r.evaluationrequired) ? "true" : "false");
 				d.setValue("afterfinish", r.afterfinish);
 				req.saveData(d, inReq.getUser());
 			}
@@ -386,7 +408,10 @@ public class TestUProfileModule extends TestUBaseModule
 			o.put("requiredlevel", r.requiredlevel);
 			o.put("mandatory", Boolean.valueOf(r.mandatory));
 			o.put("requiresprevious", Boolean.valueOf(r.requiresprevious));
-			o.put("evaluationrequired", Boolean.valueOf(r.evaluationrequired));
+			o.put("validitymonths", r.validitymonths);
+			o.put("passpercent", r.passpercent);
+			o.put("renewalwindowdays", r.renewalwindowdays);
+			o.put("evaluationrequired", Boolean.valueOf(r.validitymonths != null || r.evaluationrequired));
 			o.put("afterfinish", r.afterfinish);
 			o.put("questions", Integer.valueOf(t == null ? 0 : t.questions.size()));
 			arr.add(o);

@@ -302,6 +302,21 @@ try:
     nextweek = (NOW + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
     resumed = must("schedule after expiry", call(me, "POST", "/services/testu/learn/schedulecertification.json", form={"topicid": T, "date": nextweek}))
     ok("schedule: expired cycle accepts a future date", resumed["certification"]["scheduledfor"] == nextweek, resumed)
+
+    # ---- profiles/person carry the certification rule (Task 7): profileJson rule fields, saveprofile validation/storage,
+    # person.json's per-topic certification block + evaluationmet driven by cert status.
+    p = must("profiles", call(admin, "GET", "/services/testu/personas/profiles.json"))
+    prow = [r for pr in p["profiles"] if pr["id"] == ROLE for r in pr["rows"] if r["topic"] == T][0]
+    ok("profiles.json: rule fields", prow["validitymonths"] == 6 and prow["passpercent"] == 50 and prow["renewalwindowdays"] == 30 and prow["evaluationrequired"] is True, prow)
+    badp = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "validitymonths": "200"}])})
+    ok("saveprofile: bad_validitymonths", badp[0] == 400 and badp[1]["error"] == "bad_validitymonths", badp)
+    okp = must("saveprofile", call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": ROLE, "name": "Cert check", "rows": json.dumps([{"topic": T, "mandatory": True, "afterfinish": "keep", "validitymonths": 12, "passpercent": "", "renewalwindowdays": 15}])}))
+    r2 = okp["profile"]["rows"][0]
+    ok("saveprofile: stored 12 / blank / 15", r2["validitymonths"] == 12 and r2["passpercent"] is None and r2["renewalwindowdays"] == 15, r2)
+    refresh()
+    per = must("person", call(admin, "GET", f"/services/testu/analytics/person.json?user={quote(USER)}"))
+    rt = [x for x in per["risk"]["requiredtopics"] if x["id"] == T][0]
+    ok("person.json: certification block + evaluationmet", rt["certification"]["status"] in ("certified", "renewal_due") and rt["evaluationmet"] is True, rt)
 finally:
     cleanup()
 print("certification checks: " + ("PASS" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"))
