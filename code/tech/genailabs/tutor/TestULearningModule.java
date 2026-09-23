@@ -1,5 +1,6 @@
 package tech.genailabs.tutor;
 
+import java.time.ZoneId;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.Set;
@@ -51,7 +52,36 @@ public class TestULearningModule extends TestUBaseModule
 		resp.put("topics", topics);
 		resp.put("removedtopics", content.removedtopics);
 		resp.put("profiles", content.profiles);
+		JSONArray certs = new JSONArray();
+		Date now = new Date(); ZoneId zone = (ZoneId) engine.orgZone()[0];
+		for (LearningEngine.Topic t : content.topics.values())
+		{
+			JSONObject c = LearningEngine.certificationStatus(t, learner, now, zone);
+			if (c == null)
+			{
+				continue;
+			}
+			JSONObject row = new JSONObject();
+			row.put("topic", t.id); row.put("title", t.title); row.put("status", c.get("status")); row.put("expiry", c.get("expiry"));
+			row.put("scheduledfor", c.get("scheduledfor"));
+			row.put("canstart", Boolean.TRUE.equals(LearningEngine.evaluationStatus(t, learner, now, zone).get("canstart")));
+			certs.add(row);
+		}
+		certs.sort(java.util.Comparator.comparing((Object o) -> certRank(((JSONObject) o).get("status"))).thenComparing(o -> String.valueOf(((JSONObject) o).get("expiry"))));
+		resp.put("certifications", certs);
+		resp.put("now", LearningEngine.iso(now));
 		reply(inReq, resp);
+	}
+
+	private static int certRank(Object s)
+	{
+		return switch (String.valueOf(s))
+		{
+			case "expired" -> 0;
+			case "renewal_due" -> 1;
+			case "not_certified" -> 2;
+			default -> 3;
+		};
 	}
 
 	/** learningsession.source values (next.json source). */
@@ -410,6 +440,7 @@ public class TestULearningModule extends TestUBaseModule
 		err.put("status", inStatus.get("status"));
 		err.put("reason", inStatus.get("reason"));
 		err.put("nextallowedat", inStatus.get("nextallowedat"));
+		err.put("validuntil", inStatus.get("validuntil"));
 		if (inReq.getResponse() != null)
 		{
 			inReq.getResponse().setStatus(409);
@@ -528,16 +559,25 @@ public class TestULearningModule extends TestUBaseModule
 		resp.put("duplicate", duplicate);
 		resp.put("failedrule", a.inputs.get("failedrule"));
 		resp.put("weakest", a.inputs.get("weakest"));
-		resp.put("passpercent", a.inputs.get("passpercent"));
+		resp.put("passpercent", a.passpercent);
 		resp.put("subtopicminpercent", a.inputs.get("subtopicminpercent"));
 		if (topic != null)
 		{
+			ZoneId zone = (ZoneId) engine.orgZone()[0];
+			if (!duplicate && a.passed && topic.certification())
+			{
+				LearningEngine.CertRow row;
+				synchronized (LearningEngine.WRITE_LOCK) { row = engine.recordCertificationPass(topic, a, zone); }
+				learner.certifications.put(topic.id, row);
+				audit(inReq, getMediaArchive(inReq), "certification.pass", "certification", row.id(), null, LearningEngine.certificationStatus(topic, learner, new Date(), zone));
+			}
 			topic.finished = LearningEngine.finished(topic, learner);
-			JSONObject st = LearningEngine.evaluationStatus(topic, learner, new Date());
+			JSONObject st = LearningEngine.evaluationStatus(topic, learner, new Date(), zone);
 			resp.put("evaluationstatus", st.get("status"));
 			resp.put("nextallowedat", st.get("nextallowedat"));
 			resp.put("attemptsleft", st.get("attemptsleft"));
 			resp.put("finished", topic.position == null ? null : Boolean.valueOf(topic.finished));
+			resp.put("certification", LearningEngine.certificationStatus(topic, learner, new Date(), zone));
 		}
 		if (!duplicate)
 		{

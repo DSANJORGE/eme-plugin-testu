@@ -1720,6 +1720,16 @@ public class LearningEngine
 		return evaluationStatus(t, l, inNow, ZoneId.of("UTC"));
 	}
 
+	/**
+	 * True when a still counts against cert's current certification cycle: every attempt counts when cert is null (not a
+	 * certification, or the learner never passed it); once a cycle starts, an attempt from before the pass that started it no
+	 * longer counts. Shared by evaluationStatus's finalized-attempt count and startEvaluation's own (storage-backed) one.
+	 */
+	private static boolean countsInCycle(EvalAttempt a, CertRow cert)
+	{
+		return cert == null || cert.passedat == null || (a.submitted != null && a.submitted.after(cert.passedat));
+	}
+
 	public static JSONObject evaluationStatus(Topic t, Learner l, Date inNow, ZoneId z)
 	{
 		Blueprint b = t.blueprint;
@@ -1730,7 +1740,7 @@ public class LearningEngine
 		for (EvalAttempt a : l.evaluations)
 		{
 			// Per-cycle: an attempt from before the pass that started the current cycle doesn't count against this cycle's attempts.
-			if (t.id.equals(a.topicid) && a.finalized() && (cert == null || cert.passedat == null || (a.submitted != null && a.submitted.after(cert.passedat))))
+			if (t.id.equals(a.topicid) && a.finalized() && countsInCycle(a, cert))
 			{
 				finalized++;
 			}
@@ -2015,6 +2025,7 @@ public class LearningEngine
 		synchronized (WRITE_LOCK)
 		{
 			Searcher searcher = fieldArchive.getSearcher("evaluationattempt");
+			CertRow cert = t.certification() ? l.certifications.get(t.id) : null;
 			int n = 0;
 			for (EvalAttempt a : l.evaluations)
 			{
@@ -2046,7 +2057,12 @@ public class LearningEngine
 				n = probe;
 				if (latest.finalized())
 				{
-					finalized++;
+					// Per-cycle, same rule as evaluationStatus: an attempt from before the pass that started the current
+					// certification cycle doesn't count against maxattempts for it.
+					if (countsInCycle(latest, cert))
+					{
+						finalized++;
+					}
 					if (latest.submitted != null && (lastsubmitted == null || latest.submitted.after(lastsubmitted)))
 					{
 						lastsubmitted = latest.submitted;
