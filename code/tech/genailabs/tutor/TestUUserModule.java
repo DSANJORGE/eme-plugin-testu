@@ -33,8 +33,12 @@ public class TestUUserModule extends TestUBaseModule
 	private static final org.apache.commons.logging.Log log = org.apache.commons.logging.LogFactory.getLog(TestUUserModule.class);
 
 	private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
-	/** userprofile role. eMe renamed settingsgroup to settingsrole (2026-09-17); profiles not yet migrated
-	 *  still carry only settingsgroup. ponytail: drop the fallback once no profile has settingsgroup. */
+
+	/**
+	 * userprofile role. eMe renamed settingsgroup to settingsrole (2026-09-17); profiles not yet
+	 * migrated still carry only settingsgroup. ponytail: drop the fallback once no profile has
+	 * settingsgroup.
+	 */
 	static String roleOf(Data inProfile)
 	{
 		String role = inProfile.get("settingsrole");
@@ -50,8 +54,7 @@ public class TestUUserModule extends TestUBaseModule
 		User u = inReq.getUser();
 		UserProfile p = inReq.getUserProfile();
 
-		String[] permKeys =
-			new String[] {"personas_manage", "personas_operate", "personas_view", "analytics_manage", "analytics_operate", "analytics_view", "training_manage", "training_operate", "training_view"};
+		String[] permKeys = new String[] {"personas_manage", "personas_operate", "analytics_manage", "analytics_operate", "training_manage", "training_operate"};
 		JSONArray perms = new JSONArray();
 		if (p != null)
 		{
@@ -149,10 +152,11 @@ public class TestUUserModule extends TestUBaseModule
 	}
 
 	/**
-	 * The signed-in learner's photo, shared by all their devices. GET: {ok, version, data} (data = the data URL; both null
-	 * when there is none). POST data=data:image/(png|jpeg|webp);base64,...: stores it; POST clear=true: removes it. Every
-	 * change pushes {type: avatar, version} to the learner's devices. The version is the content hash, so me.json's avatarurl
-	 * changes exactly when the photo does.
+	 * The signed-in learner's photo, shared by all their devices. GET: {ok, version, data} (data = the
+	 * data URL; both null when there is none). POST data=data:image/(png|jpeg|webp);base64,...: stores
+	 * it; POST clear=true: removes it. Every change pushes {type: avatar, version} to the learner's
+	 * devices. The version is the content hash, so me.json's avatarurl changes exactly when the photo
+	 * does.
 	 */
 	public void avatar(WebPageRequest inReq)
 	{
@@ -222,7 +226,10 @@ public class TestUUserModule extends TestUBaseModule
 	private static final int AVATAR_MAX_CHARS = 1_000_000;
 	private static final Pattern AVATAR_PREFIX = Pattern.compile("^data:image/(png|jpeg|webp);base64,$");
 
-	/** Under originals/ (user data, not served, not in git), named by a hash so no id reaches the filesystem. */
+	/**
+	 * Under originals/ (user data, not served, not in git), named by a hash so no id reaches the
+	 * filesystem.
+	 */
 	protected File avatarFile(MediaArchive inArchive, String inUserId)
 	{
 		String path = "/WEB-INF/data/" + inArchive.getCatalogId() + "/originals/testu/avatars/" + md5(inUserId) + ".txt";
@@ -380,7 +387,8 @@ public class TestUUserModule extends TestUBaseModule
 		u.setValue("enabled", "true");
 		boolean internal = internalByDomain(archive, email);
 		u.setValue("internal", internal ? "true" : "false");
-		// Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays the only login path
+		// Ruling R8: random secret, never returned or logged; eMe sessions need md5(password), OTP stays
+		// the only login path
 		u.setValue("password", UUID.randomUUID().toString());
 		if (!team.isEmpty())
 		{
@@ -418,8 +426,9 @@ public class TestUUserModule extends TestUBaseModule
 	}
 
 	/**
-	 * True when the email's domain is listed in the catalog setting testu_internaldomains (comma-separated, e.g.
-	 * "genailabs.com, testu.co"): such accounts are created as internal (support) so nobody has to remember to flag them.
+	 * True when the email's domain is listed in the catalog setting testu_internaldomains
+	 * (comma-separated, e.g. "genailabs.com, testu.co"): such accounts are created as internal
+	 * (support) so nobody has to remember to flag them.
 	 */
 	public static boolean internalByDomain(MediaArchive inArchive, String inEmail)
 	{
@@ -440,8 +449,9 @@ public class TestUUserModule extends TestUBaseModule
 	}
 
 	/**
-	 * setinternal.json: userid, internal=true|false. An internal (support) account keeps learning and keeps its records;
-	 * analytics simply leave it out (TestUAnalyticsModule.countsAsPerson). Same gate as setenabled: personas_operate.
+	 * setinternal.json: userid, internal=true|false. An internal (support) account keeps learning and
+	 * keeps its records; analytics simply leave it out (TestUAnalyticsModule.countsAsPerson). Same gate
+	 * as setenabled: personas_operate.
 	 */
 	public void setInternal(WebPageRequest inReq)
 	{
@@ -529,10 +539,9 @@ public class TestUUserModule extends TestUBaseModule
 	}
 
 	/**
-	 * deleteuser.json: removes the account and its profile, so the person can no
-	 * longer sign in and leaves the roster. Learning records (sessions, mastery,
-	 * audit) are kept under the old id: they are the organization's evidence, and
-	 * the console offers a CSV of them before this is called.
+	 * deleteuser.json: removes the account and its profile, so the person can no longer sign in and
+	 * leaves the roster. Learning records (sessions, mastery, audit) are kept under the old id: they
+	 * are the organization's evidence, and the console offers a CSV of them before this is called.
 	 */
 	public void deleteUser(WebPageRequest inReq)
 	{
