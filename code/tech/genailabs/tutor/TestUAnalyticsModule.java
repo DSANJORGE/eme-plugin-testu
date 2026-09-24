@@ -2144,6 +2144,12 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		ctx.putContextValue("facts", JSONValue.toJSONString(minimalFacts));
 		ctx.putContextValue("history", JSONValue.toJSONString(history));
 		ctx.putContextValue("question", question);
+		// The console's voice mode: a spoken-length answer, and "end" when the manager says goodbye.
+		boolean voice = "true".equals(inReq.getRequestParameter("voice"));
+		if (voice)
+		{
+			ctx.putContextValue("voice", Boolean.TRUE);
+		}
 
 		Map<String, Object> out = null;
 		try
@@ -2246,6 +2252,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("answer", answer);
 		resp.put("citations", citedFacts);
 		resp.put("followups", followups);
+		resp.put("end", voice && Boolean.TRUE.equals(out.get("end")));
 		resp.put("model", "thinking");
 		reply(inReq, resp);
 	}

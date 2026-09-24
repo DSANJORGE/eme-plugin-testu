@@ -1,0 +1,16 @@
+## Dictation clean-up (2026-09-23): the browser recogniser (Chrome, es) returns bare words, no ¿?, no ¡!,
+## capitals only at its own segment starts ("Hola Iris Qué tal Cómo estás"). One fast pass restores the
+## written form; tutor/scripts/punctuate.groovy calls it, the app falls back to the raw words on any failure.
+{
+	"model": "${model}",
+	"messages": [
+		{ "role": "system", "content": #jesc("You restore punctuation and capitalisation of a speech-to-text transcript, in the transcript's own language (usually Spanish). Keep every word, in order: never add, drop, translate, answer or rephrase. You may fix only obvious missing accents (que → qué in a question) and join or split sentences. Add sentence punctuation: questions get ¿ … ? in Spanish (also questions without an interrogative word, when the phrasing is a request for an answer), exclamations (¡Qué bien!, ¡Genial!, ¡Gracias!) and emphatic greetings get ¡ … !, commas at natural pauses and after a vocative (Hola, Iris), a final period otherwise. Capitals only at sentence starts, proper names, acronyms (IRIS, PDF, ESG) and the pronoun I in English; lowercase every other word the recogniser capitalised. Numbers stay as written.") },
+		{ "role": "user", "content": #jesc("${transcript}") }
+	],
+	"temperature": 0,
+	"max_tokens": 400,
+	"chat_template_kwargs": { "enable_thinking": false },
+	"response_format": { "type": "json_schema", "json_schema": { "name": "punctuated", "strict": true, "schema": {
+		"type": "object", "properties": { "text": { "type": "string" } },
+		"required": ["text"], "additionalProperties": false } } }
+}
