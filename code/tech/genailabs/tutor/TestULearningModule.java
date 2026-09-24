@@ -678,7 +678,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
 		boolean manage = canManageProgression(inReq);
-		if (!manage && (profile == null || !profile.hasPermission("training_view")))
+		if (!manage && !hasAny(profile, TRAINING_TABS))
 		{
 			fail(inReq, 403, "forbidden");
 			return;
@@ -770,7 +770,7 @@ public class TestULearningModule extends TestUBaseModule
 	{
 		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
 		boolean manage = canManageProgression(inReq);
-		if (inWrite ? !manage : !(manage || (profile != null && profile.hasPermission("training_view"))))
+		if (inWrite ? !manage : !(manage || hasAny(profile, TRAINING_TABS)))
 		{
 			fail(inReq, 403, "forbidden");
 			return null;
@@ -1000,7 +1000,7 @@ public class TestULearningModule extends TestUBaseModule
 		config.user = user;
 		config.canmanage = canManageProgression(inReq);
 		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
-		if (!config.canmanage && (profile == null || !profile.hasPermission("training_view")))
+		if (!config.canmanage && !hasAny(profile, TRAINING_TABS))
 		{
 			fail(inReq, 403, "forbidden");
 			return null;
@@ -1658,7 +1658,7 @@ public class TestULearningModule extends TestUBaseModule
 		if ("true".equals(inReq.getRequestParameter("report")))
 		{
 			UserProfile p = inReq.getUserProfile();
-			if (p == null || !(p.hasPermission("personas_view") || p.hasPermission("analytics_view")))
+			if (!hasAny(p, PERSONAS_TABS) && !hasAny(p, ANALYTICS_TABS))
 			{
 				fail(inReq, 403, "forbidden");
 				return;

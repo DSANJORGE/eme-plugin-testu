@@ -1,5 +1,5 @@
 <page>
   <path-action name="TestUTeamModule.loadScope"/>
   <path-action name="TestUTermsModule.report" allowduplicates="true"/>
-  <permission name="view"><userprofile property="personas_view" equals="true"/></permission>
+  <permission name="view"><or><userprofile property="personas_admin" equals="true"/><userprofile property="conversaciones_admin" equals="true"/><userprofile property="terminos_admin" equals="true"/></or></permission>
 </page>

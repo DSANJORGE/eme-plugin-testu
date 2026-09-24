@@ -741,7 +741,7 @@ public class TestUSocialModule extends TestUBaseModule
 		}
 
 		UserProfile userProfile = inReq.getUserProfile();
-		if (userProfile == null || !userProfile.hasPermission("personas_view"))
+		if (!hasAny(userProfile, PERSONAS_TABS))
 		{
 			fail(inReq, 403, "not allowed");
 			return;
@@ -1104,7 +1104,7 @@ public class TestUSocialModule extends TestUBaseModule
 	{
 		MediaArchive archive = getMediaArchive(inReq);
 		UserProfile userProfile = inReq.getUserProfile();
-		if (userProfile == null || !userProfile.hasPermission("personas_view"))
+		if (!hasAny(userProfile, PERSONAS_TABS))
 		{
 			fail(inReq, 403, "not allowed");
 			return;

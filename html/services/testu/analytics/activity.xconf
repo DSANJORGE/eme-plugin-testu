@@ -2,5 +2,5 @@
   <path-action name="TestUTeamModule.loadScope"/>
   <path-action name="TestUAnalyticsModule.loadAnalytics" allowduplicates="true"/>
   <path-action name="TestUAnalyticsModule.loadActivity" allowduplicates="true"/>
-  <permission name="view"><userprofile property="analytics_view" equals="true"/></permission>
+  <permission name="view"><or><userprofile property="resumen_admin" equals="true"/><userprofile property="actividad_admin" equals="true"/><userprofile property="dominio_admin" equals="true"/><userprofile property="prevision_admin" equals="true"/></or></permission>
 </page>

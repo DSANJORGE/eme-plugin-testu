@@ -10,7 +10,10 @@
   <permission name="view">
     <or>
       <group id="administrators"/>
-      <userprofile property="analytics_view" equals="true"/>
+      <userprofile property="resumen_admin" equals="true"/>
+      <userprofile property="actividad_admin" equals="true"/>
+      <userprofile property="dominio_admin" equals="true"/>
+      <userprofile property="prevision_admin" equals="true"/>
     </or>
   </permission>
 </page>

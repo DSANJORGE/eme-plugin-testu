@@ -10,7 +10,8 @@
   <permission name="view">
     <or>
       <group id="administrators"/>
-      <userprofile property="training_view" equals="true"/>
+      <userprofile property="progresion_admin" equals="true"/>
+      <userprofile property="certificaciones_admin" equals="true"/>
     </or>
   </permission>
 </page>

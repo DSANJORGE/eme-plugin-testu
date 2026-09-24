@@ -16,6 +16,28 @@ import org.openedit.users.User;
 
 public class TestUBaseModule extends BaseMediaModule
 {
+	// Console tab permissions (catalog/data/lists/permissionsapp/testuadmin.xml). They replaced the personas_/analytics_/
+	// training_view verbs: the data behind a group of tabs is readable with any of that group's tab permissions.
+	static final String[] ANALYTICS_TABS = {"resumen_admin", "actividad_admin", "dominio_admin", "prevision_admin"};
+	static final String[] PERSONAS_TABS = {"personas_admin", "conversaciones_admin", "terminos_admin"};
+	static final String[] TRAINING_TABS = {"progresion_admin", "certificaciones_admin"};
+
+	static boolean hasAny(org.openedit.profile.UserProfile inProfile, String[] inKeys)
+	{
+		if (inProfile == null)
+		{
+			return false;
+		}
+		for (String key : inKeys)
+		{
+			if (inProfile.hasPermission(key))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	@Override
 	public MediaArchive getMediaArchive(WebPageRequest inReq)
 	{
