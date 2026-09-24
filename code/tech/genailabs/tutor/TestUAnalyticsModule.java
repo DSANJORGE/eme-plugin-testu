@@ -88,10 +88,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		MediaArchive archive = getMediaArchive(inReq);
 		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
 		Map<String, Data> allteams = (Map<String, Data>) inReq.getPageValue("allteams");
-		if (allteams == null)
-		{
-			allteams = Collections.emptyMap();
-		}
 
 		String topicFilter = inReq.getRequestParameter("entitytopic");
 		topicFilter = (topicFilter != null) ? topicFilter.trim() : "";
@@ -103,12 +99,24 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			fail(inReq, 400, "out of scope");
 			return;
 		}
+		inReq.putPageValue("analytics", analytics(archive, scope, allteams, topicFilter, teamFilter, inReq.getRequestParameter("from"), inReq.getRequestParameter("to")));
+	}
 
+	/**
+	 * The console's aggregates for the people in inScope (team ids; null = everyone) and the filters, over the days inFromDay ..
+	 * inToDay (yyyy-MM-dd, inclusive; null = the 31 days to today). Shared by loadAnalytics and the weekly admin email.
+	 */
+	public static Map<String, Object> analytics(MediaArchive archive, Set<String> scope, Map<String, Data> allteams, String topicFilter, String teamFilter,
+			String fromParam, String toParam)
+	{
+		if (allteams == null)
+		{
+			allteams = Collections.emptyMap();
+		}
 		SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy-MM-dd");
 
 		Date now = new Date();
 		Date toDate;
-		String toParam = inReq.getRequestParameter("to");
 		if (toParam != null && !toParam.trim().isEmpty())
 		{
 			try
@@ -134,7 +142,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		Date to = toCal.getTime();
 
 		Date fromDate;
-		String fromParam = inReq.getRequestParameter("from");
 		if (fromParam != null && !fromParam.trim().isEmpty())
 		{
 			try
@@ -782,8 +789,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		analytics.put("inactive", inactive);
 		analytics.put("tq", tq);
 		analytics.put("iris", iris);
-
-		inReq.putPageValue("analytics", analytics);
+		return analytics;
 	}
 
 	public void loadOverview(WebPageRequest inReq)

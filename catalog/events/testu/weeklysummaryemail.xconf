@@ -1,0 +1,8 @@
+<page>
+  <property name="eventname">TestU: weekly summary email</property>
+  <property name="eventdescription">Fridays at 18:00 in each person's zone: the week's summary, once. Admins (analytics or personas manage/operate, or team managers) get their scope's summary; everyone else their own. On unless catalog setting testu_weeklysummaryemail is false (testu_weeklysummaryemail_only = test allowlist); only roles with permission testu_weeklysummaryemail</property>
+  <property name="enabled">true</property>
+  <property name="period">15m</property>
+  <property name="delay">6m</property>
+  <path-action name="Script.run"><script>/${catalogid}/events/scripts/testu/weeklysummaryemail.groovy</script></path-action>
+</page>

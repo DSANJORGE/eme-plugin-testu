@@ -47,7 +47,12 @@ public class TestUTeamModule extends TestUBaseModule
 		}
 
 		User user = inReq.getUser();
-		String me = (user != null) ? user.getId() : "";
+		inReq.putPageValue("scopeteams", managedTeams(teams, (user != null) ? user.getId() : ""));
+	}
+
+	/** Team ids inMe manages (team.manager) and every team below them (team.parent); empty = none. Pure. */
+	public static Set<String> managedTeams(Map<String, Data> teams, String me)
+	{
 		Set<String> scope = new HashSet<>();
 		for (Data t : teams.values())
 		{
@@ -75,7 +80,7 @@ public class TestUTeamModule extends TestUBaseModule
 				}
 			}
 		}
-		inReq.putPageValue("scopeteams", scope);
+		return scope;
 	}
 
 	public void loadTeams(WebPageRequest inReq)

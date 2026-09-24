@@ -2015,6 +2015,12 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	public static boolean mayReceive(String inOn, String inOnly, String inEmail, java.util.Collection inRolePermissions)
 	{
+		return mayReceive(inOn, inOnly, inEmail, inRolePermissions, EMAIL_PERMISSION);
+	}
+
+	/** mayReceive for any TestU email: the same switch, allowlist and role rule, with inPermission as the role permission. Pure. */
+	public static boolean mayReceive(String inOn, String inOnly, String inEmail, java.util.Collection inRolePermissions, String inPermission)
+	{
 		Set<String> only = new java.util.HashSet<>();
 		for (String e : (inOnly == null ? "" : inOnly).split(","))
 		{
@@ -2024,7 +2030,7 @@ public class TestULearningModule extends TestUBaseModule
 			}
 		}
 		boolean on = only.isEmpty() ? inOn == null || !"false".equalsIgnoreCase(inOn.trim()) : inEmail == null || only.contains(inEmail.trim().toLowerCase());
-		return on && (inEmail == null || inRolePermissions != null && inRolePermissions.contains(EMAIL_PERMISSION));
+		return on && (inEmail == null || inRolePermissions != null && inRolePermissions.contains(inPermission));
 	}
 
 	/**
@@ -2055,18 +2061,24 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	protected void grantEmailPermissionOnce(MediaArchive archive)
 	{
-		if ("true".equals(archive.getCatalogSettingValue("testu_dailychallengeemail_granted")))
+		grantPermissionOnce(archive, EMAIL_PERMISSION, "Desafío Diario: recibir el email", "930", "testu_dailychallengeemail_granted");
+	}
+
+	/** grantEmailPermissionOnce for any email permission: inPermission (Settings > Roles label inName) on every role but guest, once. */
+	protected void grantPermissionOnce(MediaArchive archive, String inPermission, String inName, String inOrdering, String inGrantedSetting)
+	{
+		if ("true".equals(archive.getCatalogSettingValue(inGrantedSetting)))
 		{
 			return;
 		}
 		Searcher apps = archive.getSearcher("permissionsapp");
-		if (apps.searchById(EMAIL_PERMISSION) == null)
+		if (apps.searchById(inPermission) == null)
 		{
 			Data d = apps.createNewData();
-			d.setId(EMAIL_PERMISSION);
-			d.setName("Desafío Diario: recibir el email");
+			d.setId(inPermission);
+			d.setName(inName);
 			d.setValue("permissiontype", "application");
-			d.setValue("ordering", "930");
+			d.setValue("ordering", inOrdering);
 			apps.saveData(d, null);
 		}
 		Searcher roles = archive.getSearcher("settingsrole");
@@ -2081,17 +2093,17 @@ public class TestULearningModule extends TestUBaseModule
 			seen++;
 			java.util.Collection v = r.getValues("permissions");
 			java.util.List<String> perms = new java.util.ArrayList<>(v == null ? java.util.Collections.emptyList() : v);
-			if (!perms.contains(EMAIL_PERMISSION))
+			if (!perms.contains(inPermission))
 			{
-				perms.add(EMAIL_PERMISSION);
+				perms.add(inPermission);
 				r.setValue("permissions", perms);
 				roles.saveData(r, null);
 			}
 		}
 		if (seen > 0) // no roles yet (table not seeded): try again next run
 		{
-			archive.setCatalogSettingValue("testu_dailychallengeemail_granted", "true");
-			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).info("testu dailychallengeemail: granted " + EMAIL_PERMISSION + " to " + seen + " roles");
+			archive.setCatalogSettingValue(inGrantedSetting, "true");
+			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).info("testu email: granted " + inPermission + " to " + seen + " roles");
 		}
 	}
 
@@ -2141,15 +2153,21 @@ public class TestULearningModule extends TestUBaseModule
 	protected Object[] sendDailyChallengeEmail(MediaArchive archive, Data u, String inLearnurl) throws Exception
 	{
 		Object[] mail = dailyChallengeMail(archive, u, inLearnurl);
+		sendMail(archive, u.get("email"), mail);
+		return mail;
+	}
+
+	/** Mails inMail = {subject, html, link, fromname, inline image or null} to inTo, HTML only, from emailFrom. */
+	protected void sendMail(MediaArchive archive, String inTo, Object[] mail) throws Exception
+	{
 		org.entermediadb.email.PostMail pm = (org.entermediadb.email.PostMail) getModuleManager().getBean("postMail");
 		javax.mail.internet.InternetAddress from = new javax.mail.internet.InternetAddress();
 		from.setAddress(emailFrom(archive));
 		from.setPersonal(String.valueOf(mail[3]));
 		// No text part: PostMail wraps text + html in multipart/mixed (not alternative), so Gmail showed both, one after the other.
 		// The tutor's picture travels with the message (multipart/related), so no mail client has to fetch it.
-		pm.postMail(pm.parseEmails(new String[] {u.get("email")}), mail[0] == null ? null : String.valueOf(mail[0]), String.valueOf(mail[1]), null, from,
+		pm.postMail(pm.parseEmails(new String[] {inTo}), mail[0] == null ? null : String.valueOf(mail[0]), String.valueOf(mail[1]), null, from,
 			mail[4] == null ? null : java.util.Collections.singletonList(mail[4]), null);
-		return mail;
 	}
 
 	/** Sender address: catalog setting testu_email_from, else system_from_email. */
@@ -2162,8 +2180,7 @@ public class TestULearningModule extends TestUBaseModule
 	/** {subject, html, link, fromname, inline image or null} for u on u's local today, with a freshly minted sign-in link (which replaces u's previous one). */
 	protected Object[] dailyChallengeMail(MediaArchive archive, Data u, String inLearnurl)
 	{
-		String personaId = archive.getCatalogSettingValue("tutorpersona");
-		Data persona = archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+		Data persona = persona(archive);
 		String tutor = persona == null || persona.getName() == null ? "TestU" : persona.getName();
 		String lang = u.get("language");
 		if (lang == null || lang.isEmpty())
@@ -2180,6 +2197,88 @@ public class TestULearningModule extends TestUBaseModule
 		Object[] avatar = avatarRef(archive, persona, inLearnurl);
 		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, (String) avatar[0], link, today, recent);
 		return new Object[] {m[0], m[1], link, tutor, avatar[1]};
+	}
+
+	/** The org's tutor persona (catalog setting tutorpersona, else iris); null when missing. */
+	static Data persona(MediaArchive archive)
+	{
+		String personaId = archive.getCatalogSettingValue("tutorpersona");
+		return archive.getData("tutorpersona", personaId == null || personaId.isEmpty() ? "iris" : personaId);
+	}
+
+	/** Periodic (catalog event weeklysummaryemail): see WeeklySummaryEmail.run. Returns the number sent. */
+	public int weeklySummaryEmail(MediaArchive archive)
+	{
+		return new WeeklySummaryEmail(this, archive).run();
+	}
+
+	/**
+	 * services/testu/learn/weeklysummaryemail.json -- the signed-in user's own weekly summary, for QA: GET = preview {ok, to, from,
+	 * subject, html, kind, eligible, due}; as=learner|admin picks the version (default: the one the job would send; admin needs an
+	 * admin scope). POST send=true also mails it to that user. user=<id> (org admins only): that person's summary, as the job would
+	 * build it, but its link carries no sign-in token and it is never sent.
+	 */
+	public void weeklySummaryEmailPreview(WebPageRequest inReq) throws Exception
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		if (learnUrl(archive) == null)
+		{
+			fail(inReq, 409, "learnurl_not_configured");
+			return;
+		}
+		WeeklySummaryEmail w = new WeeklySummaryEmail(this, archive);
+		Data u = freshUser(archive, user);
+		java.util.Map<String, java.util.Collection> cache = new java.util.HashMap<>();
+		java.util.Collection perms = rolePermissions(archive, u.getId(), cache);
+		Set<String> scope = w.adminScope(u.getId(), perms);
+		String other = param(inReq, "user");
+		boolean mine = other == null || other.equals(u.getId());
+		if (!mine)
+		{
+			if (scope == null || !scope.isEmpty())
+			{
+				fail(inReq, 403, "org_admins_only");
+				return;
+			}
+			u = (Data) archive.getSearcher("user").searchById(other);
+			if (u == null)
+			{
+				fail(inReq, 404, "unknown_user");
+				return;
+			}
+			perms = rolePermissions(archive, u.getId(), cache);
+			scope = w.adminScope(u.getId(), perms);
+		}
+		String as = param(inReq, "as");
+		boolean admin = as == null ? scope != null : "admin".equals(as);
+		if (admin && scope == null)
+		{
+			fail(inReq, 403, "not_an_admin");
+			return;
+		}
+		Object[] mail = admin ? w.adminMail(u, scope) : w.learnerMail(u, mine);
+		boolean send = mine && "true".equals(inReq.getRequestParameter("send")) && inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
+		if (send)
+		{
+			sendMail(archive, u.get("email"), mail);
+		}
+		JSONObject out = new JSONObject();
+		out.put("ok", Boolean.TRUE);
+		out.put("to", u.get("email"));
+		out.put("from", emailFrom(archive));
+		out.put("kind", admin ? "admin" : "learner");
+		out.put("subject", mail[0]);
+		out.put("html", mail[1]);
+		out.put("eligible", mayReceive(archive.getCatalogSettingValue(WeeklySummaryEmail.PERMISSION), archive.getCatalogSettingValue(WeeklySummaryEmail.PERMISSION + "_only"),
+				u.get("email"), perms, WeeklySummaryEmail.PERMISSION));
+		out.put("due", WeeklySummaryEmail.dueKey(u.getId(), zoneOf(u.get("timezone"), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now()));
+		out.put("sent", send);
+		reply(inReq, out);
 	}
 
 	/** Content-ID of the tutor's picture inside a TestU email; the HTML points at it with src="cid:...". */
@@ -2746,7 +2845,7 @@ public class TestULearningModule extends TestUBaseModule
 		return f.substring(0, 1).toUpperCase() + f.substring(1).toLowerCase();
 	}
 
-	private static String esc(String s)
+	static String esc(String s)
 	{
 		return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
 	}
