@@ -54,7 +54,9 @@ public class TestUUserModule extends TestUBaseModule
 		User u = inReq.getUser();
 		UserProfile p = inReq.getUserProfile();
 
-		String[] permKeys = new String[] {"personas_manage", "personas_operate", "analytics_manage", "analytics_operate", "training_manage", "training_operate"};
+		// The console gates every section on the _view verb (admin_shell.dart sectionsFor): dropping these hid
+		// Resumen, Actividad, Dominio, Personas and the IRIS panel from every admin (2026-09-24).
+		String[] permKeys = new String[] {"personas_view", "personas_manage", "personas_operate", "analytics_view", "analytics_manage", "analytics_operate", "training_view", "training_manage", "training_operate"};
 		JSONArray perms = new JSONArray();
 		if (p != null)
 		{
