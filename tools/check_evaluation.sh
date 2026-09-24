@@ -113,6 +113,8 @@ def make_user(email, password, first):
         must("createuser", call(admin, "POST", "/services/testu/personas/createuser.json", form={"email": email, "firstName": first, "lastName": "Check", "role": "users"}))
     else:
         usersave("enabled", "true", email)
+        # a leftover role from an earlier run (e.g. "training") would carry training_view and turn the 403 asserts into 200s
+        must("setrole", call(admin, "POST", "/services/testu/personas/setrole.json", form={"userid": email, "role": "users"}))
     usersave("password", password, email)
     usersave("jobrole", "", email)
     usersave("primaryjobrole", "", email)

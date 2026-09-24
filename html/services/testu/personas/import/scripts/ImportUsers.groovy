@@ -66,6 +66,8 @@ imp.setModuleManager(moduleManager)
 imp.setContext(context)
 imp.setLog(log)
 imp.setMakeId(false)
+imp.setCatalogId(context.findPathValue("catalogid")) // EnterMediaObject never derives it from context; getMediaArchive() throws without it
+imp.setSearcher(imp.getMediaArchive().getSearcher("user")) // BaseImporter has no lazy searcher; importData() NPEs without this
 imp.canmanage = context.getUserProfile() != null && context.getUserProfile().hasPermission("personas_manage")
 try {
   imp.importData()
