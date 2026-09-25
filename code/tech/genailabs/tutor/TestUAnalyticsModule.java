@@ -1466,10 +1466,15 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		MediaArchive archive = getMediaArchive(inReq);
 		String uid = inReq.getRequestParameter("user");
-		uid = (uid != null) ? uid.trim().toLowerCase() : "";
+		uid = (uid != null) ? uid.trim() : "";
 
 		Map<String, Data> users = (Map<String, Data>) a.get("users");
 		Data u = users.get(uid);
+		if (u == null)
+		{
+			uid = uid.toLowerCase(); // ids keep their stored case (imported ERICK.MALON@MINSUR.COM); lowercase is only a fallback
+			u = users.get(uid);
+		}
 		if (u == null)
 		{
 			fail(inReq, 403, "out of scope");
@@ -2024,7 +2029,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 
 		String sel = inReq.getRequestParameter("user");
-		sel = (sel != null) ? sel.trim().toLowerCase() : "";
+		sel = (sel != null) ? sel.trim() : "";
+		if (!users.containsKey(sel))
+		{
+			sel = sel.toLowerCase(); // same fallback as loadPerson
+		}
 		if (!sel.isEmpty() && users.containsKey(sel))
 		{
 			Data u = users.get(sel);
