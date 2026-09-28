@@ -1945,7 +1945,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			addFactHelper(addFact, base, "Persona: " + formatUserName(u), desc.toString(), "person", Collections.singletonMap("user", u.getId()), "stat");
 		}
 
-		// The questions people asked the tutor in the period (the Conversaciones screen), newest first.
+		// The questions people asked the tutor in the period, newest first. Always anonymous: tutor chats
+		// are never tied to a person (the promise the learner app makes), so no name and no user filter.
 		// ponytail: last 40; a summary per section is already above.
 		List<Data> recentQs = new ArrayList<>(tq);
 		recentQs.sort((x, y) -> String.valueOf(y.get("datecreated")).compareTo(String.valueOf(x.get("datecreated"))));
@@ -1953,12 +1954,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		for (int k = 0; k < Math.min(40, recentQs.size()); k++)
 		{
 			Data r = recentQs.get(k);
-			Data u = users.get(r.get("user"));
 			String when = String.valueOf(r.get("datecreated"));
 			String q = r.get("query") != null ? r.get("query") : "";
-			addFactHelper(addFact, base, "Pregunta al tutor de " + (u != null ? formatUserName(u) : r.get("user")) + " el " + when.substring(0, Math.min(10, when.length())) + " sobre «"
+			addFactHelper(addFact, base, "Pregunta anónima al tutor el " + when.substring(0, Math.min(10, when.length())) + " sobre «"
 				+ sectionNames.getOrDefault(r.get("componentsection"), "sin subtema") + "»", (q.length() > 200 ? q.substring(0, 200) + "…" : q) + " (respondida: " + r.get("replied") + ", con fuente: " + r.get("cited")
-					+ (r.get("rating") != null ? ", valoración: " + r.get("rating") : "") + ")", "activity", Collections.singletonMap("user", r.get("user")), "iris");
+					+ (r.get("rating") != null ? ", valoración: " + r.get("rating") : "") + ")", "activity", Collections.emptyMap(), "iris");
 		}
 
 		// The Previsión screen: share of people at competent or expert per topic, and when the target is reached.
