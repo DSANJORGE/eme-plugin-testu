@@ -1931,11 +1931,11 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/** Local hour of the Daily Challenge email. */
-	public static final int EMAIL_HOUR = 9;
+	public static final int EMAIL_HOUR = 8;
 
 	/**
-	 * Periodic (catalog event dailychallengeemail, every 15 min): the Daily Challenge email, Monday to Friday in the 09:00 hour of each
-	 * learner's own zone (user.timezone, else the org's testu_timezone), with a one-click sign-in link that opens today's challenge.
+	 * Periodic (catalog event dailychallengeemail, every 15 min): the Daily Challenge email, Monday to Friday in the 08:00 hour of each
+	 * learner's own zone (userZone, else the org's testu_timezone), with a one-click sign-in link that opens today's challenge.
 	 * Who: see mayReceive (master switch testu_dailychallengeemail, role permission EMAIL_PERMISSION, test allowlist
 	 * testu_dailychallengeemail_only). Skips disabled, internal (support) and email-less accounts, and learners whose challenge for
 	 * today is already done. Once per learner and local day: the dailychallengeemail row (id <user>_<yyyyMMdd>) is saved before the
@@ -1973,7 +1973,7 @@ public class TestULearningModule extends TestUBaseModule
 			{
 				continue;
 			}
-			java.time.ZoneId zone = zoneOf(u.get("timezone"), orgzone);
+			java.time.ZoneId zone = zoneOf(userZone(archive, u.getId()), orgzone);
 			String key = emailDueKey(u.getId(), zone, now);
 			if (key == null || !mayReceive(on, only, email, rolePermissions(archive, u.getId(), rolePerms)) || sent.searchById(key) != null
 					|| engine.dailyChallengeDoneToday(u.getId()))
@@ -2040,6 +2040,16 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	protected java.util.Collection rolePermissions(MediaArchive archive, String inUserid, java.util.Map<String, java.util.Collection> inCache)
 	{
+		return inCache.computeIfAbsent(roleOf(archive, inUserid), r -> {
+			Data row = (Data) archive.getSearcher("settingsrole").searchById(r);
+			java.util.Collection v = row == null ? null : row.getValues("permissions");
+			return v == null ? java.util.Collections.emptyList() : v;
+		});
+	}
+
+	/** inUserid's role id: userprofile.settingsrole (legacy settingsgroup), else the catalog's defaultrole, else "users". */
+	protected String roleOf(MediaArchive archive, String inUserid)
+	{
 		Data p = (Data) archive.getSearcher("userprofile").searchById(inUserid);
 		String role = p == null ? null : TestUUserModule.roleOf(p);
 		if (role == null || role.isEmpty())
@@ -2047,11 +2057,49 @@ public class TestULearningModule extends TestUBaseModule
 			role = archive.getCatalogSettingValue("defaultrole");
 			role = role == null || role.isEmpty() ? "users" : role;
 		}
-		return inCache.computeIfAbsent(role, r -> {
-			Data row = (Data) archive.getSearcher("settingsrole").searchById(r);
-			java.util.Collection v = row == null ? null : row.getValues("permissions");
-			return v == null ? java.util.Collections.emptyList() : v;
-		});
+		return role;
+	}
+
+	/**
+	 * The zone inUserid's device reported (learnertimezone row, saved by personas/me.json), or null: the caller falls back to the
+	 * org's. ponytail: one lookup per user per run, preload a map if the user count makes the 15-min jobs slow.
+	 */
+	public String userZone(MediaArchive archive, String inUserid)
+	{
+		Data row = inUserid == null ? null : (Data) archive.getSearcher("learnertimezone").searchById(inUserid);
+		return row == null ? null : row.get("timezone");
+	}
+
+	/** Saves inZone (an IANA id from the device) as inUserid's zone when it is valid and differs from the stored one. */
+	public void saveUserZone(MediaArchive archive, String inUserid, String inZone)
+	{
+		if (inUserid == null || inZone == null || inZone.length() > 64)
+		{
+			return;
+		}
+		try
+		{
+			java.time.ZoneId.of(inZone);
+		}
+		catch (Exception e)
+		{
+			return;
+		}
+		Searcher s = archive.getSearcher("learnertimezone");
+		Data row = (Data) s.searchById(inUserid);
+		if (row != null && inZone.equals(row.get("timezone")))
+		{
+			return;
+		}
+		if (row == null)
+		{
+			row = s.createNewData();
+			row.setId(inUserid);
+			row.setValue("user", inUserid);
+		}
+		row.setValue("timezone", inZone);
+		row.setValue("updated", new Date());
+		s.saveData(row, null);
 	}
 
 	/**
@@ -2066,6 +2114,12 @@ public class TestULearningModule extends TestUBaseModule
 
 	/** grantEmailPermissionOnce for any email permission: inPermission (Settings > Roles label inName) on every role but guest, once. */
 	protected void grantPermissionOnce(MediaArchive archive, String inPermission, String inName, String inOrdering, String inGrantedSetting)
+	{
+		grantPermissionOnce(archive, inPermission, inName, inOrdering, inGrantedSetting, null);
+	}
+
+	/** grantPermissionOnce limited to inRoles (null = every role but guest). */
+	protected void grantPermissionOnce(MediaArchive archive, String inPermission, String inName, String inOrdering, String inGrantedSetting, Set<String> inRoles)
 	{
 		if ("true".equals(archive.getCatalogSettingValue(inGrantedSetting)))
 		{
@@ -2086,7 +2140,7 @@ public class TestULearningModule extends TestUBaseModule
 		for (Object hit : roles.query().all().search())
 		{
 			Data r = (Data) roles.searchById(((Data) hit).getId());
-			if (r == null || "guest".equals(r.getId()))
+			if (r == null || "guest".equals(r.getId()) || inRoles != null && !inRoles.contains(r.getId()))
 			{
 				continue;
 			}
@@ -2100,7 +2154,7 @@ public class TestULearningModule extends TestUBaseModule
 				roles.saveData(r, null);
 			}
 		}
-		if (seen > 0) // no roles yet (table not seeded): try again next run
+		if (seen > 0 || inRoles != null && roles.query().all().search().size() > 0) // no roles yet (table not seeded): try again next run
 		{
 			archive.setCatalogSettingValue(inGrantedSetting, "true");
 			org.apache.commons.logging.LogFactory.getLog(TestULearningModule.class).info("testu email: granted " + inPermission + " to " + seen + " roles");
@@ -2189,7 +2243,7 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		LearningEngine engine = new LearningEngine(archive);
 		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
-		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u.get("timezone"), orgzone)).toLocalDate();
+		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(userZone(archive, u.getId()), orgzone)).toLocalDate();
 		// The challenge days are org-local (LearningEngine.challengeDate), so the streak is counted on the org's calendar.
 		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), null);
 		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
@@ -2275,8 +2329,9 @@ public class TestULearningModule extends TestUBaseModule
 		out.put("subject", mail[0]);
 		out.put("html", mail[1]);
 		out.put("eligible", mayReceive(archive.getCatalogSettingValue(WeeklySummaryEmail.PERMISSION), archive.getCatalogSettingValue(WeeklySummaryEmail.PERMISSION + "_only"),
-				u.get("email"), perms, WeeklySummaryEmail.PERMISSION));
-		out.put("due", WeeklySummaryEmail.dueKey(u.getId(), zoneOf(u.get("timezone"), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now()));
+				u.get("email"), perms, admin ? WeeklySummaryEmail.ADMIN_PERMISSION : WeeklySummaryEmail.PERMISSION));
+		String due = WeeklySummaryEmail.dueKey(u.getId(), zoneOf(userZone(archive, u.getId()), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now());
+		out.put("due", due == null || !admin ? due : due + "admin");
 		out.put("sent", send);
 		reply(inReq, out);
 	}
@@ -2557,7 +2612,7 @@ public class TestULearningModule extends TestUBaseModule
 		boolean en = lang != null && lang.startsWith("en");
 		LearningEngine engine = new LearningEngine(archive);
 		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
-		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u == null ? null : u.get("timezone"), orgzone)).toLocalDate();
+		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(u == null ? null : userZone(archive, u.getId()), orgzone)).toLocalDate();
 		String[] day = dayCopy(en, today);
 		JSONObject o = new JSONObject();
 		o.put("language", en ? "en" : "es");
@@ -2884,7 +2939,7 @@ public class TestULearningModule extends TestUBaseModule
 		out.put("eligible", mayReceive(archive.getCatalogSettingValue("testu_dailychallengeemail"), archive.getCatalogSettingValue("testu_dailychallengeemail_only"),
 				u.get("email"), rolePermissions(archive, u.getId(), new java.util.HashMap<>())));
 		out.put("sent", send);
-		out.put("due", emailDueKey(u.getId(), zoneOf(u.get("timezone"), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now()));
+		out.put("due", emailDueKey(u.getId(), zoneOf(userZone(archive, u.getId()), (java.time.ZoneId) new LearningEngine(archive).orgZone()[0]), java.time.Instant.now()));
 		reply(inReq, out);
 	}
 

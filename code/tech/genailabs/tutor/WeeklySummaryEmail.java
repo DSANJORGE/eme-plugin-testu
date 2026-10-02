@@ -24,12 +24,15 @@ import org.openedit.data.Searcher;
 import org.openedit.hittracker.HitTracker;
 
 /**
- * The Friday weekly summary email (catalog event weeklysummaryemail, every 15 min): at 18:00 on Friday in each person's own zone
- * (user.timezone, else the org's testu_timezone). Admins (a role with analytics or personas manage/operate = everyone; a team
- * manager = the teams they manage and every team below) get the admin summary for their scope; everyone else the learner summary.
- * Who: TestULearningModule.mayReceive with PERMISSION as switch (catalog setting testu_weeklysummaryemail: on unless "false"),
- * allowlist (testu_weeklysummaryemail_only) and role permission. Once per person and Friday: a dailychallengeemail row with id
- * <user>_<yyyyMMdd>_weekly is saved before the send, like the Daily Challenge email. Copy: docs/copy/resumen-semanal.es.md.
+ * The Friday weekly summary emails (catalog event weeklysummaryemail, every 15 min): at 18:00 on Friday in each person's own zone
+ * (TestULearningModule.userZone, else the org's testu_timezone). Two independent emails, a person can get both:
+ * - learner summary: role permission PERMISSION;
+ * - admin summary: role permission ADMIN_PERMISSION, covering what the person can see in the console (adminScope: a role with
+ *   analytics or personas manage/operate = everyone; a team manager = the teams they manage and every team below); with the
+ *   permission but no scope, nothing.
+ * Both share the switch (catalog setting testu_weeklysummaryemail: on unless "false") and allowlist (testu_weeklysummaryemail_only),
+ * via TestULearningModule.mayReceive. Once per person, email and Friday: a dailychallengeemail row with id <user>_<yyyyMMdd>_weekly
+ * (learner) or ..._weeklyadmin (admin) is saved before the send, like the Daily Challenge email. Copy: docs/copy/resumen-semanal.es.md.
  */
 public class WeeklySummaryEmail
 {
@@ -37,6 +40,9 @@ public class WeeklySummaryEmail
 
 	/** Role permission, master switch setting and (+ "_only") allowlist setting. */
 	public static final String PERMISSION = "testu_weeklysummaryemail";
+
+	/** Role permission for the admin summary. */
+	public static final String ADMIN_PERMISSION = "testu_weeklysummaryemail_admin";
 
 	/** Friday, 18:00 local. */
 	public static final int HOUR = 18;
@@ -63,9 +69,10 @@ public class WeeklySummaryEmail
 	public int run()
 	{
 		module.grantPermissionOnce(archive, PERMISSION, "Resumen semanal: recibir el email", "931", PERMISSION + "_granted");
+		grantAdminPermissionOnce();
 		String on = archive.getCatalogSettingValue(PERMISSION);
 		String only = archive.getCatalogSettingValue(PERMISSION + "_only");
-		if (!TestULearningModule.mayReceive(on, only, null, null, PERMISSION))
+		if (!TestULearningModule.mayReceive(on, only, null, null, PERMISSION)) // same switch and allowlist for both emails
 		{
 			return 0;
 		}
@@ -88,39 +95,92 @@ public class WeeklySummaryEmail
 			{
 				continue;
 			}
-			ZoneId zone = TestULearningModule.zoneOf(u.get("timezone"), orgzone);
+			ZoneId zone = TestULearningModule.zoneOf(module.userZone(archive, u.getId()), orgzone);
 			String key = dueKey(u.getId(), zone, now);
-			if (key == null || sent.searchById(key) != null)
+			if (key == null)
 			{
 				continue;
 			}
 			Collection perms = module.rolePermissions(archive, u.getId(), rolePerms);
-			if (!TestULearningModule.mayReceive(on, only, email, perms, PERMISSION))
+			if (TestULearningModule.mayReceive(on, only, email, perms, PERMISSION) && sendOnce(sent, key, u, zone, now, () -> learnerMail(u, true)))
 			{
-				continue;
-			}
-			Data row = sent.createNewData();
-			row.setId(key);
-			row.setValue("user", u.getId());
-			row.setValue("localdate", now.atZone(zone).toLocalDate().toString());
-			row.setValue("timezone", zone.getId());
-			row.setValue("sentat", new Date());
-			row.setValue("status", "sent");
-			sent.saveData(row, null);
-			try
-			{
-				Set<String> scope = adminScope(u.getId(), perms);
-				module.sendMail(archive, email, scope == null ? learnerMail(u, true) : adminMail(u, scope));
 				n++;
 			}
-			catch (Exception e)
+			if (TestULearningModule.mayReceive(on, only, email, perms, ADMIN_PERMISSION))
 			{
-				log.error("testu weeklysummaryemail " + u.getId(), e);
-				row.setValue("status", "failed");
-				sent.saveData(row, null);
+				Set<String> scope = adminScope(u.getId(), perms);
+				if (scope != null && sendOnce(sent, key + "admin", u, zone, now, () -> adminMail(u, scope)))
+				{
+					n++;
+				}
 			}
 		}
 		return n;
+	}
+
+	interface Mail
+	{
+		Object[] build() throws Exception;
+	}
+
+	/** Sends inMail to u unless the row inKey exists; the row is saved first, so a failure (status failed) is never retried. */
+	boolean sendOnce(Searcher inSent, String inKey, Data u, ZoneId inZone, Instant inNow, Mail inMail)
+	{
+		if (inSent.searchById(inKey) != null)
+		{
+			return false;
+		}
+		Data row = inSent.createNewData();
+		row.setId(inKey);
+		row.setValue("user", u.getId());
+		row.setValue("localdate", inNow.atZone(inZone).toLocalDate().toString());
+		row.setValue("timezone", inZone.getId());
+		row.setValue("sentat", new Date());
+		row.setValue("status", "sent");
+		inSent.saveData(row, null);
+		try
+		{
+			module.sendMail(archive, u.get("email"), inMail.build());
+			return true;
+		}
+		catch (Exception e)
+		{
+			log.error("testu weeklysummaryemail " + inKey, e);
+			row.setValue("status", "failed");
+			inSent.saveData(row, null);
+			return false;
+		}
+	}
+
+	/**
+	 * One-time default for ADMIN_PERMISSION: every role with an ORG_ADMIN permission and the role of every team manager, so the
+	 * admins who got the summary before it had its own permission keep getting it. Afterwards Settings > Roles decides.
+	 */
+	void grantAdminPermissionOnce()
+	{
+		if ("true".equals(archive.getCatalogSettingValue(ADMIN_PERMISSION + "_granted")))
+		{
+			return;
+		}
+		Set<String> roles = new java.util.HashSet<>();
+		for (Object o : archive.query("settingsrole").all().search())
+		{
+			Data r = (Data) archive.getSearcher("settingsrole").searchById(((Data) o).getId());
+			Collection v = r == null ? null : r.getValues("permissions");
+			if (v != null && !Collections.disjoint(v, ORG_ADMIN))
+			{
+				roles.add(r.getId());
+			}
+		}
+		for (Data t : teams().values())
+		{
+			String manager = t.get("manager");
+			if (manager != null && !manager.isEmpty())
+			{
+				roles.add(module.roleOf(archive, manager));
+			}
+		}
+		module.grantPermissionOnce(archive, ADMIN_PERMISSION, "Resumen semanal (admin): recibir el email", "932", ADMIN_PERMISSION + "_granted", roles);
 	}
 
 	/** inNow in inZone is Friday HOUR: the send key <user>_<yyyyMMdd>_weekly; otherwise null. Pure. */
@@ -210,7 +270,7 @@ public class WeeklySummaryEmail
 	LearnerWeek learnerWeek(Data u)
 	{
 		String uid = u.getId();
-		ZoneId zone = TestULearningModule.zoneOf(u.get("timezone"), orgzone);
+		ZoneId zone = TestULearningModule.zoneOf(module.userZone(archive, uid), orgzone);
 		LocalDate today = LocalDate.now(zone);
 		LearnerWeek w = new LearnerWeek();
 		w.name = TestULearningModule.givenName(u.get("firstName"));

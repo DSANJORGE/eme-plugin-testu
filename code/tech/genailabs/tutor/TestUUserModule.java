@@ -53,6 +53,11 @@ public class TestUUserModule extends TestUBaseModule
 
 		User u = inReq.getUser();
 		UserProfile p = inReq.getUserProfile();
+		// tz = the device's IANA zone (the learner app sends it on every sign-in/restore): the emails go out at local hours.
+		if (u != null && inReq.getRequestParameter("tz") != null)
+		{
+			((TestULearningModule) getModuleManager().getBean("TestULearningModule")).saveUserZone(archive, u.getId(), inReq.getRequestParameter("tz").trim());
+		}
 
 		// The console gates every section on the _view verb (admin_shell.dart sectionsFor): dropping these hid
 		// Resumen, Actividad, Dominio, Personas and the IRIS panel from every admin (2026-09-24).
