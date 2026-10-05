@@ -2908,8 +2908,9 @@ public class TestULearningModule extends TestUBaseModule
 	/**
 	 * services/testu/learn/dailychallengeemail.json -- the signed-in learner's own Daily Challenge email, for QA: GET = preview
 	 * {ok, to, from, subject, html, link, due, eligible} with a freshly minted link (replaces any link emailed earlier); eligible = the
-	 * job would mail this learner (mayReceive). POST send=true also mails it to that learner, whatever eligible says. Never another
-	 * user's: a link is a sign-in.
+	 * job would mail this learner (mayReceive). POST send=true also mails it to that learner, whatever eligible says.
+	 * POST send=true&user=<id or email> (org admins only): mails that person's email to that person's own address, for testing; the
+	 * reply leaves out html and link, which carry their sign-in, and a GET for another user is refused.
 	 */
 	public void dailyChallengeEmailPreview(WebPageRequest inReq) throws Exception
 	{
@@ -2927,14 +2928,41 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		Data u = freshUser(archive, user);
 		boolean send = "true".equals(inReq.getRequestParameter("send")) && inReq.getRequest() != null && "POST".equalsIgnoreCase(inReq.getRequest().getMethod());
+		String other = param(inReq, "user");
+		boolean mine = other == null || other.equalsIgnoreCase(u.getId()) || other.equalsIgnoreCase(u.get("email"));
+		if (!mine)
+		{
+			Set<String> scope = new WeeklySummaryEmail(this, archive).adminScope(u.getId(), rolePermissions(archive, u.getId(), new java.util.HashMap<>()));
+			if (scope == null || !scope.isEmpty())
+			{
+				fail(inReq, 403, "org_admins_only");
+				return;
+			}
+			if (!send)
+			{
+				fail(inReq, 400, "send_only"); // a preview would hand the caller that person's sign-in link
+				return;
+			}
+			// By email the way sign-in finds people (UserManager), not a raw query: the email mapping differs per index.
+			u = other.contains("@") ? getUserManager(inReq).getUserByEmail(other) : (Data) archive.getSearcher("user").searchById(other);
+			if (u == null || u.get("email") == null || u.get("email").trim().isEmpty())
+			{
+				fail(inReq, 404, "unknown_user");
+				return;
+			}
+		}
 		Object[] mail = send ? sendDailyChallengeEmail(archive, u, learnurl) : dailyChallengeMail(archive, u, learnurl);
 		JSONObject out = new JSONObject();
 		out.put("ok", Boolean.TRUE);
+		out.put("user", u.getId());
 		out.put("to", u.get("email"));
 		out.put("from", emailFrom(archive));
 		out.put("subject", mail[0]);
-		out.put("html", mail[1]);
-		out.put("link", mail[2]);
+		if (mine)
+		{
+			out.put("html", mail[1]);
+			out.put("link", mail[2]);
+		}
 		out.put("embeddedavatarbytes", mail[4] == null ? null : ((org.entermediadb.email.PostMail.InlineImage) mail[4]).data.length);
 		out.put("eligible", mayReceive(archive.getCatalogSettingValue("testu_dailychallengeemail"), archive.getCatalogSettingValue("testu_dailychallengeemail_only"),
 				u.get("email"), rolePermissions(archive, u.getId(), new java.util.HashMap<>())));
