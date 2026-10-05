@@ -1931,10 +1931,10 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/** Local hour of the Daily Challenge email. */
-	public static final int EMAIL_HOUR = 8;
+	public static final int EMAIL_HOUR = 9;
 
 	/**
-	 * Periodic (catalog event dailychallengeemail, every 15 min): the Daily Challenge email, Monday to Friday in the 08:00 hour of each
+	 * Periodic (catalog event dailychallengeemail, every 15 min): the Daily Challenge email, Monday to Friday in the 09:00 hour of each
 	 * learner's own zone (userZone, else the org's testu_timezone), with a one-click sign-in link that opens today's challenge.
 	 * Who: see mayReceive (master switch testu_dailychallengeemail, role permission EMAIL_PERMISSION, test allowlist
 	 * testu_dailychallengeemail_only). Skips disabled, internal (support) and email-less accounts, and learners whose challenge for

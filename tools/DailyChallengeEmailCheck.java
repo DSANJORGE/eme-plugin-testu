@@ -19,7 +19,7 @@ import tech.genailabs.tutor.TestUAnalyticsModule.DoneRow;
 import tech.genailabs.tutor.TestULearningModule;
 
 /**
- * Pure checks of the Daily Challenge email (no server): the weekday / 08:00 / timezone selection and the once-a-day key, the
+ * Pure checks of the Daily Challenge email (no server): the weekday / 09:00 / timezone selection and the once-a-day key, the
  * sign-in link token, who receives it (master switch, role permission, test allowlist), the weekday copy with the streak line,
  * the "what to practise next" recommendation and the "done" screen funnel. From the server root, after bin/compile.sh:
  * java -cp "build:$(find plugins/system/lib plugins/finder/lib plugins/community/lib tomcat/lib -name '*.jar' | tr '\n' ':')" plugins/testu/tools/DailyChallengeEmailCheck.java [previewdir [otppreviewdir]]
@@ -33,21 +33,21 @@ public class DailyChallengeEmailCheck
 
 	public static void main(String[] args) throws java.io.IOException
 	{
-		// ---- selection: Monday 2026-09-21 08:00 Lima = 13:00Z
-		Instant mon8Lima = Instant.parse("2026-09-21T13:00:00Z");
-		ok("Lima Monday 08:00 is due", "u_20260921".equals(TestULearningModule.emailDueKey("u", LIMA, mon8Lima)), TestULearningModule.emailDueKey("u", LIMA, mon8Lima));
-		ok("Lima Monday 08:59 is due", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-21T13:59:00Z")) != null, "");
-		ok("Lima Monday 07:59 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-21T12:59:00Z")) == null, "");
-		ok("Lima Monday 09:00 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-21T14:00:00Z")) == null, "");
-		ok("Lima Saturday 08:00 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-19T13:00:00Z")) == null, "");
-		ok("Lima Sunday 08:00 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-20T13:00:00Z")) == null, "");
-		ok("same instant is 15:00 in Madrid: not due", TestULearningModule.emailDueKey("u", MADRID, mon8Lima) == null, "");
-		ok("Madrid Monday 08:00 (06:00Z, summer time) is due", TestULearningModule.emailDueKey("u", MADRID, Instant.parse("2026-09-21T06:00:00Z")) != null, "");
-		ok("Santiago Friday 08:00 (11:00Z, summer time) is due", TestULearningModule.emailDueKey("u", ZoneId.of("America/Santiago"), Instant.parse("2026-10-02T11:00:00Z")) != null, "");
-		// Tokyo Monday 08:00 = Sunday 23:00Z: the key is the learner's local date, and it is a weekday there.
-		ok("Tokyo Monday 08:00 keyed by the local date", "u_20260921".equals(TestULearningModule.emailDueKey("u", TOKYO, Instant.parse("2026-09-20T23:00:00Z"))),
-			TestULearningModule.emailDueKey("u", TOKYO, Instant.parse("2026-09-20T23:00:00Z")));
-		ok("Tokyo Saturday 08:00 (Friday 23:00Z) is not", TestULearningModule.emailDueKey("u", TOKYO, Instant.parse("2026-09-18T23:00:00Z")) == null, "");
+		// ---- selection: Monday 2026-09-21 09:00 Lima = 14:00Z
+		Instant mon9Lima = Instant.parse("2026-09-21T14:00:00Z");
+		ok("Lima Monday 09:00 is due", "u_20260921".equals(TestULearningModule.emailDueKey("u", LIMA, mon9Lima)), TestULearningModule.emailDueKey("u", LIMA, mon9Lima));
+		ok("Lima Monday 09:59 is due", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-21T14:59:00Z")) != null, "");
+		ok("Lima Monday 08:59 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-21T13:59:00Z")) == null, "");
+		ok("Lima Monday 10:00 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-21T15:00:00Z")) == null, "");
+		ok("Lima Saturday 09:00 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-19T14:00:00Z")) == null, "");
+		ok("Lima Sunday 09:00 is not", TestULearningModule.emailDueKey("u", LIMA, Instant.parse("2026-09-20T14:00:00Z")) == null, "");
+		ok("same instant is 16:00 in Madrid: not due", TestULearningModule.emailDueKey("u", MADRID, mon9Lima) == null, "");
+		ok("Madrid Monday 09:00 (07:00Z, summer time) is due", TestULearningModule.emailDueKey("u", MADRID, Instant.parse("2026-09-21T07:00:00Z")) != null, "");
+		ok("Santiago Friday 09:00 (12:00Z, summer time) is due", TestULearningModule.emailDueKey("u", ZoneId.of("America/Santiago"), Instant.parse("2026-10-02T12:00:00Z")) != null, "");
+		// Tokyo Monday 09:00 = Sunday 00:00Z: the key is the learner's local date, and it is a weekday there.
+		ok("Tokyo Monday 09:00 keyed by the local date", "u_20260921".equals(TestULearningModule.emailDueKey("u", TOKYO, Instant.parse("2026-09-21T00:00:00Z"))),
+			TestULearningModule.emailDueKey("u", TOKYO, Instant.parse("2026-09-21T00:00:00Z")));
+		ok("Tokyo Saturday 09:00 (Friday 00:00Z) is not", TestULearningModule.emailDueKey("u", TOKYO, Instant.parse("2026-09-19T00:00:00Z")) == null, "");
 		ok("user zone wins", TestULearningModule.zoneOf("Europe/Madrid", LIMA).equals(MADRID), "");
 		ok("no user zone -> org", TestULearningModule.zoneOf(" ", LIMA).equals(LIMA) && TestULearningModule.zoneOf(null, LIMA).equals(LIMA), "");
 		ok("invalid user zone -> org", TestULearningModule.zoneOf("Mars/Olympus", LIMA).equals(LIMA), "");
