@@ -38,13 +38,13 @@ Per topic:
   - `ready` — `meetsrequirement` AND `evaluation.canstart` (or certification renewal schedulable).
   - `done` — meets requirement and nothing to book (passed / certified outside window). Not a goal.
   - `overdue` — deadline passed and not `done`.
-  - `at_risk` — `Forecast.of(history, requiredmin)` ETA after deadline, or status `notonpace`, or fewer than 2 history points and `daysleft` < sessions needed.
+  - `at_risk` — `Forecast.of(history, requiredmin / 100.0)` ETA after `daysleft`, or status `notonpace`; with `insufficient` history (< 7 days): sessions needed at 4 points each > `daysleft` / 2. History = the topic's mastery percent per local day over the last 28 days, replayed from the learner's attempts (pure, no storage read).
   - `on_track` — otherwise with a deadline.
   - `pace` — not met, no deadline.
 
 Goal = first of: overdue (earliest deadline), ready, at_risk / on_track (earliest deadline), pace (`recommend` order). None → `no_goal`. `othergoals` = count of remaining non-done required topics with a deadline.
 
-Week plan: `sessionsneeded` this ISO week (learner zone) = clamp(ceil(gap / expected gain per session) spread over remaining weeks to deadline, 1, 5); expected gain per session = org median from `tutormastery` deltas, default 4 points (ponytail: flat default; per-learner rate when history allows). `sessionsdone` = distinct days this week with ≥ 1 learn/improve/dailychallenge answer on the goal topic. `pace` goals: 3 sessions/week.
+Week plan: `sessionsneeded` this ISO week (learner zone) = clamp(ceil(gap / expected gain per session) spread over remaining weeks to deadline, 1, 5); expected gain per session = 4 points (ponytail: flat constant; org median from mastery history once pilots have 6+ weeks of data). `sessionsdone` = distinct days this week with ≥ 1 learn/improve/dailychallenge answer on the goal topic. `pace` goals: 3 sessions/week.
 
 Actions (`actions[]`, each `{id, type, topic, params, labelkey}`), only when currently valid:
 
