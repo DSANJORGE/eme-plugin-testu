@@ -216,6 +216,16 @@ try:
     ok("second remind replaces the first", len(pend) == 1, pend)
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "someday"})
     ok("unknown when -> 400", s == 400, r)
+
+    # --- nudges
+    put_row("learnernotification", f"{UID}_mission_remind", {"user": UID, "type": "mission", "entitytopic": TOPIC, "remindat": "2020-01-01T00:00:00Z", "read": False, "actor": "tutor"})
+    refresh()
+    s, r = call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    ok("nudges ran", s == 200 and r.get("ok"), r)
+    refresh()
+    ok("due reminder delivered (pushedat + text set)", es_doc("learnernotification", f"{UID}_mission_remind").get("pushedat") and es_doc("learnernotification", f"{UID}_mission_remind").get("text"))
+    s, r2 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    ok("status push not repeated on a second run", r2.get("sent", 0) == 0, r2)
 finally:
     cleanup()
 

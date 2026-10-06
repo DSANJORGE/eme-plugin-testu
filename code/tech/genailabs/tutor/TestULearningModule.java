@@ -3,6 +3,7 @@ package tech.genailabs.tutor;
 import java.time.ZoneId;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 import java.util.Set;
 import java.util.TimeZone;
 import org.entermediadb.asset.MediaArchive;
@@ -1906,6 +1907,148 @@ public class TestULearningModule extends TestUBaseModule
 		return sent;
 	}
 
+	/** Role permission (Settings > Roles) that lets a learner receive mission nudges (due-reminder and status-change pushes). */
+	public static final String MISSION_PERMISSION = "testu_missionnudges";
+
+	/** Same mayReceive rule as the Daily Challenge email (master switch, test allowlist, role permission), for push instead of email. */
+	private boolean mayReceive(MediaArchive archive, Data u)
+	{
+		String on = archive.getCatalogSettingValue(MISSION_PERMISSION);
+		String only = archive.getCatalogSettingValue(MISSION_PERMISSION + "_only");
+		Data role = (Data) archive.getSearcher("settingsrole").searchById(roleOf(archive, u.getId()));
+		return mayReceive(on, only, u.get("email"), role == null ? null : role.getValues("permissions"), MISSION_PERMISSION);
+	}
+
+	/** 15-minute event: missionNudges with quiet hours honored (the automatic sweep must never wake a learner up). */
+	public int missionNudges(MediaArchive archive)
+	{
+		return missionNudges(archive, true);
+	}
+
+	/**
+	 * Delivers due `_mission_remind` reminders (remindat <= now, not yet pushed), and pushes once on a goal status change to
+	 * ready/at_risk/overdue (at_risk at most once per 7 days per topic; the status row is cleared when the goal leaves
+	 * ready/overdue, so re-entering either pushes again). inHonorQuietHours: true for the automatic 15-minute sweep (pushes only
+	 * 08:00-20:00 learner zone; a run outside the window just defers to the next one inside it); false for an admin's on-demand
+	 * trigger (runMissionNudges), which is a deliberate action and must not silently no-op at night. Returns the number sent.
+	 */
+	public int missionNudges(MediaArchive archive, boolean inHonorQuietHours)
+	{
+		grantPermissionOnce(archive, MISSION_PERMISSION, "Misión: recibir recordatorios push", "931", "testu_missionnudges_granted");
+		LearningEngine engine = new LearningEngine(archive);
+		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
+		Searcher ns = archive.getSearcher("learnernotification");
+		int sent = 0;
+		for (Object o : archive.query("user").all().search())
+		{
+			Data u = (Data) o;
+			try
+			{
+				if ("false".equals(String.valueOf(u.get("enabled"))) || !mayReceive(archive, u))
+					continue;
+				ZoneId zone = zoneOf(userZone(archive, u.getId()), orgzone);
+				int hour = now.toInstant().atZone(zone).getHour();
+				if (inHonorQuietHours && (hour < 8 || hour >= 20))
+					continue; // quiet hours: the next run inside the window delivers
+				LearningEngine.Content content = engine.loadContent();
+				LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+				engine.applyProfiles(content, l);
+				JSONObject m = missionFor(engine, content, l, now, zone);
+				JSONObject goal = (JSONObject) m.get("goal");
+				String status = String.valueOf(m.get("status"));
+				synchronized (LearningEngine.WRITE_LOCK)
+				{
+					Data remind = (Data) ns.searchById(u.getId() + "_mission_remind");
+					if (remind != null && remind.get("pushedat") == null && remind.getValue("remindat") != null && !((Date) remind.getValue("remindat")).after(now))
+					{
+						remind.setValue("text", missionText(goal == null ? "pace" : "remind", goal));
+						remind.setValue("pushedat", now);
+						remind.setValue("datecreated", now);
+						ns.saveData(remind, null);
+						social.push(archive, remind);
+						sent++;
+					}
+					if (goal != null && Set.of("ready", "at_risk", "overdue").contains(status))
+					{
+						String id = u.getId() + "_mission_" + goal.get("topic") + "_" + status;
+						Data prev = (Data) ns.searchById(id);
+						boolean recent = prev != null && prev.getValue("pushedat") != null && ("at_risk".equals(status)
+							? now.getTime() - ((Date) prev.getValue("pushedat")).getTime() < 7L * 86400000
+							: true); // ready/overdue: once per status entry; the row is deleted when the status leaves (below)
+						if (!recent)
+						{
+							Data n = prev != null ? prev : ns.createNewData();
+							n.setId(id);
+							n.setValue("user", u.getId()); n.setValue("actor", "tutor"); n.setValue("actorname", tutorName(archive));
+							n.setValue("type", "mission"); n.setValue("datecreated", now); n.setValue("read", false);
+							n.setValue("entitytopic", goal.get("topic")); n.setValue("status", status); n.setValue("pushedat", now);
+							n.setValue("text", missionText(status, goal));
+							ns.saveData(n, null);
+							social.push(archive, n);
+							sent++;
+						}
+					}
+					// leaving ready/overdue re-arms them: drop this learner's status rows for other statuses of the goal topic
+					if (goal != null)
+					{
+						for (String st : List.of("ready", "overdue"))
+						{
+							if (!st.equals(status))
+							{
+								Data old = (Data) ns.searchById(u.getId() + "_mission_" + goal.get("topic") + "_" + st);
+								if (old != null)
+									ns.delete(old, null);
+							}
+						}
+					}
+				}
+			}
+			catch (Exception e)
+			{
+				log.error("mission nudges: user " + u.getId(), e);
+			}
+		}
+		return sent;
+	}
+
+	static String missionText(String status, JSONObject goal)
+	{
+		String topic = goal == null ? "" : String.valueOf(goal.get("topictitle"));
+		return switch (status)
+		{
+			case "ready" -> "Ya estás listo para la evaluación de " + topic + ".";
+			case "at_risk" -> "Vas justo con " + topic + " (vence el " + goal.get("deadline") + "). Una sesión corta hoy te pone al día.";
+			case "overdue" -> "El plazo de " + topic + " venció. Retomemos con una sesión corta.";
+			case "remind" -> "Te lo recuerdo: " + topic + ", una sesión de 6 minutos.";
+			default -> "Una sesión corta hoy para seguir avanzando.";
+		};
+	}
+
+	/**
+	 * services/testu/learn/missionnudges.json -- runs missionNudges(archive) on demand: how the 15-minute event is exercised from
+	 * check_mission.sh, and how an admin can kick nudges manually. training_manage.
+	 */
+	public void runMissionNudges(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+		{
+			return;
+		}
+		if (!canManageProgression(inReq))
+		{
+			fail(inReq, 403, "forbidden");
+			return;
+		}
+		int sent = missionNudges(getMediaArchive(inReq), false); // on-demand admin trigger: not deferred by quiet hours
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("sent", sent);
+		reply(inReq, resp);
+	}
+
 	/** The org's configured tutor persona name (catalog setting tutorpersona, default iris); "IRIS" when unset/unnamed. */
 	String tutorName(MediaArchive archive)
 	{
@@ -2343,13 +2486,31 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		LearningEngine engine = new LearningEngine(archive);
 		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
-		java.time.LocalDate today = java.time.Instant.now().atZone(zoneOf(userZone(archive, u.getId()), orgzone)).toLocalDate();
+		java.time.ZoneId zone = zoneOf(userZone(archive, u.getId()), orgzone);
+		java.time.LocalDate today = java.time.Instant.now().atZone(zone).toLocalDate();
 		// The challenge days are org-local (LearningEngine.challengeDate), so the streak is counted on the org's calendar.
 		int[] recent = recentChallenges(engine, archive, u.getId(), LearningEngine.challengeDate(new Date(), orgzone), null);
 		// Only the link's fragment carries the token: a fragment never reaches a server log or a Referer header.
 		String link = inLearnurl + "#/desafio?src=email&campaign=dailychallenge&login=" + org.entermediadb.asset.modules.AdminModule.createLoginLink(archive.getSearcherManager(), u.getId());
 		Object[] avatar = avatarRef(archive, persona, inLearnurl);
-		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, (String) avatar[0], link, today, recent);
+		String missionLine = null;
+		try
+		{
+			LearningEngine.Content content = engine.loadContent();
+			LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+			engine.applyProfiles(content, l);
+			JSONObject mission = missionFor(engine, content, l, new Date(), zone);
+			String status = String.valueOf(mission.get("status"));
+			if (!"no_goal".equals(status) && !"pace".equals(status))
+			{
+				missionLine = missionText(status, (JSONObject) mission.get("goal"));
+			}
+		}
+		catch (Exception e)
+		{
+			log.error("dailychallengeemail: mission line for " + u.getId(), e); // the challenge email must still go out
+		}
+		String[] m = emailContent(lang != null && lang.startsWith("en"), givenName(u.get("firstName")), tutor, (String) avatar[0], link, today, recent, missionLine, inLearnurl);
 		return new Object[] {m[0], m[1], link, tutor, avatar[1]};
 	}
 
@@ -2726,10 +2887,12 @@ public class TestULearningModule extends TestUBaseModule
 	 * {subject, html} of the Daily Challenge email for inToday (the learner's local date). HTML only, TestU Learn's dark theme
 	 * (app-genailabs lib/testu/testu_theme.dart tokens) as inline CSS in tables, for Gmail, Outlook and Apple Mail. inRecent =
 	 * {streak, correct, total} (challengeStats) or null: the streak/score line only when there is one. inAvatar = absolute URL of the
-	 * tutor's picture, or null (then just the name). Copy: dayCopy / recentLine, docs/copy/desafio-diario-minsur.es.md. Pure.
+	 * tutor's picture, or null (then just the name). Copy: dayCopy / recentLine, docs/copy/desafio-diario-minsur.es.md. inMissionLine
+	 * (nullable): one mission-agent line + a button to inMissionLink (the app root), prepended when the learner has an active goal
+	 * (status not no_goal/pace). Pure.
 	 */
 	public static String[] emailContent(boolean inEnglish, String inName, String inTutor, String inAvatar, String inLink, java.time.LocalDate inToday,
-			int[] inRecent)
+			int[] inRecent, String inMissionLine, String inMissionLink)
 	{
 		boolean named = inName != null && !inName.isEmpty();
 		String dayname = inToday.getDayOfWeek().getDisplayName(java.time.format.TextStyle.FULL, inEnglish ? java.util.Locale.ENGLISH : new java.util.Locale("es"));
@@ -2743,7 +2906,13 @@ public class TestULearningModule extends TestUBaseModule
 		String foot = inEnglish ? "You’re receiving this email because you have a TestU account. If the button doesn’t work, open the app and sign in with your email."
 				: "Recibes este correo porque tienes una cuenta en TestU. Si el botón no funciona, abre la app e ingresa con tu correo.";
 		String p = "<p style=\"margin:0 0 16px;" + SANS + "font-size:16px;line-height:1.6;color:#D6D4D0\">";
-		String inner = p + esc(hello) + "</p>" + p + esc(day[2]) + "</p>"
+		String missionButton = inEnglish ? "View my goal" : "Ver mi objetivo";
+		String missionBlock = inMissionLine == null ? "" : p + esc(inMissionLine) + "</p>"
+				+ "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:12px 0 28px\"><tr>"
+				+ "<td align=\"center\" bgcolor=\"#F4F2EE\" style=\"background:#F4F2EE;border-radius:8px\">"
+				+ "<a href=\"" + esc(inMissionLink) + "\" style=\"display:block;padding:15px 20px;" + SANS + "font-size:15px;font-weight:700;letter-spacing:0.05em;"
+				+ "color:#0A0A0B;text-decoration:none;border-radius:8px\">" + esc(missionButton) + "</a></td></tr></table>";
+		String inner = missionBlock + p + esc(hello) + "</p>" + p + esc(day[2]) + "</p>"
 				+ (recent == null ? ""
 						: "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 20px\"><tr>"
 								+ "<td bgcolor=\"#17171B\" style=\"background:#17171B;border:1px solid #222227;border-left:3px solid #E8703A;border-radius:8px;padding:12px 14px;"
