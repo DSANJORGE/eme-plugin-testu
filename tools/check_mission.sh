@@ -171,7 +171,13 @@ UID = "mission.check@testu.local"
 PASSWORD = "Mc9-" + secrets.token_urlsafe(24)
 UID2 = "mission.check2@testu.local"
 PASSWORD2 = "Mc9-" + secrets.token_urlsafe(24)
+# A third learner, on its own jobrole (no withindays -- no learnertarget cascade), used only for the cert_expiring
+# "already scheduled" exclusion case: its deadline must come purely from the certification row, not a competing target.
+UID3 = "mission.check3@testu.local"
+PASSWORD3 = "Mc9-" + secrets.token_urlsafe(24)
 PROFILE = [None]
+PROFILE2 = [None]
+MGRPASS = "Mc9-" + secrets.token_urlsafe(24)
 PREV_ONLY = [False]  # False = untouched (don't restore); None/str = the previous setting value to put back
 
 
@@ -187,6 +193,12 @@ def cleanup():
     delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID2}}))
     delete_rows("coachdismissal", es_ids("coachdismissal", {"term": {"user": os.environ["EME_USER"]}}))
     wipe_user_rows(UID2)
+    if PROFILE2[0]:
+        delete_rows("topicrequirement", es_ids("topicrequirement", {"term": {"jobrole": PROFILE2[0]}}))
+        delete_rows("jobrole", [PROFILE2[0]])
+    delete_rows("certification", es_ids("certification", {"term": {"user": UID3}}))
+    delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID3}}))
+    wipe_user_rows(UID3)
     if PREV_ONLY[0] is not False:  # nudges ran: restore the pre-existing testu_dailychallengeemail_only (mayReceive's allowlist)
         setting("testu_dailychallengeemail_only", PREV_ONLY[0])
         PREV_ONLY[0] = False
@@ -299,6 +311,79 @@ try:
     ok("learner gets 403", s == 403, r)
 
     ok("coach writes audited", {"coach.nudge", "learnertarget.set", "coach.dismiss"} <= {a.get("action") for a in audits_all()})
+
+    # --- cert_expiring must exclude an already-scheduled renewal (fix round 1, item 1). UID3 gets its own jobrole with no
+    # withindays, so the topic's only deadline source is the certification row -- no competing learnertarget to confuse it.
+    make_user(UID3, PASSWORD3, role="users")
+    s, r = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": "", "name": "Mission cert check", "rows": json.dumps(
+        [{"topic": TOPIC, "requiredlevel": "competent", "mandatory": True, "requiresprevious": False, "afterfinish": "keep",
+          "validitymonths": 6, "passpercent": 50, "renewalwindowdays": 30}])})
+    ok("saveprofile cert rule: 200", s == 200 and r["profile"]["rows"][0]["validitymonths"] == 6, r)
+    PROFILE2[0] = r["profile"]["id"]
+    s, r = call(admin, "POST", "/services/testu/personas/setprofiles.json", form={"user": UID3, "primary": PROFILE2[0], "extras": "[]"})
+    ok("setprofiles UID3: 200", s == 200, r)
+    # Passed ~170 days ago, validitymonths 6 (~182d): expiry ~12 days out, inside the 30-day renewal window -- renewal_due and
+    # cert_expiring-eligible (0-14 days) while unscheduled.
+    put_row("certification", f"{UID3}_{TOPIC}", {"user": UID3, "entitytopic": TOPIC, "passedat": iso(NOW - datetime.timedelta(days=170))})
+    refresh()
+    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    ok("coach ok (cert case)", s == 200 and c.get("ok"), c)
+    certsug = next((x for x in c["suggestions"] if x["kind"] == "cert_expiring" and x["topic"] == TOPIC), None)
+    ok("unscheduled renewal surfaces as cert_expiring", certsug and any(u["id"] == UID3 for u in certsug["users"]), c)
+
+    future = (NOW + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+    put_row("certification", f"{UID3}_{TOPIC}", {"user": UID3, "entitytopic": TOPIC, "passedat": iso(NOW - datetime.timedelta(days=170)), "scheduledfor": future})
+    refresh()
+    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    certsug2 = next((x for x in c["suggestions"] if x["kind"] == "cert_expiring" and x["topic"] == TOPIC), None)
+    ok("scheduled renewal excluded from cert_expiring", not (certsug2 and any(u["id"] == UID3 for u in certsug2["users"])), c)
+
+    # --- negative scope test (fix round 1, item 6): a manager scoped to someone else's team gets 403 on coachaction for a
+    # user outside that scope, and coach.json for that manager never lists them either.
+    # The "manager" role (team-scoped: no personas_manage/operate or analytics_manage/operate) has no training_manage in this
+    # seed, so it can never reach coachAction's per-user scope check otherwise (canManageProgression fails first). Grant it
+    # training_manage for just this block and restore the role's permissions list exactly after -- via a raw ES partial
+    # update (_update merges one field; the app's generic lists/data PUT re-renders "permissions" into display objects and
+    # drops anything it doesn't recognize, so it's not safe for a round-trip here). A fresh login (not an already-open
+    # session) is required to pick up the change, same as check_setrole.sh found for role-permission edits.
+    s, teams = call(admin, "GET", "/services/testu/personas/teams.json")
+    team_list = teams.get("teams", []) if s == 200 else []
+    parents = {t.get("parent") for t in team_list}
+    leaf = next((t for t in team_list if t["id"] not in parents), None)
+    if leaf is None:
+        print("SKIP: no teams locally for the coach out-of-scope test")
+    else:
+        MGRTEAM = leaf["id"]
+        orig_mgr = leaf.get("manager") or ""
+
+        def saveteam(mgr):
+            must("saveteam", call(admin, "POST", "/services/testu/personas/saveteam.json", form={
+                "id": MGRTEAM, "name": leaf.get("name") or "", "parent": leaf.get("parent") or "",
+                "location": leaf.get("location") or "", "costcenter": leaf.get("costcenter") or "", "manager": mgr}))
+
+        role_doc = es_doc("settingsrole", "manager") or {}
+        orig_role_perms = list(role_doc.get("permissions") or [])
+
+        def role_perms(perms):
+            call(es, "POST", "/settingsrole/manager/_update", body={"doc": {"permissions": perms}}, base=ES)
+            refresh()
+
+        try:
+            role_perms(orig_role_perms + ["training_manage"])
+            make_user("mgr.check.mission@testu.local", MGRPASS, role="manager")
+            saveteam("mgr.check.mission@testu.local")
+            manager = login("mgr.check.mission@testu.local", MGRPASS)
+
+            # UID2's team is None, which is never in a specific-team manager's scope.
+            s, r = call(manager, "POST", "/services/testu/analytics/coachaction.json", form={"action": "setdue", "topic": TOPIC, "users": json.dumps([UID2]), "duedate": "2030-01-01"})
+            ok("out-of-scope manager setdue -> 403", s == 403, r)
+
+            s, c = call(manager, "GET", "/services/testu/analytics/coach.json")
+            ok("out-of-scope manager coach ok", s == 200 and c.get("ok"), c)
+            ok("out-of-scope manager never sees UID2/UID3", all(UID2 not in [u["id"] for u in x["users"]] and UID3 not in [u["id"] for u in x["users"]] for x in c["suggestions"]), c)
+        finally:
+            saveteam(orig_mgr)
+            role_perms(orig_role_perms)
 finally:
     cleanup()
 

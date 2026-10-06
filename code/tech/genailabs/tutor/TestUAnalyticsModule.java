@@ -2547,39 +2547,59 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				continue;
 			}
 			String rowId = id + "_coach_" + topic;
-			synchronized (LearningEngine.WRITE_LOCK)
+			Data existing;
+			synchronized (LearningEngine.WRITE_LOCK) // dedup read only: loadContent/missionFor/push happen outside the lock
 			{
-				Data existing = (Data) ns.searchById(rowId);
-				Date prevPush = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("pushedat"));
-				if (prevPush != null && now.getTime() - prevPush.getTime() < 3L * 86400000)
-				{
-					skipped++;
-					continue;
-				}
-				ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, id), orgzone);
-				LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
-				LearningEngine.Learner learner = engine.loadLearner(id, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-				engine.applyProfiles(content, learner);
-				JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
-				String status = String.valueOf(m.get("status"));
-				JSONObject goal = (JSONObject) m.get("goal");
-				Data n = existing != null ? existing : ns.createNewData();
-				n.setId(rowId);
-				n.setValue("user", id);
-				n.setValue("actor", "tutor");
-				n.setValue("actorname", learningModule.tutorName(archive));
-				n.setValue("type", "mission");
-				n.setValue("datecreated", now);
-				n.setValue("read", Boolean.FALSE);
-				n.setValue("entitytopic", topic);
-				n.setValue("status", status);
-				n.setValue("text", TestULearningModule.missionText(status, goal));
-				n.setValue("pushedat", now);
-				ns.saveData(n, null);
-				social.push(archive, n);
-				done++;
-				nudged.add(id);
+				existing = (Data) ns.searchById(rowId);
 			}
+			Date prevPush = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("pushedat"));
+			if (prevPush != null && now.getTime() - prevPush.getTime() < 3L * 86400000)
+			{
+				skipped++;
+				continue;
+			}
+			ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, id), orgzone);
+			LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
+			LearningEngine.Learner learner = engine.loadLearner(id, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+			engine.applyProfiles(content, learner);
+			JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
+			// The text must describe the requested topic, not whichever one happens to be this learner's single mission goal:
+			// look up that topic's own plan in m.plans, and fall back to the goal only when the topic isn't a required plan.
+			JSONObject topicPlan = null;
+			Object plansObj = m.get("plans");
+			if (plansObj instanceof JSONArray)
+			{
+				for (Object po : (JSONArray) plansObj)
+				{
+					JSONObject p = (JSONObject) po;
+					if (topic.equals(p.get("topic")))
+					{
+						topicPlan = p;
+						break;
+					}
+				}
+			}
+			JSONObject textGoal = topicPlan != null ? topicPlan : (JSONObject) m.get("goal");
+			String textStatus = topicPlan != null ? String.valueOf(topicPlan.get("status")) : String.valueOf(m.get("status"));
+			Data n = existing != null ? existing : ns.createNewData();
+			n.setId(rowId);
+			n.setValue("user", id);
+			n.setValue("actor", "tutor");
+			n.setValue("actorname", learningModule.tutorName(archive));
+			n.setValue("type", "mission");
+			n.setValue("datecreated", now);
+			n.setValue("read", Boolean.FALSE);
+			n.setValue("entitytopic", topic);
+			n.setValue("status", textStatus);
+			n.setValue("text", TestULearningModule.missionText(textStatus, textGoal));
+			n.setValue("pushedat", now);
+			synchronized (LearningEngine.WRITE_LOCK) // the save only
+			{
+				ns.saveData(n, null);
+			}
+			social.push(archive, n);
+			done++;
+			nudged.add(id);
 		}
 		Map<String, Object> after = new HashMap<>();
 		after.put("topic", topic);
@@ -2598,8 +2618,18 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		String topic = trim(inReq.getRequestParameter("topic"));
 		String duedateParam = trim(inReq.getRequestParameter("duedate"));
 		List<String> ids = parseUserIds(inReq);
+		if (topic.isEmpty() || ids.isEmpty())
+		{
+			fail(inReq, 400, "bad_request");
+			return;
+		}
+		if (archive.getCachedData("entitytopic", topic) == null)
+		{
+			fail(inReq, 400, "bad_request");
+			return;
+		}
 		Date due = LearningEngine.parseYmd(duedateParam);
-		if (topic.isEmpty() || ids.isEmpty() || due == null)
+		if (due == null)
 		{
 			fail(inReq, 400, "bad_date");
 			return;
@@ -2748,6 +2778,10 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				try
 				{
 					ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, u.getId()), orgzone);
+					// ponytail: re-parses the whole topic/question tree from storage once per in-scope learner (loadContent has no
+					// cache of its own); fine at pilot team sizes, but O(team size) content loads per coach.json/ask.json call is the
+					// ceiling. Upgrade when it shows up in profiling: either a short-TTL Content cache keyed by (archive, scope), or
+					// load it once per request and applyProfiles onto a deep copy per learner instead of a fresh loadContent() each time.
 					LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
 					LearningEngine.Learner learner = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
 					engine.applyProfiles(content, learner);
@@ -2773,7 +2807,10 @@ public class TestUAnalyticsModule extends TestUBaseModule
 							if ("certification".equals(plan.get("deadlinesource")) && daysleftObj instanceof Number)
 							{
 								long daysleft = ((Number) daysleftObj).longValue();
-								if (daysleft >= 0 && daysleft <= 14)
+								// spec: expiry within 14 days AND not scheduled -- a renewal already booked isn't a coach suggestion.
+								LearningEngine.CertRow cert = learner.certifications.get(plan.get("topic"));
+								boolean scheduled = cert != null && cert.scheduledfor != null;
+								if (daysleft >= 0 && daysleft <= 14 && !scheduled)
 								{
 									addCoachSuggestion(buckets, dismissed, "cert_expiring", (String) plan.get("topic"), (String) plan.get("topictitle"),
 										teamKey, u, (String) plan.get("status"), (Integer) plan.get("masterypercent"), daysleftObj, (String) plan.get("deadline"));
@@ -2886,7 +2923,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 	private static boolean inScope(Data u, Set<String> scope)
 	{
-		if (u == null)
+		if (u == null || !countsAsPerson(u.getId(), u)) // same "is this even a learner" gate analytics() applies
 		{
 			return false;
 		}
