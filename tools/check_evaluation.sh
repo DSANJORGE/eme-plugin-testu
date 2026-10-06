@@ -177,7 +177,8 @@ def audits(action, target):
     return [h["_source"] for h in res["hits"]["hits"] if str(h["_source"].get("datecreated", ""))[:19] >= AUDIT_SINCE[0][:19]]
 
 
-qhits = must("entityquestion search", call(admin, "GET", "/services/lists/search/entityquestion/search.json?hitsperpage=5000"))["results"]
+# search.json no longer returns row ids (EnterMedia template sync) -> KeyError 'id'; ES carries them as _id (final review I6).
+qhits = [dict(h["_source"], id=h["_id"]) for h in call(es, "POST", "/entityquestion/_search", body={"size": 10000, "query": {"match_all": {}}}, base=ES)[1]["hits"]["hits"]]
 QROW = {q["id"]: q for q in qhits}
 fid = lambda v: v.get("id") if isinstance(v, dict) else v
 

@@ -152,6 +152,13 @@ def audits(action, target):
     return [h["_source"] for h in res["hits"]["hits"] if str(h["_source"].get("datecreated", ""))[:19] >= AUDIT_SINCE[0][:19]]
 
 
+def coach(op):
+    # coach.json is TTL-cached per scope (final review I4) and rows put straight into ES bypass its invalidation; any
+    # coachaction write clears it, so dismiss a throwaway key first (cleanup() deletes the admin's dismissals).
+    call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "dismiss", "key": "check:cachebust:all"})
+    return call(op, "GET", "/services/testu/analytics/coach.json")
+
+
 def audits_all():
     """Every auditevent since AUDIT_SINCE (any action/target). Polls like audits(), for a set-membership check."""
     rows = []
@@ -359,7 +366,7 @@ try:
     refresh()
     learner2 = login(UID2, PASSWORD2)
 
-    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    s, c = coach(admin)
     ok("coach ok", s == 200 and c.get("ok"), c)
     sug = next((x for x in c["suggestions"] if x["kind"] == "overdue" and x["topic"] == TOPIC), None)
     ok("overdue suggestion lists the learner", sug and any(u["id"] == UID2 for u in sug["users"]), c)
@@ -375,7 +382,7 @@ try:
 
     s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "dismiss", "key": sug["key"]})
     ok("dismiss ok", s == 200 and r.get("ok"), r)
-    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    s, c = coach(admin)
     ok("dismissed suggestion hidden", all(x["key"] != sug["key"] for x in c["suggestions"]), c)
 
     s, r = call(learner2, "POST", "/services/testu/analytics/coachaction.json", form={"action": "dismiss", "key": "x"})
@@ -397,7 +404,7 @@ try:
     # cert_expiring-eligible (0-14 days) while unscheduled.
     put_row("certification", f"{UID3}_{TOPIC}", {"user": UID3, "entitytopic": TOPIC, "passedat": iso(NOW - datetime.timedelta(days=170))})
     refresh()
-    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    s, c = coach(admin)
     ok("coach ok (cert case)", s == 200 and c.get("ok"), c)
     certsug = next((x for x in c["suggestions"] if x["kind"] == "cert_expiring" and x["topic"] == TOPIC), None)
     ok("unscheduled renewal surfaces as cert_expiring", certsug and any(u["id"] == UID3 for u in certsug["users"]), c)
@@ -405,7 +412,7 @@ try:
     future = (NOW + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
     put_row("certification", f"{UID3}_{TOPIC}", {"user": UID3, "entitytopic": TOPIC, "passedat": iso(NOW - datetime.timedelta(days=170)), "scheduledfor": future})
     refresh()
-    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    s, c = coach(admin)
     certsug2 = next((x for x in c["suggestions"] if x["kind"] == "cert_expiring" and x["topic"] == TOPIC), None)
     ok("scheduled renewal excluded from cert_expiring", not (certsug2 and any(u["id"] == UID3 for u in certsug2["users"])), c)
 
@@ -446,16 +453,25 @@ try:
         # and if that prints True, remove it with the same _update call role_perms() below makes, passing the role's
         # current permissions list minus "training_manage".
         try:
-            role_perms(orig_role_perms + ["training_manage"])
             make_user(MGREMAIL, MGRPASS, role="manager")
             saveteam(MGREMAIL)
+            # final review I1: without training_manage a coach reader may dismiss (a view preference) but never write.
+            reader = login(MGREMAIL, MGRPASS)
+            s, r = call(reader, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
+            ok("manager without training_manage: nudge -> 403", s == 403, r)
+            if any(x in orig_role_perms for x in ("resumen_admin", "actividad_admin", "dominio_admin", "prevision_admin")):
+                s, r = call(reader, "POST", "/services/testu/analytics/coachaction.json", form={"action": "dismiss", "key": "check:readerdismiss:all"})
+                ok("manager without training_manage: dismiss -> 200", s == 200 and r.get("ok"), r)
+            else:
+                print("SKIP: manager role has no analytics tab permission locally (dismiss-with-read case)")
+            role_perms(orig_role_perms + ["training_manage"])
             manager = login(MGREMAIL, MGRPASS)
 
             # UID2's team is None, which is never in a specific-team manager's scope.
             s, r = call(manager, "POST", "/services/testu/analytics/coachaction.json", form={"action": "setdue", "topic": TOPIC, "users": json.dumps([UID2]), "duedate": "2030-01-01"})
             ok("out-of-scope manager setdue -> 403", s == 403, r)
 
-            s, c = call(manager, "GET", "/services/testu/analytics/coach.json")
+            s, c = coach(manager)
             ok("out-of-scope manager coach ok", s == 200 and c.get("ok"), c)
             ok("out-of-scope manager never sees UID2/UID3", all(UID2 not in [u["id"] for u in x["users"]] and UID3 not in [u["id"] for u in x["users"]] for x in c["suggestions"]), c)
         finally:

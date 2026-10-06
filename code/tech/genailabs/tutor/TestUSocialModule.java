@@ -496,6 +496,10 @@ public class TestUSocialModule extends TestUBaseModule
 
 		HitTracker unreadHits = archive.query("learnernotification").exact("user", userid).exact("read", false).search();
 		int unread = (unreadHits != null) ? unreadHits.size() : 0;
+		Data pending = (Data) archive.getSearcher("learnernotification").searchById(userid + "_mission_remind");
+		if (pending != null && !"true".equals(String.valueOf(pending.get("read"))) && pending.get("pushedat") == null
+			&& pending.getValue("remindat") != null && ((Date) pending.getValue("remindat")).after(new Date()))
+			unread--; // the hidden pending reminder below is not an unread item yet (final review minor 1)
 
 		SimpleDateFormat isoUtc = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssX");
 		isoUtc.setTimeZone(TimeZone.getTimeZone("UTC"));

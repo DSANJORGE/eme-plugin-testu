@@ -1674,15 +1674,15 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		// Required topics vs role requirement (live, learning engine) and the lowest required topic as a separate risk signal.
 		// Overall mastery is not changed by it. Readiness states (Action needed / At risk) are not computed yet.
-		LearningEngine engine = new LearningEngine(archive);
-		LearningEngine.Learner learner = engine.loadLearner(uid, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-		LearningEngine.Content pcontent = engine.loadContent();
-		engine.applyProfiles(pcontent, learner);
 		// Mission agent (spec 2026-10-05): the same earliest-of-target/certification-expiry rule MissionPlanner uses for the
-		// goal plan, mirrored here so the person page can show a required topic's due date without re-deriving it.
+		// goal plan, mirrored here so the person page can show a required topic's due date without re-deriving it. Same
+		// content (visibleTopicsFor) and zone (learnerZone) as every other mission caller (final review I3).
 		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
-		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
-		ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, uid), orgzone);
+		Object[] loaded = learningModule.loadFor(archive, u);
+		LearningEngine engine = (LearningEngine) loaded[0];
+		LearningEngine.Content pcontent = (LearningEngine.Content) loaded[1];
+		LearningEngine.Learner learner = (LearningEngine.Learner) loaded[2];
+		ZoneId zone = learningModule.learnerZone(archive, uid);
 		Date now = new Date();
 		JSONArray required = new JSONArray();
 		JSONObject lowest = null;
@@ -2542,28 +2542,34 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	public void coachAction(WebPageRequest inReq)
 	{
 		User manager = inReq.getUser();
-		if (manager == null || !TestULearningModule.canManageProgression(inReq))
+		String action = trim(inReq.getRequestParameter("action"));
+		// Final review I1: nudge/setdue write learner data (training_manage); dismiss is a per-manager view preference, so
+		// the coach's own read permission (coach.xconf: any analytics tab) is enough.
+		boolean allowed = TestULearningModule.canManageProgression(inReq)
+			|| ("dismiss".equals(action) && hasAny(inReq.getUserProfile(), ANALYTICS_TABS));
+		if (manager == null || !allowed)
 		{
 			fail(inReq, 403, "forbidden");
 			return;
 		}
 		MediaArchive archive = getMediaArchive(inReq);
 		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
-		String action = trim(inReq.getRequestParameter("action"));
 		switch (action)
 		{
 			case "nudge":
 				coachNudge(inReq, archive, scope);
-				return;
+				break;
 			case "setdue":
 				coachSetDue(inReq, archive, manager, scope);
-				return;
+				break;
 			case "dismiss":
 				coachDismiss(inReq, archive, manager);
-				return;
+				break;
 			default:
 				fail(inReq, 400, "bad_action");
+				return;
 		}
+		COACH_CACHE.clear(); // any coach write invalidates the suggestions cache (final review I4), after the write lands
 	}
 
 	private void coachNudge(WebPageRequest inReq, MediaArchive archive, Set<String> scope)
@@ -2590,8 +2596,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			}
 		}
 
-		LearningEngine engine = new LearningEngine(archive);
-		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
 		Date now = new Date();
 		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
 		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
@@ -2618,11 +2622,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				skipped++;
 				continue;
 			}
-			ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, id), orgzone);
-			LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
-			LearningEngine.Learner learner = engine.loadLearner(id, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-			engine.applyProfiles(content, learner);
-			JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
+			JSONObject m = (JSONObject) learningModule.missionOf(archive, u, now)[0];
 			// The text must describe the requested topic, not whichever one happens to be this learner's single mission goal:
 			// look up that topic's own plan in m.plans. No plan for this topic -- e.g. it isn't required for this learner --
 			// means there's nothing to nudge them about on it, so skip rather than push goal text under the wrong topic.
@@ -2729,10 +2729,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		int done = 0;
 		for (String id : ids)
 		{
+			Date beforeDue;
 			synchronized (LearningEngine.WRITE_LOCK)
 			{
 				Data existing = (Data) s.searchById(id + "_" + topic);
-				Date beforeDue = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("duedate"));
+				beforeDue = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("duedate"));
 				LearningEngine.TargetRow t = new LearningEngine.TargetRow();
 				t.user = id;
 				t.topicid = topic;
@@ -2741,14 +2742,14 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				t.createdon = new Date();
 				t.duedate = due;
 				engine.saveTarget(t);
-				Map<String, Object> before = new HashMap<>();
-				before.put("duedate", beforeDue == null ? null : LearningEngine.ymd(beforeDue, ZoneId.of("UTC")));
-				Map<String, Object> after = new HashMap<>();
-				after.put("duedate", duedateParam);
-				after.put("source", "manual");
-				audit(inReq, archive, "learnertarget.set", "user", id, before, after);
-				done++;
 			}
+			Map<String, Object> before = new HashMap<>();
+			before.put("duedate", beforeDue == null ? null : LearningEngine.ymd(beforeDue, ZoneId.of("UTC")));
+			Map<String, Object> after = new HashMap<>();
+			after.put("duedate", duedateParam);
+			after.put("source", "manual");
+			audit(inReq, archive, "learnertarget.set", "user", id, before, after); // outside WRITE_LOCK (final review minor 11)
+			done++;
 		}
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -2807,7 +2808,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		String teamFilter = trim(inReq.getRequestParameter("team"));
 		if (scope != null && !teamFilter.isEmpty() && !scope.contains(teamFilter))
 		{
-			fail(inReq, 400, "out of scope");
+			fail(inReq, 403, "out of scope");
 			return null;
 		}
 		String teamKey = teamFilter.isEmpty() ? "all" : teamFilter;
@@ -2832,8 +2833,42 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			}
 		}
 
-		LearningEngine engine = new LearningEngine(archive);
-		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
+		// ponytail: per-JVM TTL cache keyed by (catalog, scope teams, team filter), shared by coach.json, Overview and Ask, and
+		// cleared whole on any coachaction write. Ceiling: suggestions lag learner progress by up to COACH_TTL_MS, and a cache
+		// miss still costs one fresh Content load per in-scope learner; upgrade path is a Content deep copy in LearningEngine
+		// (load once, applyProfiles per copy) when misses show up in profiling. Dismissals are per manager, so they are
+		// filtered after the cache, never inside it.
+		String cacheKey = archive.getCatalogId() + "|" + (scope == null ? "*" : new java.util.TreeSet<>(scope)) + "|" + teamKey;
+		Object[] hit = COACH_CACHE.get(cacheKey);
+		List<Map<String, Object>> all;
+		if (hit != null && System.currentTimeMillis() - (Long) hit[0] < COACH_TTL_MS)
+		{
+			all = (List<Map<String, Object>>) hit[1];
+		}
+		else
+		{
+			long started = System.currentTimeMillis();
+			all = computeCoachSuggestions(archive, scope, teamFilter, teamKey);
+			log.info("coach suggestions computed in " + (System.currentTimeMillis() - started) + " ms (cache miss)");
+			COACH_CACHE.put(cacheKey, new Object[] {System.currentTimeMillis(), all});
+		}
+		List<Map<String, Object>> out = new ArrayList<>();
+		for (Map<String, Object> b : all)
+		{
+			if (!dismissed.contains(b.get("key")))
+			{
+				out.add(b);
+			}
+		}
+		return out;
+	}
+
+	static final long COACH_TTL_MS = 5L * 60 * 1000;
+	static final Map<String, Object[]> COACH_CACHE = new ConcurrentHashMap<>();
+
+	/** Every in-scope learner's mission bucketed into suggestions, before dismissals (see coachSuggestions()). */
+	private List<Map<String, Object>> computeCoachSuggestions(MediaArchive archive, Set<String> scope, String teamFilter, String teamKey)
+	{
 		Date now = new Date();
 		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
 
@@ -2857,15 +2892,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				}
 				try
 				{
-					ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, u.getId()), orgzone);
-					// ponytail: re-parses the whole topic/question tree from storage once per in-scope learner (loadContent has no
-					// cache of its own); fine at pilot team sizes, but O(team size) content loads per coach.json/ask.json call is the
-					// ceiling. Upgrade when it shows up in profiling: either a short-TTL Content cache keyed by (archive, scope), or
-					// load it once per request and applyProfiles onto a deep copy per learner instead of a fresh loadContent() each time.
-					LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
-					LearningEngine.Learner learner = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-					engine.applyProfiles(content, learner);
-					JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
+					// Fresh Content per learner (missionOf/loadFor): applyProfiles mutates it, so it can't be hoisted. The TTL
+					// cache in coachSuggestions() bounds how often this loop runs.
+					Object[] mo = learningModule.missionOf(archive, u, now);
+					JSONObject m = (JSONObject) mo[0];
+					LearningEngine.Learner learner = (LearningEngine.Learner) mo[1];
 					JSONObject goal = (JSONObject) m.get("goal");
 					String status = String.valueOf(m.get("status"));
 					if (goal != null)
@@ -2873,7 +2904,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 						String kind = "overdue".equals(status) || "at_risk".equals(status) ? status : "ready".equals(status) ? "ready_not_booked" : null;
 						if (kind != null)
 						{
-							addCoachSuggestion(buckets, dismissed, kind, (String) goal.get("topic"), (String) goal.get("topictitle"), teamKey, u, status,
+							addCoachSuggestion(buckets, kind, (String) goal.get("topic"), (String) goal.get("topictitle"), teamKey, u, status,
 								(Integer) goal.get("masterypercent"), goal.get("daysleft"), (String) goal.get("deadline"));
 						}
 					}
@@ -2892,7 +2923,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 								boolean scheduled = cert != null && cert.scheduledfor != null;
 								if (daysleft >= 0 && daysleft <= 14 && !scheduled)
 								{
-									addCoachSuggestion(buckets, dismissed, "cert_expiring", (String) plan.get("topic"), (String) plan.get("topictitle"),
+									addCoachSuggestion(buckets, "cert_expiring", (String) plan.get("topic"), (String) plan.get("topictitle"),
 										teamKey, u, (String) plan.get("status"), (Integer) plan.get("masterypercent"), daysleftObj, (String) plan.get("deadline"));
 								}
 							}
@@ -2925,7 +2956,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	}
 
 	@SuppressWarnings("unchecked")
-	private static void addCoachSuggestion(Map<String, Map<String, Object>> buckets, Set<String> dismissed, String kind, String topic, String topictitle,
+	private static void addCoachSuggestion(Map<String, Map<String, Object>> buckets, String kind, String topic, String topictitle,
 			String teamKey, Data u, String status, Integer masterypercent, Object daysleft, String deadline)
 	{
 		if (topic == null)
@@ -2933,10 +2964,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			return;
 		}
 		String key = kind + ":" + topic + ":" + teamKey;
-		if (dismissed.contains(key))
-		{
-			return;
-		}
 		Map<String, Object> bucket = buckets.computeIfAbsent(key, k -> {
 			Map<String, Object> b = new LinkedHashMap<>();
 			b.put("key", key);

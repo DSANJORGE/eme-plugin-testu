@@ -13,6 +13,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CP="$ROOT/build:$(find "$ROOT/plugins/system/lib" "$ROOT/plugins/finder/lib" "$ROOT/plugins/community/lib" "$ROOT/tomcat/lib" -type f -name '*.jar' | tr '\n' ':')"
 java -cp "$CP" "$ROOT/plugins/testu/tools/LearningEngineCheck.java"
 java -cp "$CP" "$ROOT/plugins/testu/tools/MissionPlannerCheck.java"
+java -cp "$CP" "$ROOT/plugins/testu/tools/DailyChallengeEmailCheck.java"
 TESTU_TOOLS="$ROOT/plugins/testu/tools" exec python3 - "$@" <<'PY'
 import datetime, json, math, os, secrets, sys, urllib.error, urllib.request
 from zoneinfo import ZoneInfo
@@ -255,7 +256,8 @@ for tid in TOPICS:
         SECTION_OF[i["questionid"]] = i["sectionid"]
         ITEM[i["questionid"]] = i
         SECTIONS.setdefault(i["sectionid"], []).append(i["questionid"])
-qhits = must("entityquestion search", call(admin, "GET", "/services/lists/search/entityquestion/search.json?hitsperpage=5000"))["results"]
+# search.json no longer returns row ids (EnterMedia template sync) -> KeyError 'id'; ES carries them as _id (final review I6).
+qhits = [dict(h["_source"], id=h["_id"]) for h in call(es, "POST", "/entityquestion/_search", body={"size": 10000, "query": {"match_all": {}}}, base=ES)[1]["hits"]["hits"]]
 DIFF = {q["id"]: difficulty(q.get("mcqcognitivelevel")) for q in qhits}
 fid = lambda v: v.get("id") if isinstance(v, dict) else v
 QROW = {q["id"]: q for q in qhits}

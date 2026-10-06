@@ -396,11 +396,12 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/**
-	 * Content + learner + profiles for a user record, with no WebPageRequest. Used only where there genuinely is none to
-	 * pass -- actionsFor(), reflection-called from finder's chat skill, which has no WebPageRequest for the learner (fix
-	 * round 2, item 3/N2: chose option (b) -- see visibleTopicsFor()). mission() keeps using load() above, unchanged.
+	 * Content + learner + profiles for a user record, with no WebPageRequest: content filtered by visibleTopicsFor() (the
+	 * request-less visibility rule). The one load every mission caller without the learner's own request shares (final
+	 * review I3): chat actions, nudges, coach, coach nudge, the email line and person.json. mission() alone keeps load()
+	 * above, because load() must stay byte-identical for the eval/cert endpoints.
 	 */
-	private Object[] loadFor(MediaArchive archive, Data urec)
+	Object[] loadFor(MediaArchive archive, Data urec)
 	{
 		LearningEngine engine = new LearningEngine(archive);
 		LearningEngine.Content content = engine.loadContent(visibleTopicsFor(archive, urec));
@@ -431,6 +432,21 @@ public class TestULearningModule extends TestUBaseModule
 		return ids;
 	}
 
+	/** The one zone rule for everything mission (final review I3): the learner's device zone, else the org zone. */
+	ZoneId learnerZone(MediaArchive archive, String userid)
+	{
+		return zoneOf(userZone(archive, userid), (ZoneId) new LearningEngine(archive).orgZone()[0]);
+	}
+
+	/** {mission JSONObject, Learner} for a user record: loadFor() + learnerZone() + missionFor(). Every server-side mission
+	 *  caller goes through this (final review I3), so the card, chat, nudges, coach and email agree. */
+	Object[] missionOf(MediaArchive archive, Data urec, Date now)
+	{
+		Object[] loaded = loadFor(archive, urec);
+		LearningEngine.Learner learner = (LearningEngine.Learner) loaded[2];
+		return new Object[] {missionFor((LearningEngine) loaded[0], (LearningEngine.Content) loaded[1], learner, now, learnerZone(archive, urec.getId())), learner};
+	}
+
 	/** MissionPlanner.mission() for the learner, with recommend() restricted to the goal topic once MissionPlanner has picked one
 	 *  (package-visible; reused by the nudge/coach/bean work). */
 	JSONObject missionFor(LearningEngine engine, LearningEngine.Content content, LearningEngine.Learner learner, Date now, ZoneId zone)
@@ -452,8 +468,8 @@ public class TestULearningModule extends TestUBaseModule
 
 	/** The signed-in learner's mission actions (spec 2026-10-05 task 8), for the tutor chat skill to offer as `[[do ...]]` lines.
 	 *  Chat content is never an input here; the only inputs are the learner's own progress and the content catalog. Goes through
-	 *  loadFor() (visibleTopicsFor -- no WebPageRequest to pass here, fix round 2 item 3/N2) and orgZone(), the same zone
-	 *  mission() uses. Reflection-called from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time
+	 *  missionOf() (visibleTopicsFor -- no WebPageRequest to pass here, fix round 2 item 3/N2 -- and learnerZone(), the zone
+	 *  mission() uses). Reflection-called from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time
 	 *  dependency on testu. Empty list = no bean behaviour change (unknown user, or no goal). remind_later carries no
 	 *  `options` (brief's wire shape). Called once per message by offer() below -- never call this a second time for the
 	 *  same turn (fix round 2, item 2/N1: it would let the LLM's picked id bind to a different snapshot than it was shown). */
@@ -464,20 +480,11 @@ public class TestULearningModule extends TestUBaseModule
 		{
 			return java.util.List.of();
 		}
-		Object[] loaded = loadFor(archive, u);
-		LearningEngine engine = (LearningEngine) loaded[0];
-		ZoneId zone = (ZoneId) engine.orgZone()[0];
-		JSONArray a = (JSONArray) missionFor(engine, (LearningEngine.Content) loaded[1], (LearningEngine.Learner) loaded[2], new Date(), zone).get("actions");
+		JSONArray a = (JSONArray) ((JSONObject) missionOf(archive, u, new Date())[0]).get("actions");
 		java.util.List<JSONObject> out = new java.util.ArrayList<>();
 		for (Object o : a)
 		{
-			JSONObject action = (JSONObject) o;
-			if ("remind_later".equals(action.get("type")) && action.containsKey("options"))
-			{
-				action = new JSONObject(action);
-				action.remove("options");
-			}
-			out.add(action);
+			out.add((JSONObject) o);
 		}
 		return out;
 	}
@@ -544,11 +551,9 @@ public class TestULearningModule extends TestUBaseModule
 		if (user == null)
 			return;
 		Object[] loaded = load(inReq, user);
-		LearningEngine engine = (LearningEngine) loaded[0];
-		ZoneId zone = (ZoneId) engine.orgZone()[0];
-		Date now = new Date();
-		JSONObject m = missionFor(engine, (LearningEngine.Content) loaded[1], (LearningEngine.Learner) loaded[2], now, zone);
 		MediaArchive archive = getMediaArchive(inReq);
+		Date now = new Date();
+		JSONObject m = missionFor((LearningEngine) loaded[0], (LearningEngine.Content) loaded[1], (LearningEngine.Learner) loaded[2], now, learnerZone(archive, user.getId()));
 		Data urec = freshUser(archive, user);
 		JSONObject goal = (JSONObject) m.get("goal");
 		String key = goal == null ? null : goal.get("topic") + ":" + m.get("status");
@@ -582,9 +587,8 @@ public class TestULearningModule extends TestUBaseModule
 			return;
 		MediaArchive archive = getMediaArchive(inReq);
 		String topic = param(inReq, "topic");
-		ZoneId zone = zoneOf(userZone(archive, user.getId()), (ZoneId) new LearningEngine(archive).orgZone()[0]);
-		Date at = MissionPlanner.remindAt(param(inReq, "when"), new Date(), zone);
-		if (topic == null || at == null)
+		Date at = MissionPlanner.remindAt(param(inReq, "when"), new Date(), learnerZone(archive, user.getId()));
+		if (topic == null || at == null || archive.getCachedData("entitytopic", topic) == null)
 		{
 			fail(inReq, 400, at == null ? "bad_when" : "missing_topic");
 			return;
@@ -2057,8 +2061,6 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	public int missionNudges(MediaArchive archive, boolean inHonorQuietHours)
 	{
-		LearningEngine engine = new LearningEngine(archive);
-		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
 		Date now = new Date();
 		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
 		Searcher ns = archive.getSearcher("learnernotification");
@@ -2070,16 +2072,12 @@ public class TestULearningModule extends TestUBaseModule
 			{
 				if ("false".equals(String.valueOf(u.get("enabled"))) || !mayReceive(archive, u))
 					continue;
-				ZoneId zone = zoneOf(userZone(archive, u.getId()), orgzone);
-				int hour = now.toInstant().atZone(zone).getHour();
+				int hour = now.toInstant().atZone(learnerZone(archive, u.getId())).getHour();
 				if (inHonorQuietHours && (hour < 8 || hour >= 20))
 					continue; // quiet hours: the next run inside the window delivers
-				// loadContent() fresh per user (not hoisted): applyProfiles mutates its Topics/sections/questions per learner
-				// (removed topics, mandatory/assignedlevel/locked/finished), so a shared Content would leak between learners.
-				LearningEngine.Content content = engine.loadContent();
-				LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-				engine.applyProfiles(content, l);
-				JSONObject m = missionFor(engine, content, l, now, zone);
+				// missionOf loads Content fresh per user (not hoisted): applyProfiles mutates its Topics/sections/questions per
+				// learner (removed topics, mandatory/assignedlevel/locked/finished), so a shared Content would leak between learners.
+				JSONObject m = (JSONObject) missionOf(archive, u, now)[0];
 				JSONObject goal = (JSONObject) m.get("goal");
 				String status = String.valueOf(m.get("status"));
 				synchronized (LearningEngine.WRITE_LOCK)
@@ -2620,10 +2618,7 @@ public class TestULearningModule extends TestUBaseModule
 		String missionLine = null;
 		try
 		{
-			LearningEngine.Content content = engine.loadContent();
-			LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-			engine.applyProfiles(content, l);
-			JSONObject mission = missionFor(engine, content, l, new Date(), zone);
+			JSONObject mission = (JSONObject) missionOf(archive, u, new Date())[0];
 			String status = String.valueOf(mission.get("status"));
 			if (!"no_goal".equals(status) && !"pace".equals(status))
 			{

@@ -118,7 +118,8 @@ def nxt(**params):
 
 
 # entityquestion rows, keyed by id: correctoption may be a plain string or a {id: ...} map (see check_learning.sh).
-qhits = must("entityquestion search", call(admin, "GET", "/services/lists/search/entityquestion/search.json?hitsperpage=5000"))["results"]
+# search.json no longer returns row ids (EnterMedia template sync) -> KeyError 'id'; ES carries them as _id (final review I6).
+qhits = [dict(h["_source"], id=h["_id"]) for h in call(es, "POST", "/entityquestion/_search", body={"size": 10000, "query": {"match_all": {}}}, base=ES)[1]["hits"]["hits"]]
 QROW = {q["id"]: q for q in qhits}
 fid = lambda v: v.get("id") if isinstance(v, dict) else v
 

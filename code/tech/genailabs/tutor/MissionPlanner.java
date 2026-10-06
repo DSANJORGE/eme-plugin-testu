@@ -24,7 +24,6 @@ import tech.genailabs.tutor.LearningEngine.Topic;
 public final class MissionPlanner
 {
 	public static final int GAIN_PER_SESSION = 4, PACE_SESSIONS = 3, MAX_SESSIONS = 5, HISTORY_DAYS = 28;
-	public static final List<String> REMIND_WHEN = List.of("2h", "tonight", "tomorrow");
 
 	private MissionPlanner()
 	{

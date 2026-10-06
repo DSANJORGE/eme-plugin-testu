@@ -118,37 +118,40 @@ public class DailyChallengeEmailCheck
 		for (int i = 0; i < 5; i++)
 		{
 			java.time.LocalDate d = mon.plusDays(i);
-			String[] es = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, d, null);
+			String[] es = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, d, null, null, null);
 			ok("es subject " + days[i], ("Hola Diego, tu desafío del " + days[i]).equals(es[0]), es[0]);
 			ok("es " + days[i] + ": HTML only, button, link, tutor, avatar", es.length == 2 && es[1].contains(link) && es[1].contains("Empezar mi desafío")
 				&& es[1].contains(">IRIS<") && es[1].contains(avatar), "");
 			ok("es " + days[i] + " never says Reto", !(es[0] + es[1]).toLowerCase().matches("(?s).*\\breto\\b.*"), "");
-			ok("en subject " + daysEn[i], ("Hi Diego, your " + daysEn[i] + " challenge").equals(TestULearningModule.emailContent(true, "Diego", "Sully", null, link, d, null)[0]), "");
+			ok("en subject " + daysEn[i], ("Hi Diego, your " + daysEn[i] + " challenge").equals(TestULearningModule.emailContent(true, "Diego", "Sully", null, link, d, null, null, null)[0]), "");
 			bodies.add(es[1].replaceAll("(?s).*<h1[^>]*>", "").replaceAll("(?s)</h1>.*", ""));
 			closings.add(es[1].replaceAll("(?s).*</a></td></tr></table><p[^>]*>", "").replaceAll("(?s)</p>.*", ""));
 		}
 		ok("five different headings", bodies.size() == 5, bodies);
 		ok("five different closings", closings.size() == 5, closings);
-		String[] monEs = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null);
+		String[] monEs = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null, null, null);
 		ok("Monday: back from the weekend", monEs[1].contains("fin de semana"), "");
-		ok("Friday: enjoy the weekend", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon.plusDays(4), null)[1].contains("disfrutar"), "");
+		ok("Friday: enjoy the weekend", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon.plusDays(4), null, null, null)[1].contains("disfrutar"), "");
 		ok("no data: no streak line, no numbers", !monEs[1].contains("seguidos") && !monEs[1].contains("acertaste"), "");
-		ok("Monday streak 3, Friday 4 of 5", monEs.length == 2 && TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, new int[] {3, 4, 5})[1]
+		ok("Monday streak 3, Friday 4 of 5", monEs.length == 2 && TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, new int[] {3, 4, 5}, null, null)[1]
 			.contains("Llevas 3 días seguidos completando tu Desafío y el viernes acertaste 4 de 5."), "");
-		ok("Thursday streak 1: yesterday", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 4, 5})[1].contains("Ayer acertaste 4 de 5 en tu Desafío."), "");
-		ok("0 right: no score, just done", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 0, 5})[1].contains("Ayer completaste tu Desafío.")
-			&& !TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 0, 5})[1].contains("0 de 5"), "");
-		ok("en streak", TestULearningModule.emailContent(true, "Diego", "Sully", null, link, thu, new int[] {3, 4, 5})[1].contains("You’re on a 3-day streak, and yesterday you got 4 of 5 right."), "");
-		String[] en = TestULearningModule.emailContent(true, "", "Sully", null, link, thu, null);
+		ok("Thursday streak 1: yesterday", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 4, 5}, null, null)[1].contains("Ayer acertaste 4 de 5 en tu Desafío."), "");
+		ok("0 right: no score, just done", TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 0, 5}, null, null)[1].contains("Ayer completaste tu Desafío.")
+			&& !TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, thu, new int[] {1, 0, 5}, null, null)[1].contains("0 de 5"), "");
+		ok("en streak", TestULearningModule.emailContent(true, "Diego", "Sully", null, link, thu, new int[] {3, 4, 5}, null, null)[1].contains("You’re on a 3-day streak, and yesterday you got 4 of 5 right."), "");
+		String[] en = TestULearningModule.emailContent(true, "", "Sully", null, link, thu, null, null, null);
 		ok("en without a name or avatar", "Your Thursday challenge".equals(en[0]) && en[1].contains("Hi,") && !en[1].contains("<img"), en[0]);
 		ok("en uses the org's tutor, no other", en[1].contains("Sully") && !en[1].contains("IRIS"), "");
-		ok("name is escaped", TestULearningModule.emailContent(false, "<b>x", "IRIS", null, link, mon, null)[1].contains("&lt;b&gt;x"), "");
+		String withMission = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null, "Vas justo con <Seguridad>.", "https://x.test/learn/")[1];
+		ok("mission line + button render before the greeting", withMission.contains("Vas justo con &lt;Seguridad&gt;.") && withMission.contains("Ver mi objetivo")
+			&& withMission.indexOf("Vas justo con") < withMission.indexOf("Hola Diego:") && !monEs[1].contains("Ver mi objetivo"), "");
+		ok("name is escaped", TestULearningModule.emailContent(false, "<b>x", "IRIS", null, link, mon, null, null, null)[1].contains("&lt;b&gt;x"), "");
 		// ---- shared copy: the Hoy card (next.json daycopy) takes title + mood from the same table as the email
 		for (int i = 0; i < 7; i++)
 		{
 			java.time.LocalDate d = mon.plusDays(i);
 			String[] c = TestULearningModule.dayCopy(false, d);
-			String html = TestULearningModule.emailContent(false, "Diego", "IRIS", null, link, d, null)[1];
+			String html = TestULearningModule.emailContent(false, "Diego", "IRIS", null, link, d, null, null, null)[1];
 			ok("card copy = email copy " + d.getDayOfWeek(), html.contains(">" + c[1] + "</h1>") && html.contains(c[2]) && !c[2].contains("{"), c[1]);
 		}
 		ok("weekend variant on the card", TestULearningModule.dayCopy(false, mon.plusDays(5))[1].equals("Un Desafío de fin de semana")
@@ -187,7 +190,7 @@ public class DailyChallengeEmailCheck
 		ok("unreadable picture: the absolute URL, no part", "https://x.test/site/mediadb/testu/iris.png".equals(nobytes[0]) && nobytes[1] == null, nobytes[0]);
 		Object[] none = TestULearningModule.avatarRef(null, null);
 		ok("no picture at all: no src, no part", none[0] == null && none[1] == null, none[0]);
-		String cidHtml = TestULearningModule.emailContent(false, "Diego", "IRIS", (String) ref[0], link, mon, null)[1];
+		String cidHtml = TestULearningModule.emailContent(false, "Diego", "IRIS", (String) ref[0], link, mon, null, null, null)[1];
 		ok("both emails reference the part, not a URL", cidHtml.contains("src=\"cid:" + TestULearningModule.AVATAR_CID + "\"")
 			&& TestULearningModule.loginCodeEmailContent(false, "Diego", "IRIS", (String) ref[0], "482913", "d@x.pe")[1].contains("src=\"cid:" + TestULearningModule.AVATAR_CID + "\""), "");
 
@@ -251,7 +254,7 @@ public class DailyChallengeEmailCheck
 		ok("otp es: code whole and big, validity, tutor header", otpEs[1].contains(">482913</span>") && otpEs[1].contains("font-size:34px")
 			&& otpEs[1].contains("Vale por 1 hora y solo se puede usar una vez.") && otpEs[1].contains(">IRIS<") && otpEs[1].contains(avatar)
 			&& otpEs[1].contains("CÓDIGO DE ACCESO"), "");
-		String dcShell = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null)[1];
+		String dcShell = TestULearningModule.emailContent(false, "Diego", "IRIS", avatar, link, mon, null, null, null)[1];
 		ok("otp shares the Daily Challenge shell", otpEs[1].substring(0, otpEs[1].indexOf("<title>")).equals(dcShell.substring(0, dcShell.indexOf("<title>")))
 			&& otpEs[1].contains("class=\"tu-card\"") && dcShell.contains("class=\"tu-card\""), "");
 		String[] otpEn = TestULearningModule.loginCodeEmailContent(true, "", "Sully", null, "000123", "a@x.pe");
@@ -272,7 +275,7 @@ public class DailyChallengeEmailCheck
 					{
 						// A browser cannot show the cid: part an email carries, so the preview inlines the same bytes as a data: URI.
 						String[] m = TestULearningModule.emailContent(false, "Diego", "IRIS", dataUri(small),
-							"http://localhost:8080/site/learn/#/desafio?login=PREVIEW", mon.plusDays(i), streak ? new int[] {3, 4, 5} : null);
+							"http://localhost:8080/site/learn/#/desafio?login=PREVIEW", mon.plusDays(i), streak ? new int[] {3, 4, 5} : null, null, null);
 						java.nio.file.Files.writeString(dir.resolve(file[i] + (streak ? "-racha" : "") + ".html"), m[1].replace("<title>", "<title>" + "[" + m[0] + "] "));
 					}
 				}
