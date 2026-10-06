@@ -414,7 +414,7 @@ public class TestULearningModule extends TestUBaseModule
 	 * (BaseSearchSecurity.attachStandardSecurity, as topics.json / visibleTopics(WebPageRequest) apply it) uses, for
 	 * reflection callers that have no request to pass (fix round 2, item 3/N2, option (b): the finder chat skill's
 	 * AgentContext carries a UserProfile and a ModuleManager but no WebPageRequest). check_mission.sh's visibility-agreement
-	 * case asserts this agrees with topics.json for a group-secured topic.
+	 * case only asserts the offered goal topic is in topics.json (secured topics cannot be seeded: security is recomputed at index time).
 	 */
 	static java.util.Set<String> visibleTopicsFor(MediaArchive archive, Data urec)
 	{
