@@ -262,6 +262,41 @@ try:
     ok("ack clears announce", m.get("announce") is None, m)
     ok("no book_evaluation when canstart is false", all(a["type"] != "book_evaluation" for a in m["actions"]), m)
 
+    # --- tutor chat actions (task 8, spec 2026-10-05): the chat reply may carry up to two [[do ...]] lines, chosen by the LLM
+    # from this learner's own mission actions (TestULearningModule.actionsFor) and written by the server, never by the LLM
+    # itself. This live-LLM run is flaky by nature (model variance) -- the deterministic gate for the offered-id filter is
+    # MissionPlanner.doLinesCheck in MissionPlannerCheck.java (check_learning.sh), asserted there with no LLM involved.
+    # check_tutor.sh's OTP/Bearer login is broken locally for a throwaway *.testu.local account (memory: "Local learner login
+    # OTP"), so this reuses the cookie-session login the rest of this script already uses (login(), not OTP) for the chat
+    # call and for testu/tutor/history.json, which needs only a signed-in user, not a Bearer token (history.groovy).
+    import re, time
+    item0 = must("learn item for chat", call(me, "GET", "/services/testu/learn/next.json?mode=learn&topicid=" + quote(TOPIC)))["items"][0]
+    s, ch = call(me, "POST", "/services/module/entitytutorial/tutorhistory.json?dataid=" + quote(item0["tutorialid"]))
+    ids = [(ch.get(k) or {}).get("id", "") for k in ("activechannel", "currentchannel")] if s == 200 else []
+    CH = next((i for i in ids if i and not i.startswith("$")), None)
+    ok("tutor chat: channel available", bool(CH), ch)
+    CHATQ = "¿qué hago ahora?"
+    must("tutor chat post", call(me, "POST", "/services/module/entitytutorial/continue.json", form={
+        "currentscenario": "chat_tutor", "functionname": "chat_tutor_usercomment", "context_tutorialid": item0["tutorialid"],
+        "channel": CH, "context_query": CHATQ, "context_sectionid": item0["sectionid"], "context_componentid": item0["componentid"],
+        "context_skiploader": "true"}))
+    reply, hist = None, {}
+    for _ in range(45):
+        time.sleep(2)
+        s, hist = call(me, "GET", "/services/testu/tutor/history.json?channel=" + quote(CH))
+        turns = hist.get("turns", []) if s == 200 else []
+        if len(turns) >= 2 and turns[-1]["from"] == "tutor" and turns[-2]["from"] == "user":
+            reply = turns[-1]["text"]
+            break
+    ok("tutor chat: got a reply within 90 s (llamat down?)", reply is not None, hist)
+    if reply is not None:
+        ok("tutor chat: [[do ...]] present (the learner asked what to do next)", "[[do" in reply, reply)
+        dolines = re.findall(r"\[\[do ([a-z_]+) topic=(\S+?)(?: mode=\S+)?(?: section=\S+)?\]\]", reply)
+        ok("tutor chat: at most 2 [[do ...]] lines, allowed types only, topic = the goal topic",
+           len(dolines) <= 2 and all(t[0] in ("start_session", "book_evaluation", "schedule_certification", "remind_later") and t[1] == TOPIC for t in dolines),
+           (dolines, TOPIC, reply))
+        ok("tutor chat: [[do ...]] lines (if any) come after the >> follow-ups", not dolines or reply.rfind(">>") < reply.rfind("[[do"), reply)
+
     # --- remind.json
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "tomorrow"})
     ok("remind ok", s == 200 and r.get("ok"), r)

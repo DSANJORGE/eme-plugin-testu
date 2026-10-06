@@ -412,6 +412,31 @@ public class TestULearningModule extends TestUBaseModule
 		}, now, zone);
 	}
 
+	/** The signed-in learner's mission actions (spec 2026-10-05 task 8), for the tutor chat skill to offer as `[[do ...]]` lines.
+	 *  Chat content is never an input here; the only inputs are the learner's own progress and the content catalog. Reflection-called
+	 *  from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time dependency on testu. Empty list = no bean
+	 *  behaviour change (unknown user, or no goal). */
+	public java.util.List<JSONObject> actionsFor(MediaArchive archive, String userid)
+	{
+		Data u = (Data) archive.getSearcher("user").searchById(userid);
+		if (u == null)
+		{
+			return java.util.List.of();
+		}
+		LearningEngine engine = new LearningEngine(archive);
+		LearningEngine.Content content = engine.loadContent(); // ponytail: org-wide visibility; the IRIS tab is org-wide anyway
+		LearningEngine.Learner l = engine.loadLearner(userid, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+		engine.applyProfiles(content, l);
+		ZoneId zone = zoneOf(userZone(archive, userid), (ZoneId) engine.orgZone()[0]);
+		JSONArray a = (JSONArray) missionFor(engine, content, l, new Date(), zone).get("actions");
+		java.util.List<JSONObject> out = new java.util.ArrayList<>();
+		for (Object o : a)
+		{
+			out.add((JSONObject) o);
+		}
+		return out;
+	}
+
 	/** services/testu/learn/mission.json -- goal, status, week plan and valid actions for the signed-in learner (spec 2026-10-05).
 	 *  announce is set once per (topic, status) change until acknowledged (?ack=1), except status "pace" never announces. */
 	public void mission(WebPageRequest inReq)

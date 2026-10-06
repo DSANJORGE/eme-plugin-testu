@@ -357,6 +357,30 @@ public final class MissionPlanner
 		return a;
 	}
 
+	/**
+	 * Pure mirror of the offered-id filter in AdaptiveTutorialUserCommentSkill (task 8): the LLM's chosen action ids, checked
+	 * against what the server actually offered -- at most 2, unknown ids dropped, picked order kept -- formatted as the chat
+	 * reply's `[[do ...]]` lines. Lets check_learning.sh assert the filter deterministically; the live LLM path (check_mission.sh)
+	 * is flaky by nature and stays a separate, best-effort check.
+	 * ponytail: duplicated, not called, by the finder skill -- finder has no compile-time testu dependency and reflects its own
+	 * copy of this same loop instead of this method. Converge if finder ever gains that dependency.
+	 */
+	public static List<String> doLines(List<?> pickedIds, List<JSONObject> offered)
+	{
+		Map<String, JSONObject> byId = new java.util.LinkedHashMap<>();
+		for (JSONObject a : offered)
+			byId.put(String.valueOf(a.get("id")), a);
+		List<String> out = new ArrayList<>();
+		for (Object id : pickedIds)
+		{
+			JSONObject a = byId.get(String.valueOf(id));
+			if (a == null || out.size() == 2)
+				continue; // never an action the server did not offer
+			out.add("[[do " + a.get("type") + " topic=" + a.get("topic") + (a.get("mode") == null ? "" : " mode=" + a.get("mode")) + (a.get("section") == null ? "" : " section=" + a.get("section")) + "]]");
+		}
+		return out;
+	}
+
 	public static Date remindAt(String when, Date now, ZoneId z)
 	{
 		ZonedDateTime n = now.toInstant().atZone(z);

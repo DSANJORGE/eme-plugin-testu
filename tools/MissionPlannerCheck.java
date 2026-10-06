@@ -53,6 +53,7 @@ public class MissionPlannerCheck
 		paceOrderCheck();
 		certExpiryOutsideWindowCheck();
 		renewalReadyCheck();
+		doLinesCheck();
 		if (failures > 0) { System.out.println(failures + " FAILED"); System.exit(1); }
 		System.out.println("MissionPlannerCheck: all ok");
 	}
@@ -121,6 +122,34 @@ public class MissionPlannerCheck
 		Map<String, JSONObject> states = new LinkedHashMap<>(); states.put("renew", st);
 		JSONObject m = MissionPlanner.mission(c, l, states, tid -> null, NOW, LIMA);
 		ok("renewal-ready goal offers schedule_certification first", "schedule_certification".equals(types(m).get(0)), m);
+	}
+
+	// Task 8 (tutor chat actions): the deterministic gate for the offered-id filter, since the chat reply itself depends on an
+	// LLM (check_mission.sh, flaky by nature). MissionPlanner.doLines mirrors the loop AdaptiveTutorialUserCommentSkill runs.
+	static void doLinesCheck()
+	{
+		JSONObject a1 = action("a1", "start_session", "fatiga", "learn", "fatiga-s1");
+		JSONObject a2 = action("a2", "remind_later", "fatiga", null, null);
+		List<JSONObject> offered = List.of(a1, a2);
+		ok("doLines: both offered ids kept, picked order, formatted [[do ...]]",
+			List.of("[[do start_session topic=fatiga mode=learn section=fatiga-s1]]", "[[do remind_later topic=fatiga]]")
+				.equals(MissionPlanner.doLines(List.of("a1", "a2"), offered)), MissionPlanner.doLines(List.of("a1", "a2"), offered));
+		ok("doLines: an id the server never offered is dropped, the rest kept",
+			List.of("[[do remind_later topic=fatiga]]").equals(MissionPlanner.doLines(List.of("bogus", "a2"), offered)), MissionPlanner.doLines(List.of("bogus", "a2"), offered));
+		ok("doLines: more than 2 picks capped at 2, in the order picked",
+			List.of("[[do remind_later topic=fatiga]]", "[[do start_session topic=fatiga mode=learn section=fatiga-s1]]")
+				.equals(MissionPlanner.doLines(List.of("a2", "a1", "a2"), offered)), MissionPlanner.doLines(List.of("a2", "a1", "a2"), offered));
+		ok("doLines: no picks -> no lines", MissionPlanner.doLines(List.of(), offered).isEmpty(), MissionPlanner.doLines(List.of(), offered));
+		ok("doLines: nothing offered -> no lines even if the LLM picks something", MissionPlanner.doLines(List.of("a1"), List.of()).isEmpty(), "");
+	}
+
+	static JSONObject action(String id, String type, String topic, String mode, String section)
+	{
+		JSONObject a = new JSONObject();
+		a.put("id", id); a.put("type", type); a.put("topic", topic);
+		if (mode != null) a.put("mode", mode);
+		if (section != null) a.put("section", section);
+		return a;
 	}
 
 	static List<String> types(JSONObject m)
