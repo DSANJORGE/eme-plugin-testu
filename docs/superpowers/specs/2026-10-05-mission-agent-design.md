@@ -138,9 +138,16 @@ Unit tests for `MissionPlanner` status/goal ordering with fixed `now` and zone (
 
 Calendar export; agent auto-booking; LLM tool-calling agent; content/gap agent and manual-generation (slice B); deadline-aware Daily Challenge selection; per-learner session-gain model; desktop-specific layouts.
 
-## Rollout
+## Rollout (as built)
 
-- Fields: `topicrequirement.withindays`, new tables `learnertarget`, `coachdismissal`, user `lastmissionstatus`, `learnernotification.remindat` → field XML + reindex where the table exists (see CLAUDE.md §6).
-- No new permissions (`training_manage` reused).
-- Finder skill change merged to finder main before deploy; without it the app simply shows no chat action buttons.
-- Rebuild and commit learner + console web bundles.
+- Field XML, one per table:
+  - `catalog` new tables (`plugins/catalog/html/data/fields/`): `learnertarget` (`user`, `entitytopic`, `duedate`, `source`, `createdby`, `createdon`) and `coachdismissal` (`user`, `suggestionkey` — renamed from `key`, `indextype="not_analyzed"`; `until`).
+  - `topicrequirement`: new `withindays` field (existing table).
+  - `learnernotification`: new `remindat`, `pushedat`, `status` fields (`status` is `indextype="not_analyzed"`, existing table).
+  - `user.lastmissionstatus` is declared in the **site** webapp (`webapp/WEB-INF/data/system/fields/user.xml`), not a catalog field XML — users are XML-backed (system catalog), so no reindex applies to it.
+- Per server, after the field XML deploys: a datamanager restore (`searcher.resetMappings`, via `/site/find/views/settings/lists/datamanager/list/restore.html?searchtype=<table>`) then a reindex for `topicrequirement` and `learnernotification` — a plain reindex does not push a changed mapping onto an existing table (CLAUDE.md §6). `learnertarget` and `coachdismissal` are brand-new tables: they get their mapping on first use, so no restore/reindex is needed for them.
+- No new permissions. Coach reads/writes keep `training_view`/`training_manage` + per-topic `manageevaluations` (`canManageProgression`). Nudges are gated by the existing Daily Challenge email opt-in (`testu_dailychallengeemail` / `testu_dailychallengeemail_only` + `EMAIL_PERMISSION.mayReceive`), not a new permission.
+- `bin/sync-testu.sh` MAP: already covers `html/services/testu/learn` (directory entry — `mission.xconf/json`, `remind.xconf/json`, `missionnudges.xconf/json` included), `html/services/testu/analytics/{coach,coachaction}.{xconf,json}`, and the `html/ai/default/calls/{analytics_ask,chat_tutor_usercomment}.json` templates that this feature modified; `--check` confirmed no drift and no missing entries (2026-10-06).
+- The `ai/default/calls` templates (`analytics_ask.json`, `chat_tutor_usercomment.json`) must be deployed along with the rest — they are plain data files, not code, so a server misses the new coach-action/offer prompt rules until `bin/sync-testu.sh` runs there.
+- Finder main commits (`dc75ed19c`, `1c95143e7`, `bfb084602` — offered-id filtered `[[do]]` action lines) must be pushed and deployed along with the rest; without them the app shows no chat action buttons (degrades gracefully).
+- Rebuild and commit learner + console web bundles (deferred to task 15b).
