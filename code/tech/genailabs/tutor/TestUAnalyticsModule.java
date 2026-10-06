@@ -1,6 +1,7 @@
 package tech.genailabs.tutor;
 
 import java.text.SimpleDateFormat;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collection;
@@ -29,6 +30,7 @@ import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
 import org.openedit.Data;
 import org.openedit.WebPageRequest;
+import org.openedit.data.Searcher;
 import org.openedit.hittracker.HitTracker;
 import org.openedit.profile.UserProfile;
 import org.openedit.users.User;
@@ -2078,6 +2080,24 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			addFactHelper(addFact, base, formatUserName(u) + ": preguntas al tutor en el periodo", qsCount, "person", Collections.singletonMap("user", sel), "iris");
 		}
 
+		List<Map<String, Object>> coachSugg = coachSuggestions(inReq, archive);
+		if (coachSugg != null) // null only when the team filter was out of scope, and that already failed this request above
+		{
+			List<Map<String, Object>> coachFact = new ArrayList<>();
+			for (Map<String, Object> s : coachSugg)
+			{
+				Map<String, Object> cs = new LinkedHashMap<>();
+				cs.put("key", s.get("key"));
+				cs.put("kind", s.get("kind"));
+				cs.put("topictitle", s.get("topictitle"));
+				cs.put("deadline", s.get("deadline"));
+				cs.put("count", s.get("count"));
+				coachFact.add(cs);
+			}
+			addFactHelper(addFact, base, "Sugerencias del coach para el equipo (vencidas, en riesgo, listas sin reservar, certificaciones por vencer)",
+				coachFact, "overview", Collections.emptyMap(), "stat");
+		}
+
 		if ("facts".equals(inReq.getRequestParameter("debug")))
 		{
 			UserProfile userProfile = inReq.getUserProfile();
@@ -2439,6 +2459,448 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("summary", summary);
 		resp.put("topics", topicList);
 		reply(inReq, resp);
+	}
+
+	// ---------------- Manager coach (mission agent, spec 2026-10-05) ----------------
+
+	/** services/testu/analytics/coach.json -- suggestions for the manager's in-scope team, from each member's mission. */
+	public void coach(WebPageRequest inReq)
+	{
+		List<Map<String, Object>> suggestions = coachSuggestions(inReq, getMediaArchive(inReq));
+		if (suggestions == null) // coachSuggestions already failed the request (out of scope)
+		{
+			return;
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("suggestions", suggestions);
+		resp.put("now", LearningEngine.iso(new Date()));
+		reply(inReq, resp);
+	}
+
+	/**
+	 * services/testu/analytics/coachaction.json -- nudge (push the goal's reminder, at most once every 3 days), setdue (a manual
+	 * learnertarget, source=manual) or dismiss (hide a suggestion key for 7 days) on a coach suggestion. training_manage.
+	 */
+	public void coachAction(WebPageRequest inReq)
+	{
+		User manager = inReq.getUser();
+		if (manager == null || !TestULearningModule.canManageProgression(inReq))
+		{
+			fail(inReq, 403, "forbidden");
+			return;
+		}
+		MediaArchive archive = getMediaArchive(inReq);
+		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
+		String action = trim(inReq.getRequestParameter("action"));
+		switch (action)
+		{
+			case "nudge":
+				coachNudge(inReq, archive, scope);
+				return;
+			case "setdue":
+				coachSetDue(inReq, archive, manager, scope);
+				return;
+			case "dismiss":
+				coachDismiss(inReq, archive, manager);
+				return;
+			default:
+				fail(inReq, 400, "bad_action");
+		}
+	}
+
+	private void coachNudge(WebPageRequest inReq, MediaArchive archive, Set<String> scope)
+	{
+		String topic = trim(inReq.getRequestParameter("topic"));
+		List<String> ids = parseUserIds(inReq);
+		if (topic.isEmpty() || ids.isEmpty())
+		{
+			fail(inReq, 400, "bad_request");
+			return;
+		}
+		Map<String, Data> users = usersById(archive);
+		for (String id : ids)
+		{
+			if (!inScope(users.get(id), scope))
+			{
+				fail(inReq, 403, "out of scope");
+				return;
+			}
+		}
+
+		LearningEngine engine = new LearningEngine(archive);
+		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
+		TestUSocialModule social = (TestUSocialModule) getModuleManager().getBean("TestUSocialModule");
+		Searcher ns = archive.getSearcher("learnernotification");
+		int done = 0, skipped = 0;
+		List<String> nudged = new ArrayList<>();
+		for (String id : ids)
+		{
+			Data u = users.get(id);
+			// Same gate missionNudges uses (the Daily Challenge email opt-in, no dedicated permission): a manager can suggest
+			// a nudge for anyone in scope, but delivery still honours the learner's own opt-in.
+			if (!learningModule.mayReceive(archive, u))
+			{
+				skipped++;
+				continue;
+			}
+			String rowId = id + "_coach_" + topic;
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				Data existing = (Data) ns.searchById(rowId);
+				Date prevPush = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("pushedat"));
+				if (prevPush != null && now.getTime() - prevPush.getTime() < 3L * 86400000)
+				{
+					skipped++;
+					continue;
+				}
+				ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, id), orgzone);
+				LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
+				LearningEngine.Learner learner = engine.loadLearner(id, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+				engine.applyProfiles(content, learner);
+				JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
+				String status = String.valueOf(m.get("status"));
+				JSONObject goal = (JSONObject) m.get("goal");
+				Data n = existing != null ? existing : ns.createNewData();
+				n.setId(rowId);
+				n.setValue("user", id);
+				n.setValue("actor", "tutor");
+				n.setValue("actorname", learningModule.tutorName(archive));
+				n.setValue("type", "mission");
+				n.setValue("datecreated", now);
+				n.setValue("read", Boolean.FALSE);
+				n.setValue("entitytopic", topic);
+				n.setValue("status", status);
+				n.setValue("text", TestULearningModule.missionText(status, goal));
+				n.setValue("pushedat", now);
+				ns.saveData(n, null);
+				social.push(archive, n);
+				done++;
+				nudged.add(id);
+			}
+		}
+		Map<String, Object> after = new HashMap<>();
+		after.put("topic", topic);
+		after.put("users", nudged);
+		after.put("skipped", skipped);
+		audit(inReq, archive, "coach.nudge", "topic", topic, null, after);
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("done", done);
+		resp.put("skipped", skipped);
+		reply(inReq, resp);
+	}
+
+	private void coachSetDue(WebPageRequest inReq, MediaArchive archive, User manager, Set<String> scope)
+	{
+		String topic = trim(inReq.getRequestParameter("topic"));
+		String duedateParam = trim(inReq.getRequestParameter("duedate"));
+		List<String> ids = parseUserIds(inReq);
+		Date due = LearningEngine.parseYmd(duedateParam);
+		if (topic.isEmpty() || ids.isEmpty() || due == null)
+		{
+			fail(inReq, 400, "bad_date");
+			return;
+		}
+		Map<String, Data> users = usersById(archive);
+		for (String id : ids)
+		{
+			if (!inScope(users.get(id), scope))
+			{
+				fail(inReq, 403, "out of scope");
+				return;
+			}
+		}
+
+		LearningEngine engine = new LearningEngine(archive);
+		Searcher s = archive.getSearcher("learnertarget");
+		int done = 0;
+		for (String id : ids)
+		{
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				Data existing = (Data) s.searchById(id + "_" + topic);
+				Date beforeDue = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("duedate"));
+				LearningEngine.TargetRow t = new LearningEngine.TargetRow();
+				t.user = id;
+				t.topicid = topic;
+				t.source = "manual";
+				t.createdby = manager.getId();
+				t.createdon = new Date();
+				t.duedate = due;
+				engine.saveTarget(t);
+				Map<String, Object> before = new HashMap<>();
+				before.put("duedate", beforeDue == null ? null : LearningEngine.ymd(beforeDue, ZoneId.of("UTC")));
+				Map<String, Object> after = new HashMap<>();
+				after.put("duedate", duedateParam);
+				after.put("source", "manual");
+				audit(inReq, archive, "learnertarget.set", "user", id, before, after);
+				done++;
+			}
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("done", done);
+		resp.put("skipped", 0);
+		reply(inReq, resp);
+	}
+
+	private void coachDismiss(WebPageRequest inReq, MediaArchive archive, User manager)
+	{
+		String key = trim(inReq.getRequestParameter("key"));
+		if (key.isEmpty())
+		{
+			fail(inReq, 400, "bad_request");
+			return;
+		}
+		Date until = new Date(System.currentTimeMillis() + 7L * 86400000);
+		Searcher s = archive.getSearcher("coachdismissal");
+		String rowId = manager.getId() + "_" + key;
+		synchronized (LearningEngine.WRITE_LOCK)
+		{
+			Data d = (Data) s.searchById(rowId);
+			if (d == null)
+			{
+				d = s.createNewData();
+				d.setId(rowId);
+			}
+			d.setValue("user", manager.getId());
+			d.setValue("suggestionkey", key);
+			d.setValue("until", until);
+			s.saveData(d, null);
+		}
+		Map<String, Object> after = new HashMap<>();
+		after.put("key", key);
+		after.put("until", LearningEngine.iso(until));
+		audit(inReq, archive, "coach.dismiss", "suggestion", key, null, after);
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("done", 1);
+		resp.put("skipped", 0);
+		reply(inReq, resp);
+	}
+
+	/**
+	 * Shared by coach() and askAnalytics(): per (kind, topic, team-filter) suggestion across the in-scope, enabled, non-internal
+	 * team, from each learner's single mission goal -- overdue/at_risk keep that status as the kind, ready becomes
+	 * ready_not_booked (a goal is only "ready" when its evaluation can start right now: never a scheduled certification renewal
+	 * nor an attempt already in progress, see MissionPlanner.renewalSchedulable/evaluationStatus) -- plus any of the learner's
+	 * required topics whose deadline comes from an unscheduled, soon-due certification (cert_expiring, independent of which topic
+	 * is the single mission goal). Dismissed keys (coachdismissal, this manager, until in the future) are left out. Returns null
+	 * when the request's team filter is out of the caller's scope (already failed via fail()).
+	 */
+	private List<Map<String, Object>> coachSuggestions(WebPageRequest inReq, MediaArchive archive)
+	{
+		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
+		String teamFilter = trim(inReq.getRequestParameter("team"));
+		if (scope != null && !teamFilter.isEmpty() && !scope.contains(teamFilter))
+		{
+			fail(inReq, 400, "out of scope");
+			return null;
+		}
+		String teamKey = teamFilter.isEmpty() ? "all" : teamFilter;
+
+		User caller = inReq.getUser();
+		Set<String> dismissed = new HashSet<>();
+		if (caller != null)
+		{
+			Date now0 = new Date();
+			HitTracker dh = archive.query("coachdismissal").exact("user", caller.getId()).search();
+			if (dh != null)
+			{
+				for (Object o : dh)
+				{
+					Data d = (Data) o;
+					Date until = DateStorageUtil.getStorageUtil().parseFromObject(d.getValue("until"));
+					if (until != null && until.after(now0))
+					{
+						dismissed.add(d.get("suggestionkey"));
+					}
+				}
+			}
+		}
+
+		LearningEngine engine = new LearningEngine(archive);
+		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
+
+		Map<String, Map<String, Object>> buckets = new LinkedHashMap<>();
+		HitTracker uh = archive.query("user").all().search();
+		if (uh != null)
+		{
+			uh.enableBulkOperations();
+			for (Object o : uh)
+			{
+				Data u = (Data) o;
+				if (!countsAsPerson(u.getId(), u))
+				{
+					continue;
+				}
+				String t = u.get("team");
+				boolean inScope = (scope == null || (t != null && scope.contains(t))) && (teamFilter.isEmpty() || (t != null && teamFilter.equals(t)));
+				if (!inScope)
+				{
+					continue;
+				}
+				try
+				{
+					ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, u.getId()), orgzone);
+					LearningEngine.Content content = engine.loadContent(); // fresh per user: applyProfiles mutates it per learner
+					LearningEngine.Learner learner = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
+					engine.applyProfiles(content, learner);
+					JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
+					JSONObject goal = (JSONObject) m.get("goal");
+					String status = String.valueOf(m.get("status"));
+					if (goal != null)
+					{
+						String kind = "overdue".equals(status) || "at_risk".equals(status) ? status : "ready".equals(status) ? "ready_not_booked" : null;
+						if (kind != null)
+						{
+							addCoachSuggestion(buckets, dismissed, kind, (String) goal.get("topic"), (String) goal.get("topictitle"), teamKey, u, status,
+								(Integer) goal.get("masterypercent"), goal.get("daysleft"), (String) goal.get("deadline"));
+						}
+					}
+					Object plansObj = m.get("plans");
+					if (plansObj instanceof JSONArray)
+					{
+						for (Object po : (JSONArray) plansObj)
+						{
+							JSONObject plan = (JSONObject) po;
+							Object daysleftObj = plan.get("daysleft");
+							if ("certification".equals(plan.get("deadlinesource")) && daysleftObj instanceof Number)
+							{
+								long daysleft = ((Number) daysleftObj).longValue();
+								if (daysleft >= 0 && daysleft <= 14)
+								{
+									addCoachSuggestion(buckets, dismissed, "cert_expiring", (String) plan.get("topic"), (String) plan.get("topictitle"),
+										teamKey, u, (String) plan.get("status"), (Integer) plan.get("masterypercent"), daysleftObj, (String) plan.get("deadline"));
+								}
+							}
+						}
+					}
+				}
+				catch (Exception e)
+				{
+					log.error("coach suggestions: user " + u.getId(), e);
+				}
+			}
+		}
+
+		List<Map<String, Object>> out = new ArrayList<>(buckets.values());
+		out.sort(Comparator.<Map<String, Object>>comparingInt(b -> coachKindRank((String) b.get("kind")))
+			.thenComparing(b -> -(Integer) b.get("count")));
+		return out;
+	}
+
+	private static int coachKindRank(String kind)
+	{
+		return switch (kind)
+		{
+			case "overdue" -> 0;
+			case "cert_expiring" -> 1;
+			case "at_risk" -> 2;
+			case "ready_not_booked" -> 3;
+			default -> 9;
+		};
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void addCoachSuggestion(Map<String, Map<String, Object>> buckets, Set<String> dismissed, String kind, String topic, String topictitle,
+			String teamKey, Data u, String status, Integer masterypercent, Object daysleft, String deadline)
+	{
+		if (topic == null)
+		{
+			return;
+		}
+		String key = kind + ":" + topic + ":" + teamKey;
+		if (dismissed.contains(key))
+		{
+			return;
+		}
+		Map<String, Object> bucket = buckets.computeIfAbsent(key, k -> {
+			Map<String, Object> b = new LinkedHashMap<>();
+			b.put("key", key);
+			b.put("kind", kind);
+			b.put("topic", topic);
+			b.put("topictitle", topictitle);
+			b.put("deadline", null);
+			b.put("count", 0);
+			b.put("users", new ArrayList<Map<String, Object>>());
+			return b;
+		});
+		String cur = (String) bucket.get("deadline");
+		if (deadline != null && (cur == null || deadline.compareTo(cur) < 0))
+		{
+			bucket.put("deadline", deadline);
+		}
+		bucket.put("count", (Integer) bucket.get("count") + 1);
+		Map<String, Object> userRow = new LinkedHashMap<>();
+		userRow.put("id", u.getId());
+		userRow.put("name", formatUserName(u));
+		userRow.put("status", status);
+		userRow.put("masterypercent", masterypercent);
+		userRow.put("daysleft", daysleft);
+		((List<Map<String, Object>>) bucket.get("users")).add(userRow);
+	}
+
+	private static List<String> parseUserIds(WebPageRequest inReq)
+	{
+		String raw = inReq.getRequestParameter("users");
+		List<String> out = new ArrayList<>();
+		if (raw != null && !raw.trim().isEmpty())
+		{
+			Object parsed = JSONValue.parse(raw);
+			if (parsed instanceof List)
+			{
+				for (Object o : (List<?>) parsed)
+				{
+					if (o != null)
+					{
+						out.add(String.valueOf(o));
+					}
+				}
+			}
+		}
+		return out;
+	}
+
+	/** Users are XML-backed (not in the ES catalog index): read live via query(), same as TestUProfileModule.membersByJobrole,
+	 *  rather than getCachedData, which can still hand back a stale copy of a just-created or just-edited row. */
+	private static Map<String, Data> usersById(MediaArchive archive)
+	{
+		Map<String, Data> out = new HashMap<>();
+		HitTracker hits = archive.query("user").all().search();
+		if (hits != null)
+		{
+			for (Object o : hits)
+			{
+				Data u = (Data) o;
+				out.put(u.getId(), u);
+			}
+		}
+		return out;
+	}
+
+	private static boolean inScope(Data u, Set<String> scope)
+	{
+		if (u == null)
+		{
+			return false;
+		}
+		if (scope == null)
+		{
+			return true;
+		}
+		String t = u.get("team");
+		return t != null && scope.contains(t);
+	}
+
+	private static String trim(String s)
+	{
+		return s == null ? "" : s.trim();
 	}
 
 	// ---------------- Helper Methods ----------------

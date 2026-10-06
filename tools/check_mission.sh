@@ -152,8 +152,25 @@ def audits(action, target):
     return [h["_source"] for h in res["hits"]["hits"] if str(h["_source"].get("datecreated", ""))[:19] >= AUDIT_SINCE[0][:19]]
 
 
+def audits_all():
+    """Every auditevent since AUDIT_SINCE (any action/target). Polls like audits(), for a set-membership check."""
+    rows = []
+    for attempt in range(24):
+        refresh()
+        st, res = call(es, "POST", "/auditevent/_search", body={"size": 200, "sort": [{"datecreated": "desc"}],
+            "query": {"range": {"datecreated": {"gte": AUDIT_SINCE[0]}}}}, base=ES)
+        rows = [h["_source"] for h in res["hits"]["hits"]] if st == 200 else []
+        if {"coach.nudge", "learnertarget.set", "coach.dismiss"} <= {r.get("action") for r in rows}:
+            break
+        import time
+        time.sleep(0.5)
+    return rows
+
+
 UID = "mission.check@testu.local"
 PASSWORD = "Mc9-" + secrets.token_urlsafe(24)
+UID2 = "mission.check2@testu.local"
+PASSWORD2 = "Mc9-" + secrets.token_urlsafe(24)
 PROFILE = [None]
 PREV_ONLY = [False]  # False = untouched (don't restore); None/str = the previous setting value to put back
 
@@ -166,6 +183,10 @@ def cleanup():
     delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID}}))
     usersave("lastmissionstatus", "", UID)  # so a rerun sees announce on its first mission.json read again
     wipe_user_rows(UID)
+    delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID2}}))
+    delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID2}}))
+    delete_rows("coachdismissal", es_ids("coachdismissal", {"term": {"user": os.environ["EME_USER"]}}))
+    wipe_user_rows(UID2)
     if PREV_ONLY[0] is not False:  # nudges ran: restore the pre-existing testu_dailychallengeemail_only (mayReceive's allowlist)
         setting("testu_dailychallengeemail_only", PREV_ONLY[0])
         PREV_ONLY[0] = False
@@ -235,7 +256,9 @@ try:
     # Nudges are gated by the existing Daily Challenge email mayReceive rule (no dedicated permission): master switch
     # testu_dailychallengeemail may be off in this shared dev environment, so allowlist UID via testu_dailychallengeemail_only,
     # same as a tester would before the org switch is on. Restored in cleanup().
-    PREV_ONLY[0] = setting("testu_dailychallengeemail_only", UID)
+    # Both UID and UID2 up front: getCatalogSettingValue caches this id for the rest of the JVM's life, so a second
+    # setting() call later (for the coach section's UID2) would silently keep serving this first value.
+    PREV_ONLY[0] = setting("testu_dailychallengeemail_only", f"{UID},{UID2}")
     put_row("learnernotification", f"{UID}_mission_remind", {"user": UID, "type": "mission", "entitytopic": TOPIC, "remindat": "2020-01-01T00:00:00Z", "read": False, "actor": "tutor"})
     refresh()
     s, r = call(admin, "GET", "/services/testu/learn/missionnudges.json")
@@ -244,6 +267,38 @@ try:
     ok("due reminder delivered (pushedat + text set)", es_doc("learnernotification", f"{UID}_mission_remind").get("pushedat") and es_doc("learnernotification", f"{UID}_mission_remind").get("text"))
     s, r2 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
     ok("status push not repeated on a second run", r2.get("sent", 0) == 0, r2)
+
+    # --- coach (task 7, spec 2026-10-05): manager suggestions over the team's missions, and approve-to-act actions
+    make_user(UID2, PASSWORD2, role="users")
+    s, r = call(admin, "POST", "/services/testu/personas/setprofiles.json", form={"user": UID2, "primary": PROFILE[0], "extras": "[]"})
+    ok("setprofiles UID2: 200", s == 200, r)
+    put_row("learnertarget", f"{UID2}_{TOPIC}", {"user": UID2, "entitytopic": TOPIC, "duedate": "2026-01-01T00:00:00.000Z", "source": "manual"})
+    refresh()
+    learner2 = login(UID2, PASSWORD2)
+
+    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    ok("coach ok", s == 200 and c.get("ok"), c)
+    sug = next((x for x in c["suggestions"] if x["kind"] == "overdue" and x["topic"] == TOPIC), None)
+    ok("overdue suggestion lists the learner", sug and any(u["id"] == UID2 for u in sug["users"]), c)
+
+    s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
+    ok("nudge sent", r.get("done") == 1, r)
+    s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
+    ok("second nudge within 3 days skipped", r.get("skipped") == 1, r)
+
+    s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "setdue", "topic": TOPIC, "users": json.dumps([UID2]), "duedate": "2030-01-01"})
+    refresh()
+    ok("setdue writes a manual target", es_doc("learnertarget", f"{UID2}_{TOPIC}").get("source") == "manual", r)
+
+    s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "dismiss", "key": sug["key"]})
+    ok("dismiss ok", s == 200 and r.get("ok"), r)
+    s, c = call(admin, "GET", "/services/testu/analytics/coach.json")
+    ok("dismissed suggestion hidden", all(x["key"] != sug["key"] for x in c["suggestions"]), c)
+
+    s, r = call(learner2, "POST", "/services/testu/analytics/coachaction.json", form={"action": "dismiss", "key": "x"})
+    ok("learner gets 403", s == 403, r)
+
+    ok("coach writes audited", {"coach.nudge", "learnertarget.set", "coach.dismiss"} <= {a.get("action") for a in audits_all()})
 finally:
     cleanup()
 

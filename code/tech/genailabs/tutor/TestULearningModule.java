@@ -1622,7 +1622,8 @@ public class TestULearningModule extends TestUBaseModule
 		return o;
 	}
 
-	private static boolean canManageProgression(WebPageRequest inReq)
+	/** Package-visible: the manager coach (TestUAnalyticsModule.coachAction) gates its writes with this same permission. */
+	static boolean canManageProgression(WebPageRequest inReq)
 	{
 		org.openedit.profile.UserProfile profile = inReq.getUserProfile();
 		return profile != null && profile.hasPermission("training_manage");
@@ -1907,8 +1908,9 @@ public class TestULearningModule extends TestUBaseModule
 		return sent;
 	}
 
-	/** Nudges are gated by the existing Daily Challenge email mayReceive rule (no new permission): same switch, allowlist, role. */
-	private boolean mayReceive(MediaArchive archive, Data u)
+	/** Nudges are gated by the existing Daily Challenge email mayReceive rule (no new permission): same switch, allowlist, role.
+	 *  Package-visible: the manager coach (TestUAnalyticsModule) reuses the same gate for its own nudge pushes. */
+	boolean mayReceive(MediaArchive archive, Data u)
 	{
 		String on = archive.getCatalogSettingValue("testu_dailychallengeemail");
 		String only = archive.getCatalogSettingValue("testu_dailychallengeemail_only");

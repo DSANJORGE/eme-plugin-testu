@@ -1,0 +1,5 @@
+<page>
+  <path-action name="TestUTeamModule.loadScope"/>
+  <path-action name="TestUAnalyticsModule.coach" allowduplicates="true"/>
+  <permission name="view"><or><userprofile property="resumen_admin" equals="true"/><userprofile property="actividad_admin" equals="true"/><userprofile property="dominio_admin" equals="true"/><userprofile property="prevision_admin" equals="true"/></or></permission>
+</page>
