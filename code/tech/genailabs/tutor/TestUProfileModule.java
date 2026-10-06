@@ -401,7 +401,7 @@ public class TestUProfileModule extends TestUBaseModule
 			return;
 		}
 		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
-		java.time.ZoneId zone = TestULearningModule.zoneOf(new TestULearningModule().userZone(archive, userid), orgzone);
+		java.time.ZoneId zone = TestULearningModule.zoneOf(((TestULearningModule) getModuleManager().getBean("TestULearningModule")).userZone(archive, userid), orgzone);
 		java.time.LocalDate today = java.time.LocalDate.now(zone);
 		Searcher s = archive.getSearcher("learnertarget");
 		synchronized (LearningEngine.WRITE_LOCK)
