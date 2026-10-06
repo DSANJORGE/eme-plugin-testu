@@ -8,9 +8,11 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import tech.genailabs.tutor.LearningEngine.Attempt;
+import tech.genailabs.tutor.LearningEngine.CertRow;
 import tech.genailabs.tutor.LearningEngine.Content;
 import tech.genailabs.tutor.LearningEngine.Learner;
 import tech.genailabs.tutor.LearningEngine.Topic;
@@ -28,7 +30,11 @@ public final class MissionPlanner
 	{
 	}
 
-	public static Date deadline(Topic t, Learner l, ZoneId z)
+	/**
+	 * Earliest of: the learnertarget duedate; certification expiry, but only while the renewal is actually due (status
+	 * renewal_due/expired) -- a far-off expiry (status certified, outside the renewal window) never drives a plan (spec).
+	 */
+	public static Date deadline(Topic t, Learner l, Date now, ZoneId z)
 	{
 		Date best = null;
 		LearningEngine.TargetRow tr = l.targets.get(t.id);
@@ -36,12 +42,24 @@ public final class MissionPlanner
 		{
 			best = LearningEngine.endOfDay(tr.duedate, z);
 		}
-		Date expiry = LearningEngine.expiryOf(l.certifications.get(t.id), t, z);
+		Date expiry = dueExpiry(t, l, now, z);
 		if (expiry != null && (best == null || expiry.before(best)))
 		{
 			best = expiry;
 		}
 		return best;
+	}
+
+	/** Certification expiry, but only once the renewal is due or past; null otherwise (not a certification, or not due yet). */
+	static Date dueExpiry(Topic t, Learner l, Date now, ZoneId z)
+	{
+		if (!t.certification())
+		{
+			return null;
+		}
+		CertRow cert = l.certifications.get(t.id);
+		String cs = LearningEngine.certStatus(t, cert, now, z);
+		return "renewal_due".equals(cs) || "expired".equals(cs) ? LearningEngine.expiryOf(cert, t, z) : null;
 	}
 
 	static int requiredMin(JSONObject s)
@@ -59,12 +77,13 @@ public final class MissionPlanner
 		boolean meets = Boolean.TRUE.equals(s.get("meetsrequirement"));
 		JSONObject eval = (JSONObject) s.get("evaluation");
 		boolean canstart = eval != null && Boolean.TRUE.equals(eval.get("canstart"));
+		boolean renewalReady = renewalSchedulable(t, l, now, z);
 		int pct = LearningEngine.intOr(s.get("masterypercent"), 0), gap = Math.max(0, requiredMin(s) - pct);
-		Date dl = deadline(t, l, z);
+		Date dl = deadline(t, l, now, z);
 		Long daysleft = dl == null ? null : ChronoUnit.DAYS.between(now.toInstant().atZone(z).toLocalDate(), dl.toInstant().atZone(z).toLocalDate());
 		String status;
-		if (meets && canstart)
-			status = "ready";
+		if ((meets && canstart) || renewalReady)
+			status = "ready"; // meets+canstart, or a schedulable renewal even below the required level (spec)
 		else if (meets)
 			status = "done";
 		else if (dl != null && now.after(dl))
@@ -82,15 +101,27 @@ public final class MissionPlanner
 		o.put("masterypercent", pct);
 		o.put("gap", gap);
 		o.put("deadline", dl == null ? null : LearningEngine.ymd(dl, z));
-		o.put("deadlinesource", dl == null ? null : deadlineSource(t, l, z, dl));
+		o.put("deadlinesource", dl == null ? null : deadlineSource(t, l, now, z, dl));
 		o.put("daysleft", daysleft);
 		o.put("canstart", canstart);
 		return o;
 	}
 
-	static String deadlineSource(Topic t, Learner l, ZoneId z, Date dl)
+	/** Certification due/expired and not yet booked -- counts as ready even when mastery is below the required level (spec). */
+	static boolean renewalSchedulable(Topic t, Learner l, Date now, ZoneId z)
 	{
-		Date expiry = LearningEngine.expiryOf(l.certifications.get(t.id), t, z);
+		if (!t.certification())
+		{
+			return false;
+		}
+		CertRow cert = l.certifications.get(t.id);
+		String cs = LearningEngine.certStatus(t, cert, now, z);
+		return ("renewal_due".equals(cs) || "expired".equals(cs)) && (cert == null || cert.scheduledfor == null);
+	}
+
+	static String deadlineSource(Topic t, Learner l, Date now, ZoneId z, Date dl)
+	{
+		Date expiry = dueExpiry(t, l, now, z);
 		if (expiry != null && expiry.equals(dl))
 		{
 			return "certification";
@@ -153,11 +184,20 @@ public final class MissionPlanner
 		return out;
 	}
 
-	public static JSONObject mission(Content c, Learner l, Map<String, JSONObject> inStates, JSONObject inRecommend, Date now, ZoneId z)
+	/**
+	 * inRecommendOf: topic id -> recommend() result restricted to that single topic (mode/sectionid), or null when nothing to
+	 * learn/improve there; null when not needed. A caller can't restrict recommend() to the goal topic up front -- the goal is
+	 * decided in here -- so mission() calls this back once it has picked one, instead of taking a precomputed result.
+	 */
+	public static JSONObject mission(Content c, Learner l, Map<String, JSONObject> inStates, Function<String, JSONObject> inRecommendOf, Date now, ZoneId z)
 	{
 		List<JSONObject> plans = new ArrayList<>();
 		for (Topic t : c.topics.values())
 		{
+			if (t.questions.isEmpty()) // recommend() skips these too; never a goal with nothing to practise
+			{
+				continue;
+			}
 			JSONObject s = inStates.get(t.id);
 			if (s == null || s.get("requiredlevel") == null || Boolean.TRUE.equals(s.get("locked")))
 			{
@@ -166,10 +206,11 @@ public final class MissionPlanner
 			plans.add(topicPlan(t, s, l, now, z));
 		}
 		JSONObject goal = pick(plans);
+		String goalTopic = goal == null ? null : (String) goal.get("topic");
 		JSONObject o = new JSONObject();
 		o.put("status", goal == null ? "no_goal" : goal.get("status"));
 		o.put("goal", goal);
-		o.put("week", goal == null ? null : week(goal, c.topics.get(goal.get("topic")), l, now, z));
+		o.put("week", goal == null ? null : week(goal, c.topics.get(goalTopic), l, now, z));
 		int others = 0;
 		for (JSONObject p : plans)
 		{
@@ -177,7 +218,7 @@ public final class MissionPlanner
 				others++;
 		}
 		o.put("othergoals", others);
-		o.put("actions", goal == null ? new JSONArray() : actions(goal, c.topics.get(goal.get("topic")), l, inRecommend, now, z));
+		o.put("actions", goal == null ? new JSONArray() : actions(goal, c.topics.get(goalTopic), l, inRecommendOf, now, z));
 		JSONArray all = new JSONArray();
 		all.addAll(plans);
 		o.put("plans", all); // every required topic's plan: the Topics tab shows per-row deadlines
@@ -196,7 +237,7 @@ public final class MissionPlanner
 		};
 	}
 
-	/** Lowest rank; ties by earliest deadline; then learner order (stable). */
+	/** Lowest rank; ties by earliest deadline, except pace ties which order like recommend(); then learner order (stable). */
 	static JSONObject pick(List<JSONObject> plans)
 	{
 		JSONObject best = null;
@@ -211,11 +252,41 @@ public final class MissionPlanner
 				continue;
 			}
 			int br = rank(String.valueOf(best.get("status")));
-			String d = (String) p.get("deadline"), bd = (String) best.get("deadline");
-			if (r < br || (r == br && d != null && (bd == null || d.compareTo(bd) < 0)))
+			if (r < br)
+			{
+				best = p;
+				continue;
+			}
+			if (r > br)
+			{
+				continue;
+			}
+			if ("pace".equals(p.get("status")) ? paceBetter(p, best) : better(p, best))
 				best = p;
 		}
 		return best;
+	}
+
+	static boolean better(JSONObject p, JSONObject best)
+	{
+		String d = (String) p.get("deadline"), bd = (String) best.get("deadline");
+		return d != null && (bd == null || d.compareTo(bd) < 0);
+	}
+
+	/** recommend()'s own tie-break, restated over topicPlan's fields: below the required band first, then lowest %. */
+	static boolean paceBetter(JSONObject p, JSONObject best)
+	{
+		boolean pBelow = belowRequired(p), bestBelow = belowRequired(best);
+		if (pBelow != bestBelow)
+		{
+			return pBelow;
+		}
+		return LearningEngine.intOr(p.get("masterypercent"), 0) < LearningEngine.intOr(best.get("masterypercent"), 0);
+	}
+
+	static boolean belowRequired(JSONObject plan)
+	{
+		return LearningEngine.levelIndex(String.valueOf(plan.get("band"))) < LearningEngine.levelIndex((String) plan.get("requiredlevel"));
 	}
 
 	static JSONObject week(JSONObject goal, Topic t, Learner l, Date now, ZoneId z)
@@ -248,20 +319,23 @@ public final class MissionPlanner
 		return w;
 	}
 
-	static JSONArray actions(JSONObject goal, Topic t, Learner l, JSONObject rec, Date now, ZoneId z)
+	static JSONArray actions(JSONObject goal, Topic t, Learner l, Function<String, JSONObject> inRecommendOf, Date now, ZoneId z)
 	{
 		JSONArray out = new JSONArray();
 		String topic = (String) goal.get("topic");
-		if ("ready".equals(goal.get("status")))
+		boolean ready = "ready".equals(goal.get("status"));
+		if (ready)
 		{
-			String cs = LearningEngine.certStatus(t, l.certifications.get(topic), now, z);
-			LearningEngine.CertRow cr = l.certifications.get(topic);
-			boolean renewal = ("renewal_due".equals(cs) || "expired".equals(cs)) && (cr == null || cr.scheduledfor == null);
+			boolean renewal = renewalSchedulable(t, l, now, z);
 			out.add(action(renewal ? "schedule_certification" : "book_evaluation", topic, null, null));
 		}
-		if (rec != null && topic.equals(rec.get("topicid")) && !"ready".equals(goal.get("status")))
+		else
 		{
-			out.add(action("start_session", topic, (String) rec.get("mode"), (String) rec.get("sectionid")));
+			JSONObject rec = inRecommendOf == null ? null : inRecommendOf.apply(topic);
+			if (rec != null && topic.equals(rec.get("topicid")))
+			{
+				out.add(action("start_session", topic, (String) rec.get("mode"), (String) rec.get("sectionid")));
+			}
 		}
 		out.add(action("remind_later", topic, null, null));
 		for (int i = 0; i < out.size(); i++)
