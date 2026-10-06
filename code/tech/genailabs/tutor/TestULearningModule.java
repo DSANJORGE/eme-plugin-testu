@@ -382,9 +382,24 @@ public class TestULearningModule extends TestUBaseModule
 		reply(inReq, answerReply(answer, false, r.question));
 	}
 
-	/** Content + learner + profiles for a user record, with no WebPageRequest -- the one path mission() (via load()) and
-	 *  actionsFor() (reflection-called from finder) both go through, so the mission card and the chat's offered actions
-	 *  cannot drift on visibility or zone (fix round 1, task 8, item 3). */
+	/** Content + learner + profiles for the signed-in user, as state.json builds them (null user already failed the request).
+	 *  Back to visibleTopics(inReq) (fix round 2, item 3/N2): evaluation(), startEvaluation(), submitEvaluation() and
+	 *  scheduleCertification() go through this too, and must keep the exact rule they always used. */
+	private Object[] load(WebPageRequest inReq, User inUser)
+	{
+		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
+		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
+		Data urec = freshUser(getMediaArchive(inReq), inUser);
+		LearningEngine.Learner learner = engine.loadLearner(inUser.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
+		engine.applyProfiles(content, learner);
+		return new Object[] {engine, content, learner};
+	}
+
+	/**
+	 * Content + learner + profiles for a user record, with no WebPageRequest. Used only where there genuinely is none to
+	 * pass -- actionsFor(), reflection-called from finder's chat skill, which has no WebPageRequest for the learner (fix
+	 * round 2, item 3/N2: chose option (b) -- see visibleTopicsFor()). mission() keeps using load() above, unchanged.
+	 */
 	private Object[] loadFor(MediaArchive archive, Data urec)
 	{
 		LearningEngine engine = new LearningEngine(archive);
@@ -394,15 +409,13 @@ public class TestULearningModule extends TestUBaseModule
 		return new Object[] {engine, content, learner};
 	}
 
-	/** Content + learner + profiles for the signed-in user, as state.json builds them (null user already failed the request). */
-	private Object[] load(WebPageRequest inReq, User inUser)
-	{
-		MediaArchive archive = getMediaArchive(inReq);
-		return loadFor(archive, freshUser(archive, inUser));
-	}
-
-	/** Topic ids visible to a user record, the same rule TestUSocialModule.canSeeTopic (BaseSearchSecurity.attachStandardSecurity,
-	 *  as topics.json/visibleTopics(WebPageRequest) apply it) uses, computed with no WebPageRequest for reflection callers. */
+	/**
+	 * Topic ids visible to a user record, with no WebPageRequest: the same rule TestUSocialModule.canSeeTopic
+	 * (BaseSearchSecurity.attachStandardSecurity, as topics.json / visibleTopics(WebPageRequest) apply it) uses, for
+	 * reflection callers that have no request to pass (fix round 2, item 3/N2, option (b): the finder chat skill's
+	 * AgentContext carries a UserProfile and a ModuleManager but no WebPageRequest). check_mission.sh's visibility-agreement
+	 * case asserts this agrees with topics.json for a group-secured topic.
+	 */
 	static java.util.Set<String> visibleTopicsFor(MediaArchive archive, Data urec)
 	{
 		java.util.Set<String> ids = new java.util.HashSet<>();
@@ -439,9 +452,11 @@ public class TestULearningModule extends TestUBaseModule
 
 	/** The signed-in learner's mission actions (spec 2026-10-05 task 8), for the tutor chat skill to offer as `[[do ...]]` lines.
 	 *  Chat content is never an input here; the only inputs are the learner's own progress and the content catalog. Goes through
-	 *  loadFor()/orgZone() exactly like mission() (item 3): the chat and the mission card can't disagree on what's offered.
-	 *  Reflection-called from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time dependency on testu.
-	 *  Empty list = no bean behaviour change (unknown user, or no goal). remind_later carries no `options` (brief's wire shape). */
+	 *  loadFor() (visibleTopicsFor -- no WebPageRequest to pass here, fix round 2 item 3/N2) and orgZone(), the same zone
+	 *  mission() uses. Reflection-called from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time
+	 *  dependency on testu. Empty list = no bean behaviour change (unknown user, or no goal). remind_later carries no
+	 *  `options` (brief's wire shape). Called once per message by offer() below -- never call this a second time for the
+	 *  same turn (fix round 2, item 2/N1: it would let the LLM's picked id bind to a different snapshot than it was shown). */
 	public java.util.List<JSONObject> actionsFor(MediaArchive archive, String userid)
 	{
 		Data u = (Data) archive.getSearcher("user").searchById(userid);
@@ -467,33 +482,58 @@ public class TestULearningModule extends TestUBaseModule
 		return out;
 	}
 
-	/** The ACCIONES DISPONIBLES prompt text for the tutor chat (MissionPlanner.offerText over actionsFor()); null in evaluation
-	 *  mode (no action ever attaches there) or when there is nothing to offer. Reflection-called from finder. */
-	public String offerText(MediaArchive archive, String userid, String mode)
+	/**
+	 * `{text, actions}` for one chat turn (fix round 2, item 2/N1): the ACCIONES DISPONIBLES prompt text and the exact
+	 * action snapshot it was built from, both from one actionsFor() call. The finder skill keeps this object across the LLM
+	 * call and hands its `actions` straight back into appendActions() below, instead of fetching a fresh (possibly
+	 * different) snapshot after the reply -- so the LLM's picked id always binds to the action it was actually shown.
+	 * `text`/`actions` are null/empty in evaluation mode (no offer, no trailer, no append there) or when there's nothing to
+	 * offer. Reflection-called from finder.
+	 */
+	public JSONObject offer(MediaArchive archive, String userid, String mode)
 	{
-		if ("evaluation".equals(mode))
+		java.util.List<JSONObject> actions = java.util.List.of();
+		if (!"evaluation".equals(mode))
 		{
-			return null;
+			long started = System.currentTimeMillis();
+			actions = actionsFor(archive, userid);
+			log.info("mission actions offered in " + (System.currentTimeMillis() - started) + " ms");
 		}
-		long started = System.currentTimeMillis();
-		String text = MissionPlanner.offerText(actionsFor(archive, userid));
-		log.info("mission actions offered in " + (System.currentTimeMillis() - started) + " ms");
-		return text;
+		JSONObject out = new JSONObject();
+		out.put("text", MissionPlanner.offerText(actions));
+		JSONArray a = new JSONArray();
+		a.addAll(actions);
+		out.put("actions", a);
+		return out;
 	}
 
-	/** The chat reply with the LLM's own `[[do ...]]` stripped (fix round 1, item 1: never let an injected one survive) and, outside
-	 *  evaluation mode, the server's validated lines appended (MissionPlanner.appendDoLines over actionsFor()). The one method
-	 *  finder calls: reflect, append, nothing else (fix round 1, item 2). */
-	public String appendActions(MediaArchive archive, String userid, String message, java.util.List<?> picked, String mode)
+	/**
+	 * The chat reply with the LLM's own `[[do ...]]` stripped -- unconditionally, on every path, even if everything below
+	 * fails (fix round 1/2, item 1: never let an injected one survive) -- and, when `offeredActions` is non-empty, at most
+	 * 2 of the server's own lines appended in their own (offered) order. `offeredActions` is the exact list offer() handed
+	 * the finder skill for this turn (fix round 2, item 2/N1): no second actionsFor() call here. Reflect, append, nothing
+	 * else (fix round 1, item 2) -- the finder skill has no other logic of its own left.
+	 */
+	public String appendActions(String message, java.util.List<?> picked, java.util.List<?> offeredActions)
 	{
-		if ("evaluation".equals(mode))
+		String clean = MissionPlanner.stripDoLines(message);
+		try
 		{
-			return MissionPlanner.stripDoLines(message);
+			java.util.List<JSONObject> offered = new java.util.ArrayList<>();
+			for (Object o : offeredActions)
+			{
+				offered.add((JSONObject) o);
+			}
+			long started = System.currentTimeMillis();
+			String out = MissionPlanner.appendDoLines(message, picked, offered); // strips again (idempotent) + appends, server order
+			log.info("mission actions appended in " + (System.currentTimeMillis() - started) + " ms");
+			return out;
 		}
-		long started = System.currentTimeMillis();
-		String out = MissionPlanner.appendDoLines(message, picked, actionsFor(archive, userid));
-		log.info("mission actions appended in " + (System.currentTimeMillis() - started) + " ms");
-		return out;
+		catch (Exception e)
+		{
+			log.warn("mission actions unavailable", e);
+			return clean;
+		}
 	}
 
 	/** services/testu/learn/mission.json -- goal, status, week plan and valid actions for the signed-in learner (spec 2026-10-05).

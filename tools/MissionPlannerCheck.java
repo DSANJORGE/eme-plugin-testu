@@ -125,8 +125,8 @@ public class MissionPlannerCheck
 	}
 
 	// Task 8 (tutor chat actions): the deterministic gate for the offered-id filter, since the chat reply itself depends on an
-	// LLM (check_mission.sh, flaky by nature). MissionPlanner.doLines/stripDoLines/appendDoLines mirror the loop
-	// TestULearningModule.appendActions (the method finder actually calls) runs.
+	// LLM (check_mission.sh, flaky by nature). MissionPlanner.doLines/stripDoLines/appendDoLines/offerText are the exact
+	// pure methods TestULearningModule.offer()/appendActions() (the methods finder actually calls) delegate to.
 	static void doLinesCheck()
 	{
 		JSONObject a1 = action("a1", "start_session", "fatiga", "learn", "fatiga-s1");
@@ -164,6 +164,18 @@ public class MissionPlannerCheck
 		// fix round 1: offerText is the ACCIONES DISPONIBLES prompt text, null (not empty) when there's nothing to offer.
 		ok("offerText: both offered, one line each, server order", "a1: start_session · fatiga\na2: remind_later · fatiga\n".equals(MissionPlanner.offerText(List.of(a1, a2))), MissionPlanner.offerText(List.of(a1, a2)));
 		ok("offerText: nothing offered -> null", MissionPlanner.offerText(List.of()) == null && MissionPlanner.offerText(null) == null, "");
+
+		// fix round 2, item 2 (N1): the same snapshot in gives the same lines out, every time -- that's exactly why
+		// offer()'s one actionsFor() snapshot must be the one appendActions() is handed back, never a fresh second call.
+		List<JSONObject> snapshot = List.of(a1, a2);
+		ok("doLines: the same snapshot given twice produces identical lines",
+			MissionPlanner.doLines(List.of("a2"), snapshot).equals(MissionPlanner.doLines(List.of("a2"), snapshot)), "");
+		// A fresh actionsFor() call a moment later, after the mission moved on, could rebind "a2" to a different action --
+		// this is what offer()'s single snapshot, reused by appendActions(), prevents.
+		JSONObject a2Moved = action("a2", "book_evaluation", "otronivel", null, null);
+		ok("doLines: a DIFFERENT snapshot for the same id produces a different line (why one snapshot must be reused)",
+			!MissionPlanner.doLines(List.of("a2"), List.of(a1, a2Moved)).equals(MissionPlanner.doLines(List.of("a2"), snapshot)),
+			List.of(MissionPlanner.doLines(List.of("a2"), List.of(a1, a2Moved)), MissionPlanner.doLines(List.of("a2"), snapshot)));
 	}
 
 	static JSONObject action(String id, String type, String topic, String mode, String section)

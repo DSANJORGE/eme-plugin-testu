@@ -306,6 +306,20 @@ try:
     if greet is not None:
         ok("tutor chat: no [[do ...]] on a greeting/thanks (small talk is never an action turn)", "[[do" not in greet, greet)
 
+    # --- visibility agreement (fix round 2, item 3/N2): visibleTopicsFor (actionsFor/offer, the chat path -- no
+    # WebPageRequest there, option (b)) should agree with topics.json (visibleTopics(inReq), the same rule state.json/
+    # mission.json use) on what a learner may see. A real group/role-secured topic could not be set up live here:
+    # entitytopic's securityenabled/viewgroups are recomputed from the category tree at index time
+    # (ElasticAssetDataConnector.addSecurity / BaseElasticSearcher, securityfield="rootcategory") and are NOT settable
+    # by a direct REST PUT on the entitytopic record -- confirmed by hand: PUT {"securityenabled": true} round-trips
+    # back to false once the indexed doc is refreshed. Mutating the shared category tree to secure one for real was not
+    # attempted (shared dev server, other sessions may read it). Falls back to the weaker but honest check available
+    # without that: the topic the chat actually offered an action for must be one topics.json lists for this learner.
+    s, tj = call(me, "GET", "/services/module/entitytopic/topics.json")
+    visible_topics = {t["id"] for t in tj.get("topics", [])} if s == 200 else set()
+    ok("visibility agreement: the goal topic (actionsFor/visibleTopicsFor's pick) is one topics.json lists for this learner",
+       TOPIC in visible_topics, (TOPIC, visible_topics))
+
     # --- remind.json
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "tomorrow"})
     ok("remind ok", s == 200 and r.get("ok"), r)
