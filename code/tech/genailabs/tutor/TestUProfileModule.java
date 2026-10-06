@@ -1,6 +1,7 @@
 package tech.genailabs.tutor;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -129,6 +130,12 @@ public class TestUProfileModule extends TestUBaseModule
 				fail(inReq, 400, "bad_renewalwindowdays");
 				return;
 			}
+			r.withindays = LearningEngine.intOrNull(m.get("withindays"));
+			if (badNumber(m.get("withindays"), r.withindays, 1, 3650))
+			{
+				fail(inReq, 400, "bad_withindays");
+				return;
+			}
 			String af = trim(str(m.get("afterfinish")));
 			if (af.isEmpty())
 			{
@@ -151,6 +158,7 @@ public class TestUProfileModule extends TestUBaseModule
 		Searcher list = archive.getSearcher("jobrole");
 		JSONObject before = null;
 		JSONObject after = null;
+		boolean newWithin = false; // a row's withindays went from unset to set: existing member targets need writing
 		synchronized (LOCK)
 		{
 			Data p = id.isEmpty() ? null : (Data) list.searchById(id);
@@ -187,6 +195,10 @@ public class TestUProfileModule extends TestUBaseModule
 				String rid = id + "_" + r.topicid;
 				keep.add(rid);
 				Data existing = (Data) req.searchById(rid);
+				if (r.withindays != null && (existing == null || LearningEngine.intOrNull(existing.get("withindays")) == null))
+				{
+					newWithin = true;
+				}
 				// A row posted without the key keeps whatever is stored: the console no longer sends evaluationrequired, and a save
 				// from it must not silently drop a legacy requirement. Only a validity can newly set it.
 				boolean evalrequired = evalomitted.contains(r.topicid) ? existing != null && "true".equals(String.valueOf(existing.get("evaluationrequired"))) : r.evaluationrequired;
@@ -205,6 +217,7 @@ public class TestUProfileModule extends TestUBaseModule
 				d.setValue("validitymonths", r.validitymonths);
 				d.setValue("passpercent", r.passpercent);
 				d.setValue("renewalwindowdays", r.renewalwindowdays);
+				d.setValue("withindays", r.withindays);
 				// compat for one release: evaluationrequired also implied by validitymonths (certification topics require evaluation)
 				d.setValue("evaluationrequired", (r.validitymonths != null || evalrequired) ? "true" : "false");
 				d.setValue("afterfinish", r.afterfinish);
@@ -223,6 +236,10 @@ public class TestUProfileModule extends TestUBaseModule
 			after = profileJson(archive, content, p, memberCounts(archive));
 		}
 		audit(inReq, archive, "jobprofile.save", "jobrole", id, before, after);
+		if (newWithin)
+		{
+			notifyMembersWithindays(archive, id, inReq.getUser().getId());
+		}
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
 		resp.put("profile", after);
@@ -331,6 +348,7 @@ public class TestUProfileModule extends TestUBaseModule
 			u.setValue("primaryjobrole", primary.isEmpty() ? null : primary);
 			u.setValue("jobrole", all.isEmpty() ? null : all);
 			users.saveData(u, inReq.getUser());
+			writeProfileTargets(archive, userid, all, inReq.getUser().getId());
 		}
 		JSONObject after = new JSONObject();
 		after.put("primaryjobrole", primary.isEmpty() ? null : primary);
@@ -341,6 +359,74 @@ public class TestUProfileModule extends TestUBaseModule
 		resp.put("primaryjobrole", primary.isEmpty() ? null : primary);
 		resp.put("jobroles", all);
 		reply(inReq, resp);
+	}
+
+	/** Every user currently assigned jobroleid (primary or extra): re-derive their withindays merge and write any new target. */
+	void notifyMembersWithindays(MediaArchive archive, String jobroleid, String actor)
+	{
+		HitTracker hits = archive.query("user").all().search();
+		if (hits == null)
+		{
+			return;
+		}
+		hits.enableBulkOperations();
+		for (Object o : hits)
+		{
+			Data u = (Data) o;
+			Set<String> mine = new HashSet<>(LearningEngine.jobrolesOf(u));
+			String primary = LearningEngine.primaryJobroleOf(u);
+			if (primary != null && !primary.isEmpty())
+			{
+				mine.add(primary);
+			}
+			if (mine.contains(jobroleid))
+			{
+				writeProfileTargets(archive, u.getId(), mine, actor);
+			}
+		}
+	}
+
+	/**
+	 * Mission agent: for each of the user's merged profile rows with a withindays and no existing learnertarget row, write
+	 * one -- duedate = today (org zone) + withindays, source=profile. Written dates never move; managers use setdue.
+	 */
+	void writeProfileTargets(MediaArchive archive, String userid, java.util.Collection<String> jobroles, String actor)
+	{
+		LearningEngine engine = new LearningEngine(archive);
+		LearningEngine.Profiles p = engine.loadProfiles(jobroles);
+		Map<String, Integer> within = new HashMap<>();
+		for (LearningEngine.ProfileRow r : p.rows)
+		{
+			if (r.withindays != null && (!within.containsKey(r.topicid) || r.withindays < within.get(r.topicid)))
+			{
+				within.put(r.topicid, r.withindays);
+			}
+		}
+		if (within.isEmpty())
+		{
+			return;
+		}
+		java.time.ZoneId zone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.LocalDate today = java.time.LocalDate.now(zone);
+		Searcher s = archive.getSearcher("learnertarget");
+		synchronized (LearningEngine.WRITE_LOCK)
+		{
+			for (Map.Entry<String, Integer> e : within.entrySet())
+			{
+				if (s.searchById(userid + "_" + e.getKey()) != null)
+				{
+					continue; // written dates never move; managers use setdue
+				}
+				LearningEngine.TargetRow t = new LearningEngine.TargetRow();
+				t.user = userid; t.topicid = e.getKey(); t.source = "profile"; t.createdby = actor; t.createdon = new Date();
+				t.duedate = LearningEngine.parseYmd(today.plusDays(e.getValue()).toString());
+				engine.saveTarget(t);
+				JSONObject after = new JSONObject();
+				after.put("duedate", t.duedate == null ? null : today.plusDays(e.getValue()).toString());
+				after.put("source", "profile");
+				audit(archive, actor, "learnertarget.set", "user", userid, null, after);
+			}
+		}
 	}
 
 	// ---- helpers
@@ -433,6 +519,7 @@ public class TestUProfileModule extends TestUBaseModule
 			o.put("validitymonths", r.validitymonths);
 			o.put("passpercent", r.passpercent);
 			o.put("renewalwindowdays", r.renewalwindowdays);
+			o.put("withindays", r.withindays);
 			o.put("evaluationrequired", Boolean.valueOf(r.validitymonths != null || r.evaluationrequired));
 			o.put("afterfinish", r.afterfinish);
 			o.put("questions", Integer.valueOf(t == null ? 0 : t.questions.size()));
