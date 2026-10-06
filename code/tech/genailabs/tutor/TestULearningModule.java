@@ -1907,16 +1907,13 @@ public class TestULearningModule extends TestUBaseModule
 		return sent;
 	}
 
-	/** Role permission (Settings > Roles) that lets a learner receive mission nudges (due-reminder and status-change pushes). */
-	public static final String MISSION_PERMISSION = "testu_missionnudges";
-
-	/** Same mayReceive rule as the Daily Challenge email (master switch, test allowlist, role permission), for push instead of email. */
+	/** Nudges are gated by the existing Daily Challenge email mayReceive rule (no new permission): same switch, allowlist, role. */
 	private boolean mayReceive(MediaArchive archive, Data u)
 	{
-		String on = archive.getCatalogSettingValue(MISSION_PERMISSION);
-		String only = archive.getCatalogSettingValue(MISSION_PERMISSION + "_only");
+		String on = archive.getCatalogSettingValue("testu_dailychallengeemail");
+		String only = archive.getCatalogSettingValue("testu_dailychallengeemail_only");
 		Data role = (Data) archive.getSearcher("settingsrole").searchById(roleOf(archive, u.getId()));
-		return mayReceive(on, only, u.get("email"), role == null ? null : role.getValues("permissions"), MISSION_PERMISSION);
+		return mayReceive(on, only, u.get("email"), role == null ? null : role.getValues("permissions"), EMAIL_PERMISSION);
 	}
 
 	/** 15-minute event: missionNudges with quiet hours honored (the automatic sweep must never wake a learner up). */
@@ -1934,7 +1931,6 @@ public class TestULearningModule extends TestUBaseModule
 	 */
 	public int missionNudges(MediaArchive archive, boolean inHonorQuietHours)
 	{
-		grantPermissionOnce(archive, MISSION_PERMISSION, "Misión: recibir recordatorios push", "931", "testu_missionnudges_granted");
 		LearningEngine engine = new LearningEngine(archive);
 		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
 		Date now = new Date();
@@ -1952,6 +1948,8 @@ public class TestULearningModule extends TestUBaseModule
 				int hour = now.toInstant().atZone(zone).getHour();
 				if (inHonorQuietHours && (hour < 8 || hour >= 20))
 					continue; // quiet hours: the next run inside the window delivers
+				// loadContent() fresh per user (not hoisted): applyProfiles mutates its Topics/sections/questions per learner
+				// (removed topics, mandatory/assignedlevel/locked/finished), so a shared Content would leak between learners.
 				LearningEngine.Content content = engine.loadContent();
 				LearningEngine.Learner l = engine.loadLearner(u.getId(), LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
 				engine.applyProfiles(content, l);

@@ -97,6 +97,16 @@ def wipe_user_rows(user):
         delete_rows(t, es_ids(t, {"term": {"user": user}}))
 
 
+def setting(sid, value):
+    """Catalog setting value (None deletes the row). Returns the previous value. Copied from check_learning.sh."""
+    prev = (es_doc("catalogsettings", sid) or {}).get("value")
+    if value is None:
+        call(admin, "DELETE", f"/services/lists/data/catalogsettings/{quote(sid)}.json")
+    else:
+        must(f"setting {sid}", call(admin, "PUT", f"/services/lists/data/catalogsettings/{quote(sid)}.json", body={"id": sid, "name": sid, "value": value}))
+    return prev
+
+
 def usersave(field, value, user):
     must(f"usersave {field}", call(admin, "POST", "/services/authentication/usersave.json", form={"username": user, "field": field, field + "value": value}))
 
@@ -145,6 +155,7 @@ def audits(action, target):
 UID = "mission.check@testu.local"
 PASSWORD = "Mc9-" + secrets.token_urlsafe(24)
 PROFILE = [None]
+PREV_ONLY = [False]  # False = untouched (don't restore); None/str = the previous setting value to put back
 
 
 def cleanup():
@@ -155,6 +166,9 @@ def cleanup():
     delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID}}))
     usersave("lastmissionstatus", "", UID)  # so a rerun sees announce on its first mission.json read again
     wipe_user_rows(UID)
+    if PREV_ONLY[0] is not False:  # nudges ran: restore the pre-existing testu_dailychallengeemail_only (mayReceive's allowlist)
+        setting("testu_dailychallengeemail_only", PREV_ONLY[0])
+        PREV_ONLY[0] = False
     refresh()
 
 
@@ -218,6 +232,10 @@ try:
     ok("unknown when -> 400", s == 400, r)
 
     # --- nudges
+    # Nudges are gated by the existing Daily Challenge email mayReceive rule (no dedicated permission): master switch
+    # testu_dailychallengeemail may be off in this shared dev environment, so allowlist UID via testu_dailychallengeemail_only,
+    # same as a tester would before the org switch is on. Restored in cleanup().
+    PREV_ONLY[0] = setting("testu_dailychallengeemail_only", UID)
     put_row("learnernotification", f"{UID}_mission_remind", {"user": UID, "type": "mission", "entitytopic": TOPIC, "remindat": "2020-01-01T00:00:00Z", "read": False, "actor": "tutor"})
     refresh()
     s, r = call(admin, "GET", "/services/testu/learn/missionnudges.json")
