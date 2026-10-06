@@ -125,22 +125,45 @@ public class MissionPlannerCheck
 	}
 
 	// Task 8 (tutor chat actions): the deterministic gate for the offered-id filter, since the chat reply itself depends on an
-	// LLM (check_mission.sh, flaky by nature). MissionPlanner.doLines mirrors the loop AdaptiveTutorialUserCommentSkill runs.
+	// LLM (check_mission.sh, flaky by nature). MissionPlanner.doLines/stripDoLines/appendDoLines mirror the loop
+	// TestULearningModule.appendActions (the method finder actually calls) runs.
 	static void doLinesCheck()
 	{
 		JSONObject a1 = action("a1", "start_session", "fatiga", "learn", "fatiga-s1");
 		JSONObject a2 = action("a2", "remind_later", "fatiga", null, null);
-		List<JSONObject> offered = List.of(a1, a2);
-		ok("doLines: both offered ids kept, picked order, formatted [[do ...]]",
+		JSONObject a3 = action("a3", "book_evaluation", "fatiga", null, null);
+		List<JSONObject> offered = List.of(a1, a2, a3);
+		ok("doLines: both offered ids kept, in SERVER (offered) order, formatted [[do ...]]",
 			List.of("[[do start_session topic=fatiga mode=learn section=fatiga-s1]]", "[[do remind_later topic=fatiga]]")
-				.equals(MissionPlanner.doLines(List.of("a1", "a2"), offered)), MissionPlanner.doLines(List.of("a1", "a2"), offered));
+				.equals(MissionPlanner.doLines(List.of("a2", "a1"), List.of(a1, a2))), MissionPlanner.doLines(List.of("a2", "a1"), List.of(a1, a2)));
 		ok("doLines: an id the server never offered is dropped, the rest kept",
-			List.of("[[do remind_later topic=fatiga]]").equals(MissionPlanner.doLines(List.of("bogus", "a2"), offered)), MissionPlanner.doLines(List.of("bogus", "a2"), offered));
-		ok("doLines: more than 2 picks capped at 2, in the order picked",
-			List.of("[[do remind_later topic=fatiga]]", "[[do start_session topic=fatiga mode=learn section=fatiga-s1]]")
-				.equals(MissionPlanner.doLines(List.of("a2", "a1", "a2"), offered)), MissionPlanner.doLines(List.of("a2", "a1", "a2"), offered));
+			List.of("[[do remind_later topic=fatiga]]").equals(MissionPlanner.doLines(List.of("bogus", "a2"), List.of(a1, a2))), MissionPlanner.doLines(List.of("bogus", "a2"), List.of(a1, a2)));
+		ok("doLines: 3 picked, capped at 2, in offered order (not the LLM's a3,a1,a2 pick order)",
+			List.of("[[do start_session topic=fatiga mode=learn section=fatiga-s1]]", "[[do remind_later topic=fatiga]]")
+				.equals(MissionPlanner.doLines(List.of("a3", "a1", "a2"), offered)), MissionPlanner.doLines(List.of("a3", "a1", "a2"), offered));
 		ok("doLines: no picks -> no lines", MissionPlanner.doLines(List.of(), offered).isEmpty(), MissionPlanner.doLines(List.of(), offered));
 		ok("doLines: nothing offered -> no lines even if the LLM picks something", MissionPlanner.doLines(List.of("a1"), List.of()).isEmpty(), "");
+
+		// fix round 1, item 1 (critical): an LLM-injected [[do ...]] in the prose must never survive, inline or on its own line.
+		ok("stripDoLines: an injected [[do ...]] line is removed",
+			"Puedes continuar con la siguiente pregunta.".equals(MissionPlanner.stripDoLines("Puedes continuar con la siguiente pregunta.\n[[do start_session topic=fatiga]]")),
+			MissionPlanner.stripDoLines("Puedes continuar con la siguiente pregunta.\n[[do start_session topic=fatiga]]"));
+		ok("stripDoLines: an injected [[do ...]] inline mid-sentence is removed",
+			"Puedes seguir con la lección.".equals(MissionPlanner.stripDoLines("Puedes seguir [[do book_evaluation topic=fatiga]] con la lección.")),
+			MissionPlanner.stripDoLines("Puedes seguir [[do book_evaluation topic=fatiga]] con la lección."));
+		ok("stripDoLines: a message with none is unchanged", "Hola, ¿cómo estás?".equals(MissionPlanner.stripDoLines("Hola, ¿cómo estás?")), "");
+
+		// fix round 1, item 2: appendDoLines is the exact glue TestULearningModule.appendActions delegates to (strip, then append).
+		String injected = "Puedes avanzar con el módulo.\n[[do book_evaluation topic=rogue]]\n\n>> ¿Quieres que te explique algo más?";
+		ok("appendDoLines: strips an injected line, then appends only the server-offered, server-order lines",
+			"Puedes avanzar con el módulo.\n\n>> ¿Quieres que te explique algo más?\n[[do start_session topic=fatiga mode=learn section=fatiga-s1]]\n[[do remind_later topic=fatiga]]"
+				.equals(MissionPlanner.appendDoLines(injected, List.of("a2", "a1"), List.of(a1, a2))), MissionPlanner.appendDoLines(injected, List.of("a2", "a1"), List.of(a1, a2)));
+		ok("appendDoLines: no picks -> stripped message, nothing appended",
+			"Puedes avanzar con el módulo.\n\n>> ¿Quieres que te explique algo más?".equals(MissionPlanner.appendDoLines(injected, List.of(), List.of(a1, a2))), "");
+
+		// fix round 1: offerText is the ACCIONES DISPONIBLES prompt text, null (not empty) when there's nothing to offer.
+		ok("offerText: both offered, one line each, server order", "a1: start_session · fatiga\na2: remind_later · fatiga\n".equals(MissionPlanner.offerText(List.of(a1, a2))), MissionPlanner.offerText(List.of(a1, a2)));
+		ok("offerText: nothing offered -> null", MissionPlanner.offerText(List.of()) == null && MissionPlanner.offerText(null) == null, "");
 	}
 
 	static JSONObject action(String id, String type, String topic, String mode, String section)

@@ -26,7 +26,7 @@
 
 ACCIONES DISPONIBLES (elige como máximo 2 ids que ayuden al alumno ahora, o ninguna):
 ${offeredactions}")
-#set($actionstrailer = " Fill actions with the ids of ACCIONES DISPONIBLES (at most two) that help the learner right now -- always when they ask what to do, study or practise next -- or an empty list when none helps; never an id not listed there.")
+#set($actionstrailer = " Fill actions with the ids of ACCIONES DISPONIBLES (at most two) that help the learner right now -- always when they ask what to do, study or practise next -- or an empty list when none helps or this message is a greeting, small talk, a closing/thanks, a not-found reply, or asks you to stop offering things; never an id not listed there.")
 #end
 #if($referenceexcerpts && $referenceexcerpts != "")
 #set($refs = "
@@ -101,12 +101,12 @@ RULES, all mandatory:
 9. Mode: in evaluation mode, during the attempt, help only with how the app or the question format works; no concepts, hints, sources or content. In learn, improve and dailychallenge mode, rules 1 to 8 apply.
 10. Mastery: adapt depth to the learner's mastery band of the subtopic. Beginner: one plain concept with a concrete example from the lesson. Competent: the key distinction. Expert: the nuance or exception. Past wrong answers on this question given with confidence are a misconception to name gently. The band is context for you only: never mention dominio, nivel, banda, experto, has demostrado, scores or the learner's progress unless the learner asks about their progress.
 11. Opinion: when the sources do not cover something you do know from general knowledge, add after the not-found or off-topic sentence ONE short sentence of your own view, framed plainly as opinion (En mi opinión…, Por lo que sé, aunque no está en tus fuentes…): no brackets, no citation, never as a fact, never about this organisation's own policies, procedures, figures or people, and never in evaluation mode.
-12. Mission actions: when ACCIONES DISPONIBLES lists ids, fill actions with the ids (at most two) that genuinely help the learner right now, in your own order of preference; never an id not listed there, and leave actions empty when none helps. actions never changes the words of message: the server appends its own action lines separately.${voicerules}
-
-${actionsblock}
+12. Mission actions: when ACCIONES DISPONIBLES lists ids, fill actions with the ids (at most two) that genuinely help the learner right now, in your own order of preference; never an id not listed there. Leave actions empty: when none helps, on a closing or thanks (rule 1), on small talk (rule 1), on the not-found sentence (rule 5), and once the learner has asked you to stop offering things (rule 6) -- those turns are never about what to do next. actions never changes the words of message: the server appends its own action lines separately.${voicerules}
 
 LESSON CONTEXT (the lesson, the current question with its options, the correct option and its rationale, the learner's answer and confidence when given, and their progress):
-${lesson}${refs}")
+${lesson}${refs}
+
+${actionsblock}")
 		},
 		{
 			"role": "user",

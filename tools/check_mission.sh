@@ -275,20 +275,23 @@ try:
     ids = [(ch.get(k) or {}).get("id", "") for k in ("activechannel", "currentchannel")] if s == 200 else []
     CH = next((i for i in ids if i and not i.startswith("$")), None)
     ok("tutor chat: channel available", bool(CH), ch)
-    CHATQ = "¿qué hago ahora?"
-    must("tutor chat post", call(me, "POST", "/services/module/entitytutorial/continue.json", form={
-        "currentscenario": "chat_tutor", "functionname": "chat_tutor_usercomment", "context_tutorialid": item0["tutorialid"],
-        "channel": CH, "context_query": CHATQ, "context_sectionid": item0["sectionid"], "context_componentid": item0["componentid"],
-        "context_skiploader": "true"}))
-    reply, hist = None, {}
-    for _ in range(45):
-        time.sleep(2)
-        s, hist = call(me, "GET", "/services/testu/tutor/history.json?channel=" + quote(CH))
-        turns = hist.get("turns", []) if s == 200 else []
-        if len(turns) >= 2 and turns[-1]["from"] == "tutor" and turns[-2]["from"] == "user":
-            reply = turns[-1]["text"]
-            break
-    ok("tutor chat: got a reply within 90 s (llamat down?)", reply is not None, hist)
+
+    def ask_tutor(question):
+        """Posts question on CH and polls testu/tutor/history.json for the tutor's reply; None if none arrived in 90s."""
+        must("tutor chat post", call(me, "POST", "/services/module/entitytutorial/continue.json", form={
+            "currentscenario": "chat_tutor", "functionname": "chat_tutor_usercomment", "context_tutorialid": item0["tutorialid"],
+            "channel": CH, "context_query": question, "context_sectionid": item0["sectionid"], "context_componentid": item0["componentid"],
+            "context_skiploader": "true"}))
+        for _ in range(45):
+            time.sleep(2)
+            s, hist = call(me, "GET", "/services/testu/tutor/history.json?channel=" + quote(CH))
+            turns = hist.get("turns", []) if s == 200 else []
+            if len(turns) >= 2 and turns[-1]["from"] == "tutor" and turns[-2]["from"] == "user" and turns[-2]["text"] == question:
+                return turns[-1]["text"]
+        return None
+
+    reply = ask_tutor("¿qué hago ahora?")
+    ok("tutor chat: got a reply within 90 s (llamat down?)", reply is not None, reply)
     if reply is not None:
         ok("tutor chat: [[do ...]] present (the learner asked what to do next)", "[[do" in reply, reply)
         dolines = re.findall(r"\[\[do ([a-z_]+) topic=(\S+?)(?: mode=\S+)?(?: section=\S+)?\]\]", reply)
@@ -296,6 +299,12 @@ try:
            len(dolines) <= 2 and all(t[0] in ("start_session", "book_evaluation", "schedule_certification", "remind_later") and t[1] == TOPIC for t in dolines),
            (dolines, TOPIC, reply))
         ok("tutor chat: [[do ...]] lines (if any) come after the >> follow-ups", not dolines or reply.rfind(">>") < reply.rfind("[[do"), reply)
+
+    # fix round 1, item 4: a negative case -- a greeting carries no [[do line (rule 12: never on small talk/closings).
+    greet = ask_tutor("hola, gracias")
+    ok("tutor chat: got a reply to the greeting within 90 s (llamat down?)", greet is not None, greet)
+    if greet is not None:
+        ok("tutor chat: no [[do ...]] on a greeting/thanks (small talk is never an action turn)", "[[do" not in greet, greet)
 
     # --- remind.json
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "tomorrow"})

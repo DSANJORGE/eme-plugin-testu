@@ -357,28 +357,66 @@ public final class MissionPlanner
 		return a;
 	}
 
+	/** Any `[[do ...]]` token the LLM wrote itself (fix round 1, task 8: a prose-injected one would render as a live button if
+	 *  it survived) -- removed whole, inline or on its own line, before the server's own lines (doLines) are appended. Pure. */
+	public static String stripDoLines(String message)
+	{
+		if (message == null)
+			return null;
+		// A line that is only a [[do ...]] token goes whole, newline included; a remaining inline one loses only the token,
+		// so two adjacent words never get glued together -- the leftover double space/blank-line is cleaned up after.
+		String out = message.replaceAll("(?m)^[ \\t]*\\[\\[do\\b[^\\]]*\\]\\][ \\t]*$\\n?", "");
+		out = out.replaceAll("\\[\\[do\\b[^\\]]*\\]\\]", "");
+		return out.replaceAll("[ \\t]{2,}", " ").replaceAll("\\n{3,}", "\n\n").trim();
+	}
+
 	/**
-	 * Pure mirror of the offered-id filter in AdaptiveTutorialUserCommentSkill (task 8): the LLM's chosen action ids, checked
-	 * against what the server actually offered -- at most 2, unknown ids dropped, picked order kept -- formatted as the chat
-	 * reply's `[[do ...]]` lines. Lets check_learning.sh assert the filter deterministically; the live LLM path (check_mission.sh)
-	 * is flaky by nature and stays a separate, best-effort check.
-	 * ponytail: duplicated, not called, by the finder skill -- finder has no compile-time testu dependency and reflects its own
-	 * copy of this same loop instead of this method. Converge if finder ever gains that dependency.
+	 * The LLM's chosen action ids, checked against what the server actually offered: at most 2, unknown ids dropped, kept in
+	 * SERVER (offered) order, not the order the LLM picked them (fix round 1 ruling) -- formatted as the chat reply's
+	 * `[[do ...]]` lines. Pure; lets check_learning.sh assert the filter deterministically, since the live LLM path
+	 * (check_mission.sh) is flaky by nature and stays a separate, best-effort check.
 	 */
 	public static List<String> doLines(List<?> pickedIds, List<JSONObject> offered)
 	{
-		Map<String, JSONObject> byId = new java.util.LinkedHashMap<>();
-		for (JSONObject a : offered)
-			byId.put(String.valueOf(a.get("id")), a);
-		List<String> out = new ArrayList<>();
+		java.util.Set<String> picked = new java.util.LinkedHashSet<>();
 		for (Object id : pickedIds)
+			picked.add(String.valueOf(id));
+		List<String> out = new ArrayList<>();
+		for (JSONObject a : offered)
 		{
-			JSONObject a = byId.get(String.valueOf(id));
-			if (a == null || out.size() == 2)
+			if (out.size() == 2)
+				break;
+			if (!picked.contains(String.valueOf(a.get("id"))))
 				continue; // never an action the server did not offer
 			out.add("[[do " + a.get("type") + " topic=" + a.get("topic") + (a.get("mode") == null ? "" : " mode=" + a.get("mode")) + (a.get("section") == null ? "" : " section=" + a.get("section")) + "]]");
 		}
 		return out;
+	}
+
+	/**
+	 * The chat reply, with every LLM-injected `[[do ...]]` stripped and the server's own lines (at most 2, picked from
+	 * offered, server order) appended. The one glue method the finder skill's appendActions (TestULearningModule, reflected)
+	 * delegates to, and the one a deterministic check can exercise end to end with no server/LLM involved (fix round 1,
+	 * item 2). Pure.
+	 */
+	public static String appendDoLines(String message, List<?> pickedIds, List<JSONObject> offered)
+	{
+		StringBuilder out = new StringBuilder(stripDoLines(message));
+		for (String line : doLines(pickedIds, offered))
+			out.append("\n").append(line);
+		return out.toString();
+	}
+
+	/** The ACCIONES DISPONIBLES prompt text for the offered actions (id: type · topic, one per line); null when there are none,
+	 *  so the template's `#if($offeredactions)` skips the block. Pure. */
+	public static String offerText(List<JSONObject> offered)
+	{
+		if (offered == null || offered.isEmpty())
+			return null;
+		StringBuilder out = new StringBuilder();
+		for (JSONObject a : offered)
+			out.append(a.get("id")).append(": ").append(a.get("type")).append(" · ").append(a.get("topic")).append("\n");
+		return out.toString();
 	}
 
 	public static Date remindAt(String when, Date now, ZoneId z)

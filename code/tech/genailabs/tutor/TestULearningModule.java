@@ -382,15 +382,40 @@ public class TestULearningModule extends TestUBaseModule
 		reply(inReq, answerReply(answer, false, r.question));
 	}
 
+	/** Content + learner + profiles for a user record, with no WebPageRequest -- the one path mission() (via load()) and
+	 *  actionsFor() (reflection-called from finder) both go through, so the mission card and the chat's offered actions
+	 *  cannot drift on visibility or zone (fix round 1, task 8, item 3). */
+	private Object[] loadFor(MediaArchive archive, Data urec)
+	{
+		LearningEngine engine = new LearningEngine(archive);
+		LearningEngine.Content content = engine.loadContent(visibleTopicsFor(archive, urec));
+		LearningEngine.Learner learner = engine.loadLearner(urec.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
+		engine.applyProfiles(content, learner);
+		return new Object[] {engine, content, learner};
+	}
+
 	/** Content + learner + profiles for the signed-in user, as state.json builds them (null user already failed the request). */
 	private Object[] load(WebPageRequest inReq, User inUser)
 	{
-		LearningEngine engine = new LearningEngine(getMediaArchive(inReq));
-		LearningEngine.Content content = engine.loadContent(visibleTopics(inReq));
-		Data urec = freshUser(getMediaArchive(inReq), inUser);
-		LearningEngine.Learner learner = engine.loadLearner(inUser.getId(), LearningEngine.jobrolesOf(urec), LearningEngine.primaryJobroleOf(urec));
-		engine.applyProfiles(content, learner);
-		return new Object[] {engine, content, learner};
+		MediaArchive archive = getMediaArchive(inReq);
+		return loadFor(archive, freshUser(archive, inUser));
+	}
+
+	/** Topic ids visible to a user record, the same rule TestUSocialModule.canSeeTopic (BaseSearchSecurity.attachStandardSecurity,
+	 *  as topics.json/visibleTopics(WebPageRequest) apply it) uses, computed with no WebPageRequest for reflection callers. */
+	static java.util.Set<String> visibleTopicsFor(MediaArchive archive, Data urec)
+	{
+		java.util.Set<String> ids = new java.util.HashSet<>();
+		String role = urec.get("role");
+		for (Object o : archive.query("entitytopic").all().search())
+		{
+			Data t = (Data) o;
+			if (TestUSocialModule.canSeeTopic(archive, t, urec.getId(), role))
+			{
+				ids.add(t.getId());
+			}
+		}
+		return ids;
 	}
 
 	/** MissionPlanner.mission() for the learner, with recommend() restricted to the goal topic once MissionPlanner has picked one
@@ -413,9 +438,10 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/** The signed-in learner's mission actions (spec 2026-10-05 task 8), for the tutor chat skill to offer as `[[do ...]]` lines.
-	 *  Chat content is never an input here; the only inputs are the learner's own progress and the content catalog. Reflection-called
-	 *  from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time dependency on testu. Empty list = no bean
-	 *  behaviour change (unknown user, or no goal). */
+	 *  Chat content is never an input here; the only inputs are the learner's own progress and the content catalog. Goes through
+	 *  loadFor()/orgZone() exactly like mission() (item 3): the chat and the mission card can't disagree on what's offered.
+	 *  Reflection-called from plugins/finder (AdaptiveTutorialUserCommentSkill), which has no compile-time dependency on testu.
+	 *  Empty list = no bean behaviour change (unknown user, or no goal). remind_later carries no `options` (brief's wire shape). */
 	public java.util.List<JSONObject> actionsFor(MediaArchive archive, String userid)
 	{
 		Data u = (Data) archive.getSearcher("user").searchById(userid);
@@ -423,17 +449,50 @@ public class TestULearningModule extends TestUBaseModule
 		{
 			return java.util.List.of();
 		}
-		LearningEngine engine = new LearningEngine(archive);
-		LearningEngine.Content content = engine.loadContent(); // ponytail: org-wide visibility; the IRIS tab is org-wide anyway
-		LearningEngine.Learner l = engine.loadLearner(userid, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
-		engine.applyProfiles(content, l);
-		ZoneId zone = zoneOf(userZone(archive, userid), (ZoneId) engine.orgZone()[0]);
-		JSONArray a = (JSONArray) missionFor(engine, content, l, new Date(), zone).get("actions");
+		Object[] loaded = loadFor(archive, u);
+		LearningEngine engine = (LearningEngine) loaded[0];
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		JSONArray a = (JSONArray) missionFor(engine, (LearningEngine.Content) loaded[1], (LearningEngine.Learner) loaded[2], new Date(), zone).get("actions");
 		java.util.List<JSONObject> out = new java.util.ArrayList<>();
 		for (Object o : a)
 		{
-			out.add((JSONObject) o);
+			JSONObject action = (JSONObject) o;
+			if ("remind_later".equals(action.get("type")) && action.containsKey("options"))
+			{
+				action = new JSONObject(action);
+				action.remove("options");
+			}
+			out.add(action);
 		}
+		return out;
+	}
+
+	/** The ACCIONES DISPONIBLES prompt text for the tutor chat (MissionPlanner.offerText over actionsFor()); null in evaluation
+	 *  mode (no action ever attaches there) or when there is nothing to offer. Reflection-called from finder. */
+	public String offerText(MediaArchive archive, String userid, String mode)
+	{
+		if ("evaluation".equals(mode))
+		{
+			return null;
+		}
+		long started = System.currentTimeMillis();
+		String text = MissionPlanner.offerText(actionsFor(archive, userid));
+		log.info("mission actions offered in " + (System.currentTimeMillis() - started) + " ms");
+		return text;
+	}
+
+	/** The chat reply with the LLM's own `[[do ...]]` stripped (fix round 1, item 1: never let an injected one survive) and, outside
+	 *  evaluation mode, the server's validated lines appended (MissionPlanner.appendDoLines over actionsFor()). The one method
+	 *  finder calls: reflect, append, nothing else (fix round 1, item 2). */
+	public String appendActions(MediaArchive archive, String userid, String message, java.util.List<?> picked, String mode)
+	{
+		if ("evaluation".equals(mode))
+		{
+			return MissionPlanner.stripDoLines(message);
+		}
+		long started = System.currentTimeMillis();
+		String out = MissionPlanner.appendDoLines(message, picked, actionsFor(archive, userid));
+		log.info("mission actions appended in " + (System.currentTimeMillis() - started) + " ms");
 		return out;
 	}
 
