@@ -1678,6 +1678,12 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		LearningEngine.Learner learner = engine.loadLearner(uid, LearningEngine.jobrolesOf(u), LearningEngine.primaryJobroleOf(u));
 		LearningEngine.Content pcontent = engine.loadContent();
 		engine.applyProfiles(pcontent, learner);
+		// Mission agent (spec 2026-10-05): the same earliest-of-target/certification-expiry rule MissionPlanner uses for the
+		// goal plan, mirrored here so the person page can show a required topic's due date without re-deriving it.
+		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
+		ZoneId orgzone = (ZoneId) engine.orgZone()[0];
+		ZoneId zone = TestULearningModule.zoneOf(learningModule.userZone(archive, uid), orgzone);
+		Date now = new Date();
 		JSONArray required = new JSONArray();
 		JSONObject lowest = null;
 		int gaps = 0;
@@ -1712,6 +1718,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			ro.put("evaluationmet", Boolean.valueOf(evmet));
 			int gap = req == null ? 0 : LearningEngine.levelIndex(req) - LearningEngine.levelIndex((String) st.get("band"));
 			ro.put("gap", gap);
+			Date due = MissionPlanner.deadline(t, learner, now, zone);
+			ro.put("duedate", due == null ? null : LearningEngine.ymd(due, zone));
+			ro.put("duesource", due == null ? null : MissionPlanner.deadlineSource(t, learner, now, zone, due));
 			required.add(ro);
 			if (!Boolean.TRUE.equals(st.get("meetsrequirement")) || !evmet)
 				gaps++;

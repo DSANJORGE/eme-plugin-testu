@@ -244,6 +244,11 @@ try:
     ok("saveprofile's withindays cascade writes a target for the existing member", row and row.get("source") == "profile", row)
     due1 = row and row.get("duedate")
 
+    # task 13: person.json mirrors that same target as duedate/duesource on the required topic (TestUAnalyticsModule.loadPerson).
+    s, person = call(admin, "GET", f"/services/testu/analytics/person.json?user={UID}")
+    rt = next((t for t in (person.get("risk") or {}).get("requiredtopics", []) if t["id"] == TOPIC), None)
+    ok("person.json shows the profile target's due date", s == 200 and rt and rt.get("duedate") and rt.get("duesource") == "profile", rt)
+
     # 3. a later withindays edit on the same row must not move the date already written.
     call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": PROFILE[0], "name": "Mission check", "rows": json.dumps([{"topic": TOPIC, "requiredlevel": "competent", "mandatory": True, "requiresprevious": False, "afterfinish": "keep", "withindays": 5}])})
     refresh()
