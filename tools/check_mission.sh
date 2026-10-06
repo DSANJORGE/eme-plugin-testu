@@ -177,6 +177,9 @@ UID3 = "mission.check3@testu.local"
 PASSWORD3 = "Mc9-" + secrets.token_urlsafe(24)
 PROFILE = [None]
 PROFILE2 = [None]
+# The negative-scope manager (fix round 1, item 6): a one-off account, unlike UID/UID2/UID3 which are reused across runs --
+# deleted outright in cleanup(), not just reset, since it exists only to probe an out-of-scope coachaction.
+MGREMAIL = "mgr.check.mission@testu.local"
 MGRPASS = "Mc9-" + secrets.token_urlsafe(24)
 PREV_ONLY = [False]  # False = untouched (don't restore); None/str = the previous setting value to put back
 
@@ -199,6 +202,11 @@ def cleanup():
     delete_rows("certification", es_ids("certification", {"term": {"user": UID3}}))
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID3}}))
     wipe_user_rows(UID3)
+    delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": MGREMAIL}}))
+    delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": MGREMAIL}}))
+    delete_rows("coachdismissal", es_ids("coachdismissal", {"term": {"user": MGREMAIL}}))
+    wipe_user_rows(MGREMAIL)
+    call(admin, "POST", "/services/testu/personas/deleteuser.json", form={"userid": MGREMAIL})  # one-off account: delete, don't just reset
     if PREV_ONLY[0] is not False:  # nudges ran: restore the pre-existing testu_dailychallengeemail_only (mayReceive's allowlist)
         setting("testu_dailychallengeemail_only", PREV_ONLY[0])
         PREV_ONLY[0] = False
@@ -368,11 +376,17 @@ try:
             call(es, "POST", "/settingsrole/manager/_update", body={"doc": {"permissions": perms}}, base=ES)
             refresh()
 
+        # fix round 2, item 5: if this run is killed between here and the role_perms(orig_role_perms) restore in finally
+        # below, the "manager" role is left with training_manage granted org-wide. To check/fix by hand afterward:
+        #   curl -s localhost:9200/site_catalog/settingsrole/manager | python3 -c \
+        #     'import json,sys;print("training_manage" in json.load(sys.stdin)["_source"]["permissions"])'
+        # and if that prints True, remove it with the same _update call role_perms() below makes, passing the role's
+        # current permissions list minus "training_manage".
         try:
             role_perms(orig_role_perms + ["training_manage"])
-            make_user("mgr.check.mission@testu.local", MGRPASS, role="manager")
-            saveteam("mgr.check.mission@testu.local")
-            manager = login("mgr.check.mission@testu.local", MGRPASS)
+            make_user(MGREMAIL, MGRPASS, role="manager")
+            saveteam(MGREMAIL)
+            manager = login(MGREMAIL, MGRPASS)
 
             # UID2's team is None, which is never in a specific-team manager's scope.
             s, r = call(manager, "POST", "/services/testu/analytics/coachaction.json", form={"action": "setdue", "topic": TOPIC, "users": json.dumps([UID2]), "duedate": "2030-01-01"})

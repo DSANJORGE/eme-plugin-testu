@@ -2518,6 +2518,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			fail(inReq, 400, "bad_request");
 			return;
 		}
+		if (archive.getCachedData("entitytopic", topic) == null) // same existence check as setdue
+		{
+			fail(inReq, 400, "bad_request");
+			return;
+		}
 		Map<String, Data> users = usersById(archive);
 		for (String id : ids)
 		{
@@ -2547,13 +2552,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				continue;
 			}
 			String rowId = id + "_coach_" + topic;
-			Data existing;
-			synchronized (LearningEngine.WRITE_LOCK) // dedup read only: loadContent/missionFor/push happen outside the lock
-			{
-				existing = (Data) ns.searchById(rowId);
-			}
-			Date prevPush = existing == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(existing.getValue("pushedat"));
-			if (prevPush != null && now.getTime() - prevPush.getTime() < 3L * 86400000)
+			// Cheap unlocked pre-check: skip the content/mission build below when this is obviously already recently pushed.
+			// Not authoritative by itself -- the locked block further down re-checks and claims the row atomically.
+			Data precheck = (Data) ns.searchById(rowId);
+			Date precheckPush = precheck == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(precheck.getValue("pushedat"));
+			if (precheckPush != null && now.getTime() - precheckPush.getTime() < 3L * 86400000)
 			{
 				skipped++;
 				continue;
@@ -2564,7 +2567,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			engine.applyProfiles(content, learner);
 			JSONObject m = learningModule.missionFor(engine, content, learner, now, zone);
 			// The text must describe the requested topic, not whichever one happens to be this learner's single mission goal:
-			// look up that topic's own plan in m.plans, and fall back to the goal only when the topic isn't a required plan.
+			// look up that topic's own plan in m.plans. No plan for this topic -- e.g. it isn't required for this learner --
+			// means there's nothing to nudge them about on it, so skip rather than push goal text under the wrong topic.
 			JSONObject topicPlan = null;
 			Object plansObj = m.get("plans");
 			if (plansObj instanceof JSONArray)
@@ -2579,23 +2583,42 @@ public class TestUAnalyticsModule extends TestUBaseModule
 					}
 				}
 			}
-			JSONObject textGoal = topicPlan != null ? topicPlan : (JSONObject) m.get("goal");
-			String textStatus = topicPlan != null ? String.valueOf(topicPlan.get("status")) : String.valueOf(m.get("status"));
-			Data n = existing != null ? existing : ns.createNewData();
-			n.setId(rowId);
-			n.setValue("user", id);
-			n.setValue("actor", "tutor");
-			n.setValue("actorname", learningModule.tutorName(archive));
-			n.setValue("type", "mission");
-			n.setValue("datecreated", now);
-			n.setValue("read", Boolean.FALSE);
-			n.setValue("entitytopic", topic);
-			n.setValue("status", textStatus);
-			n.setValue("text", TestULearningModule.missionText(textStatus, textGoal));
-			n.setValue("pushedat", now);
-			synchronized (LearningEngine.WRITE_LOCK) // the save only
+			if (topicPlan == null)
 			{
-				ns.saveData(n, null);
+				skipped++;
+				continue;
+			}
+			String textStatus = String.valueOf(topicPlan.get("status"));
+
+			// Single critical section: re-read, decide and claim (save) under the same lock, so two concurrent nudges for the
+			// same learner+topic can't both pass the dedup check and both push -- the loser of the race sees the winner's
+			// fresh pushedat and is skipped here, never pushed.
+			Data n = null;
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				Data current = (Data) ns.searchById(rowId);
+				Date currentPush = current == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(current.getValue("pushedat"));
+				if (currentPush == null || now.getTime() - currentPush.getTime() >= 3L * 86400000)
+				{
+					n = current != null ? current : ns.createNewData();
+					n.setId(rowId);
+					n.setValue("user", id);
+					n.setValue("actor", "tutor");
+					n.setValue("actorname", learningModule.tutorName(archive));
+					n.setValue("type", "mission");
+					n.setValue("datecreated", now);
+					n.setValue("read", Boolean.FALSE);
+					n.setValue("entitytopic", topic);
+					n.setValue("status", textStatus);
+					n.setValue("text", TestULearningModule.missionText(textStatus, topicPlan));
+					n.setValue("pushedat", now);
+					ns.saveData(n, null); // claims the row
+				}
+			}
+			if (n == null)
+			{
+				skipped++;
+				continue;
 			}
 			social.push(archive, n);
 			done++;
