@@ -159,6 +159,7 @@ public class TestUProfileModule extends TestUBaseModule
 		JSONObject before = null;
 		JSONObject after = null;
 		boolean newWithin = false; // a row's withindays went from unset to set: existing member targets need writing
+		Map<String, List<Data>> membersByJobrole = Map.of();
 		synchronized (LOCK)
 		{
 			Data p = id.isEmpty() ? null : (Data) list.searchById(id);
@@ -233,12 +234,14 @@ public class TestUProfileModule extends TestUBaseModule
 			}
 			// Built from the row we just saved, still under the lock. Re-reading it after the block could come back null
 			// when a concurrent delete wins the race, and the audit "after" payload must not NPE the request.
-			after = profileJson(archive, content, p, memberCounts(archive));
+			membersByJobrole = membersByJobrole(archive);
+			after = profileJson(archive, content, p, memberCounts(membersByJobrole));
 		}
 		audit(inReq, archive, "jobprofile.save", "jobrole", id, before, after);
 		if (newWithin)
 		{
-			notifyMembersWithindays(archive, id, inReq.getUser().getId());
+			// Reuses the user-table scan just taken for "after" instead of a third pass over every user.
+			notifyMembersWithindays(archive, membersByJobrole.getOrDefault(id, List.of()), inReq.getUser().getId());
 		}
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -361,34 +364,25 @@ public class TestUProfileModule extends TestUBaseModule
 		reply(inReq, resp);
 	}
 
-	/** Every user currently assigned jobroleid (primary or extra): re-derive their withindays merge and write any new target. */
-	void notifyMembersWithindays(MediaArchive archive, String jobroleid, String actor)
+	/** For each of these users (already known to carry some jobrole): re-derive their withindays merge and write any new target. */
+	void notifyMembersWithindays(MediaArchive archive, List<Data> members, String actor)
 	{
-		HitTracker hits = archive.query("user").all().search();
-		if (hits == null)
+		for (Data u : members)
 		{
-			return;
-		}
-		hits.enableBulkOperations();
-		for (Object o : hits)
-		{
-			Data u = (Data) o;
 			Set<String> mine = new HashSet<>(LearningEngine.jobrolesOf(u));
 			String primary = LearningEngine.primaryJobroleOf(u);
 			if (primary != null && !primary.isEmpty())
 			{
 				mine.add(primary);
 			}
-			if (mine.contains(jobroleid))
-			{
-				writeProfileTargets(archive, u.getId(), mine, actor);
-			}
+			writeProfileTargets(archive, u.getId(), mine, actor);
 		}
 	}
 
 	/**
 	 * Mission agent: for each of the user's merged profile rows with a withindays and no existing learnertarget row, write
-	 * one -- duedate = today (org zone) + withindays, source=profile. Written dates never move; managers use setdue.
+	 * one -- duedate = today (learner's own zone, else the org's) + withindays, source=profile. Written dates never move;
+	 * managers use setdue.
 	 */
 	void writeProfileTargets(MediaArchive archive, String userid, java.util.Collection<String> jobroles, String actor)
 	{
@@ -406,7 +400,8 @@ public class TestUProfileModule extends TestUBaseModule
 		{
 			return;
 		}
-		java.time.ZoneId zone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.ZoneId orgzone = (java.time.ZoneId) engine.orgZone()[0];
+		java.time.ZoneId zone = TestULearningModule.zoneOf(new TestULearningModule().userZone(archive, userid), orgzone);
 		java.time.LocalDate today = java.time.LocalDate.now(zone);
 		Searcher s = archive.getSearcher("learnertarget");
 		synchronized (LearningEngine.WRITE_LOCK)
@@ -417,12 +412,13 @@ public class TestUProfileModule extends TestUBaseModule
 				{
 					continue; // written dates never move; managers use setdue
 				}
+				String dueymd = today.plusDays(e.getValue()).toString();
 				LearningEngine.TargetRow t = new LearningEngine.TargetRow();
 				t.user = userid; t.topicid = e.getKey(); t.source = "profile"; t.createdby = actor; t.createdon = new Date();
-				t.duedate = LearningEngine.parseYmd(today.plusDays(e.getValue()).toString());
+				t.duedate = LearningEngine.parseYmd(dueymd);
 				engine.saveTarget(t);
 				JSONObject after = new JSONObject();
-				after.put("duedate", t.duedate == null ? null : today.plusDays(e.getValue()).toString());
+				after.put("duedate", dueymd);
 				after.put("source", "profile");
 				audit(archive, actor, "learnertarget.set", "user", userid, null, after);
 			}
@@ -469,29 +465,46 @@ public class TestUProfileModule extends TestUBaseModule
 	}
 
 	/**
-	 * profile id -> number of users referencing it, once per user: jobrole contains it OR primaryjobrole equals it. A dangling
-	 * primaryjobrole (jobrole cleared without the primary) must still block the delete and show in the headcount.
+	 * One pass over the user table: profile id -> its member users (jobrole contains it OR primaryjobrole equals it; a
+	 * dangling primaryjobrole with jobrole cleared still counts). Shared by memberCounts (headcount) and saveProfile's
+	 * notifyMembersWithindays, so a save doesn't scan every user more than once where the result can be reused.
 	 */
-	static Map<String, Integer> memberCounts(MediaArchive archive)
+	static Map<String, List<Data>> membersByJobrole(MediaArchive archive)
 	{
-		Map<String, Integer> out = new HashMap<>();
+		Map<String, List<Data>> out = new HashMap<>();
 		HitTracker hits = archive.query("user").all().search();
 		if (hits != null)
 		{
 			hits.enableBulkOperations();
 			for (Object o : hits)
 			{
-				Set<String> mine = new HashSet<>(LearningEngine.jobrolesOf((Data) o));
-				String primary = LearningEngine.primaryJobroleOf((Data) o);
+				Data u = (Data) o;
+				Set<String> mine = new HashSet<>(LearningEngine.jobrolesOf(u));
+				String primary = LearningEngine.primaryJobroleOf(u);
 				if (primary != null && !primary.isEmpty())
 				{
 					mine.add(primary);
 				}
 				for (String id : mine)
 				{
-					out.merge(id, 1, Integer::sum);
+					out.computeIfAbsent(id, k -> new ArrayList<>()).add(u);
 				}
 			}
+		}
+		return out;
+	}
+
+	static Map<String, Integer> memberCounts(MediaArchive archive)
+	{
+		return memberCounts(membersByJobrole(archive));
+	}
+
+	static Map<String, Integer> memberCounts(Map<String, List<Data>> membersByJobrole)
+	{
+		Map<String, Integer> out = new HashMap<>();
+		for (Map.Entry<String, List<Data>> e : membersByJobrole.entrySet())
+		{
+			out.put(e.getKey(), e.getValue().size());
 		}
 		return out;
 	}

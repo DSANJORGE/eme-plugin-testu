@@ -169,15 +169,25 @@ try:
     AUDIT_SINCE[0] = base["now"]
 
     # --- profile targets
-    s, r = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": "", "name": "Mission check", "rows": json.dumps([{"topic": TOPIC, "requiredlevel": "competent", "mandatory": True, "requiresprevious": False, "afterfinish": "keep", "withindays": 30}])})
-    ok("saveprofile with withindays", s == 200 and r["profile"]["rows"][0]["withindays"] == 30, r)
+    # 1. blank withindays: assigning the profile writes no target.
+    s, r = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": "", "name": "Mission check", "rows": json.dumps([{"topic": TOPIC, "requiredlevel": "competent", "mandatory": True, "requiresprevious": False, "afterfinish": "keep"}])})
+    ok("saveprofile: blank withindays", s == 200 and r["profile"]["rows"][0]["withindays"] is None, r)
     PROFILE[0] = r["profile"]["id"]
     s, r = call(admin, "POST", "/services/testu/personas/setprofiles.json", form={"user": UID, "primary": PROFILE[0], "extras": "[]"})
     ok("setprofiles: 200", s == 200, r)
     refresh()
+    ok("setprofiles with blank withindays writes no target", es_doc("learnertarget", f"{UID}_{TOPIC}") is None, es_doc("learnertarget", f"{UID}_{TOPIC}"))
+
+    # 2. saving a withindays onto that row now (UID already an existing member, via setprofiles above) must write a target
+    # for UID too, through saveProfile's own member cascade -- not through setprofiles.
+    s, r = call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": PROFILE[0], "name": "Mission check", "rows": json.dumps([{"topic": TOPIC, "requiredlevel": "competent", "mandatory": True, "requiresprevious": False, "afterfinish": "keep", "withindays": 30}])})
+    ok("saveprofile with withindays", s == 200 and r["profile"]["rows"][0]["withindays"] == 30, r)
+    refresh()
     row = es_doc("learnertarget", f"{UID}_{TOPIC}")
-    ok("setprofiles writes a profile target", row and row.get("source") == "profile", row)
+    ok("saveprofile's withindays cascade writes a target for the existing member", row and row.get("source") == "profile", row)
     due1 = row and row.get("duedate")
+
+    # 3. a later withindays edit on the same row must not move the date already written.
     call(admin, "POST", "/services/testu/personas/saveprofile.json", form={"id": PROFILE[0], "name": "Mission check", "rows": json.dumps([{"topic": TOPIC, "requiredlevel": "competent", "mandatory": True, "requiresprevious": False, "afterfinish": "keep", "withindays": 5}])})
     refresh()
     row2 = es_doc("learnertarget", f"{UID}_{TOPIC}")
