@@ -12,6 +12,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CP="$ROOT/build:$(find "$ROOT/plugins/system/lib" "$ROOT/plugins/finder/lib" "$ROOT/plugins/community/lib" "$ROOT/tomcat/lib" -type f -name '*.jar' | tr '\n' ':')"
 java -cp "$CP" "$ROOT/plugins/testu/tools/LearningEngineCheck.java"
+java -cp "$CP" "$ROOT/plugins/testu/tools/MissionPlannerCheck.java"
 TESTU_TOOLS="$ROOT/plugins/testu/tools" exec python3 - "$@" <<'PY'
 import datetime, json, math, os, secrets, sys, urllib.error, urllib.request
 from zoneinfo import ZoneInfo
