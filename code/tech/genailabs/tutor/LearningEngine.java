@@ -96,6 +96,7 @@ public class LearningEngine
 		public int renewalwindowdays = 30;
 		// ponytail: zone rides on Topic so the pure finished() keeps its signature; set by the instance applyProfiles, null (-> UTC) for pure callers/checks.
 		public ZoneId zone;
+		public Integer withindays; // mission agent: smallest withindays across the learner's rows; null = no profile deadline
 		public boolean certification()
 		{
 			return validitymonths != null;
@@ -486,6 +487,7 @@ public class LearningEngine
 		public String primaryjobrole; // orders the assignment; null = none (extras alone, by name)
 		public List<EvalAttempt> evaluations = new ArrayList<>(); // the learner's evaluation attempts, oldest first (loadLearner)
 		public Map<String, CertRow> certifications = new HashMap<>(); // by topic id (loadLearner)
+		public Map<String, TargetRow> targets = new HashMap<>(); // by topic id (loadLearner)
 	}
 
 	/** learn | dailychallenge | improve. Legacy (unverified) and evaluation attempts are not learning attempts. */
@@ -554,6 +556,11 @@ public class LearningEngine
 		{
 			CertRow r = certRowOf((Data) o);
 			l.certifications.put(r.topicid, r);
+		}
+		for (Object o : fieldArchive.query("learnertarget").exact("user", inUserid).search())
+		{
+			TargetRow r = targetRowOf((Data) o);
+			l.targets.put(r.topicid, r);
 		}
 		if (inJobroles != null)
 		{
@@ -787,6 +794,7 @@ public class LearningEngine
 		public int position;
 		public boolean mandatory = true, requiresprevious, evaluationrequired;
 		public Integer validitymonths, passpercent, renewalwindowdays;
+		public Integer withindays;
 	}
 
 	/** Every row of the learner's profiles, and profile id -> name. */
@@ -811,6 +819,7 @@ public class LearningEngine
 		r.validitymonths = intOrNull(d.get("validitymonths"));
 		r.passpercent = intOrNull(d.get("passpercent"));
 		r.renewalwindowdays = intOrNull(d.get("renewalwindowdays"));
+		r.withindays = intOrNull(d.get("withindays"));
 		return r;
 	}
 
@@ -952,6 +961,7 @@ public class LearningEngine
 					t.mandatory |= r.mandatory;
 					t.evaluationrequired |= r.evaluationrequired;
 					mergeCertification(t, r);
+					mergeWithindays(t, r);
 					if ("keep".equals(r.afterfinish))
 					{
 						t.afterfinish = "keep";
@@ -967,6 +977,7 @@ public class LearningEngine
 					t.afterfinish = r.afterfinish;
 					t.evaluationrequired = r.evaluationrequired;
 					mergeCertification(t, r);
+					mergeWithindays(t, r);
 					t.requiresprevious = r.requiresprevious && prev != null;
 					t.previoustopic = t.requiresprevious ? prev : null;
 					assigned.put(t.id, t);
@@ -1038,6 +1049,15 @@ public class LearningEngine
 		if (w > t.renewalwindowdays)
 		{
 			t.renewalwindowdays = w;
+		}
+	}
+
+	/** Mission agent: smallest withindays across the learner's profile rows for this topic; null stays null. */
+	public static void mergeWithindays(Topic t, ProfileRow r)
+	{
+		if (r.withindays != null && (t.withindays == null || r.withindays < t.withindays))
+		{
+			t.withindays = r.withindays;
 		}
 	}
 
@@ -1256,6 +1276,40 @@ public class LearningEngine
 	private static Date dateOf(Object v)
 	{
 		return v == null ? null : DateStorageUtil.getStorageUtil().parseFromObject(v);
+	}
+
+	/** One learnertarget row (mission agent): the learner's deadline on a topic. */
+	public static class TargetRow
+	{
+		public String user, topicid, source, createdby;
+		public Date duedate, createdon;
+		public String id()
+		{
+			return user + "_" + topicid;
+		}
+	}
+
+	public static TargetRow targetRowOf(Data d)
+	{
+		TargetRow r = new TargetRow();
+		r.user = d.get("user"); r.topicid = d.get("entitytopic"); r.source = d.get("source"); r.createdby = d.get("createdby");
+		r.duedate = dateOf(d.getValue("duedate")); r.createdon = dateOf(d.getValue("createdon"));
+		return r;
+	}
+
+	/** Caller holds WRITE_LOCK. */
+	public void saveTarget(TargetRow r)
+	{
+		Searcher s = fieldArchive.getSearcher("learnertarget");
+		Data d = (Data) s.searchById(r.id());
+		if (d == null)
+		{
+			d = s.createNewData();
+			d.setId(r.id());
+		}
+		d.setValue("user", r.user); d.setValue("entitytopic", r.topicid); d.setValue("duedate", r.duedate);
+		d.setValue("source", r.source); d.setValue("createdby", r.createdby); d.setValue("createdon", r.createdon);
+		s.saveData(d, null);
 	}
 
 	/** Questions b may draw from: the sequence (random) or the reserved set (reserved), renderable, in a covered subtopic. */

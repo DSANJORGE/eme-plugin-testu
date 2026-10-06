@@ -163,6 +163,7 @@ public class LearningEngineCheck
 		profileChecks();
 		evaluationChecks();
 		certificationChecks();
+		targetChecks();
 
 		System.out.println(failures == 0 ? "ok: LearningEngineCheck all passed" : "FAIL: " + failures + " LearningEngineCheck assertion(s)");
 		System.exit(failures == 0 ? 0 : 1);
@@ -1571,5 +1572,19 @@ public class LearningEngineCheck
 			out.add(q.id);
 		}
 		return String.join(",", out);
+	}
+
+	// ---- learnertarget (mission agent, 2026-10-05): withindays merge
+	static void targetChecks()
+	{
+		Topic t = new Topic();
+		LearningEngine.ProfileRow a = new LearningEngine.ProfileRow(); a.withindays = 30;
+		LearningEngine.ProfileRow b = new LearningEngine.ProfileRow(); b.withindays = 14;
+		LearningEngine.ProfileRow c = new LearningEngine.ProfileRow();
+		LearningEngine.mergeWithindays(t, a); LearningEngine.mergeWithindays(t, c); LearningEngine.mergeWithindays(t, b);
+		ok("withindays merges to the smallest", Integer.valueOf(14).equals(t.withindays), t.withindays);
+		Topic none = new Topic();
+		LearningEngine.mergeWithindays(none, c);
+		ok("withindays stays null without a value", none.withindays == null, none.withindays);
 	}
 }
