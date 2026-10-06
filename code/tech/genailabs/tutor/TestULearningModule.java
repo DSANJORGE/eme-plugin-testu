@@ -432,7 +432,7 @@ public class TestULearningModule extends TestUBaseModule
 		if (ack && key != null && !key.equals(last))
 		{
 			urec.setValue("lastmissionstatus", key);
-			archive.getSearcher("user").saveData(urec, null);
+			archive.getSearcher("user").saveData(urec, user);
 			last = key;
 		}
 		JSONObject announce = null;

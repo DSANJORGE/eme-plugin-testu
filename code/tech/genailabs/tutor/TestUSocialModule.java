@@ -504,7 +504,7 @@ public class TestUSocialModule extends TestUBaseModule
 		for (Object row : rows)
 		{
 			Data n = (Data) row;
-			if (n.getValue("remindat") != null && ((Date) n.getValue("remindat")).after(new Date()) && n.get("pushedat") == null)
+			if ("mission".equals(n.get("type")) && n.getValue("remindat") != null && ((Date) n.getValue("remindat")).after(new Date()) && n.get("pushedat") == null)
 				continue; // a mission reminder not yet due and not yet pushed stays hidden until delivery fills pushedat
 			JSONObject obj = new JSONObject();
 			obj.put("id", n.getId());
