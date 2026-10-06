@@ -152,6 +152,8 @@ def cleanup():
         delete_rows("topicrequirement", es_ids("topicrequirement", {"term": {"jobrole": PROFILE[0]}}))
         delete_rows("jobrole", [PROFILE[0]])
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID}}))
+    delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID}}))
+    usersave("lastmissionstatus", "", UID)  # so a rerun sees announce on its first mission.json read again
     wipe_user_rows(UID)
     refresh()
 
@@ -193,6 +195,27 @@ try:
     row2 = es_doc("learnertarget", f"{UID}_{TOPIC}")
     ok("changing withindays does not move a written date", row2 and row2.get("duedate") == due1, row2)
     ok("learnertarget.set audited", bool(audits("learnertarget.set", UID)), "")
+
+    # --- mission.json
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("mission.json ok", s == 200 and m.get("ok"), m)
+    ok("goal is the profile topic with a deadline", m.get("goal") and m["goal"]["topic"] == TOPIC and m["goal"]["deadlinesource"] == "profile", m)
+    ok("status on_track or at_risk", m.get("status") in ("on_track", "at_risk"), m)
+    ok("announce set on first read", m.get("announce") and m["announce"]["topic"] == TOPIC, m)
+    call(me, "GET", "/services/testu/learn/mission.json?ack=1")
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("ack clears announce", m.get("announce") is None, m)
+    ok("no book_evaluation when canstart is false", all(a["type"] != "book_evaluation" for a in m["actions"]), m)
+
+    # --- remind.json
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "tomorrow"})
+    ok("remind ok", s == 200 and r.get("ok"), r)
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "2h"})
+    refresh()
+    pend = es_ids("learnernotification", {"bool": {"must": [{"term": {"user": UID}}, {"term": {"type": "mission"}}, {"exists": {"field": "remindat"}}], "must_not": [{"exists": {"field": "pushedat"}}]}})
+    ok("second remind replaces the first", len(pend) == 1, pend)
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "someday"})
+    ok("unknown when -> 400", s == 400, r)
 finally:
     cleanup()
 

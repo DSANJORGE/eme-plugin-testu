@@ -392,6 +392,106 @@ public class TestULearningModule extends TestUBaseModule
 		return new Object[] {engine, content, learner};
 	}
 
+	/** MissionPlanner.mission() for the learner, with recommend() restricted to the goal topic once MissionPlanner has picked one
+	 *  (package-visible; reused by the nudge/coach/bean work). */
+	JSONObject missionFor(LearningEngine engine, LearningEngine.Content content, LearningEngine.Learner learner, Date now, ZoneId zone)
+	{
+		java.util.Map<String, JSONObject> unlocks = engine.subtopicStates(content, learner);
+		java.util.Map<String, JSONObject> states = new java.util.LinkedHashMap<>();
+		for (LearningEngine.Topic t : content.topics.values())
+		{
+			states.put(t.id, engine.topicState(t, learner, unlocks));
+		}
+		return MissionPlanner.mission(content, learner, states, id -> {
+			LearningEngine.Content only = new LearningEngine.Content();
+			LearningEngine.Topic gt = content.topics.get(id);
+			only.topics.put(gt.id, gt);
+			only.sections.putAll(content.sections);
+			return LearningEngine.recommend(only, learner, unlocks, tid -> (String) states.get(tid).get("requiredlevel"));
+		}, now, zone);
+	}
+
+	/** services/testu/learn/mission.json -- goal, status, week plan and valid actions for the signed-in learner (spec 2026-10-05).
+	 *  announce is set once per (topic, status) change until acknowledged (?ack=1), except status "pace" never announces. */
+	public void mission(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+			return;
+		Object[] loaded = load(inReq, user);
+		LearningEngine engine = (LearningEngine) loaded[0];
+		ZoneId zone = (ZoneId) engine.orgZone()[0];
+		Date now = new Date();
+		JSONObject m = missionFor(engine, (LearningEngine.Content) loaded[1], (LearningEngine.Learner) loaded[2], now, zone);
+		MediaArchive archive = getMediaArchive(inReq);
+		Data urec = freshUser(archive, user);
+		JSONObject goal = (JSONObject) m.get("goal");
+		String key = goal == null ? null : goal.get("topic") + ":" + m.get("status");
+		String last = urec.get("lastmissionstatus");
+		boolean ack = "1".equals(param(inReq, "ack"));
+		if (ack && key != null && !key.equals(last))
+		{
+			urec.setValue("lastmissionstatus", key);
+			archive.getSearcher("user").saveData(urec, null);
+			last = key;
+		}
+		JSONObject announce = null;
+		if (key != null && !key.equals(last) && !"pace".equals(m.get("status")))
+		{
+			announce = new JSONObject();
+			announce.put("status", m.get("status"));
+			announce.put("topic", goal.get("topic"));
+		}
+		m.put("announce", announce);
+		m.put("ok", Boolean.TRUE);
+		m.put("now", LearningEngine.iso(now));
+		reply(inReq, m);
+	}
+
+	/** services/testu/learn/remind.json (POST topic, when -- 2h|tonight|tomorrow) -- "remind me later" for the mission card.
+	 *  One pending reminder per learner: a new one replaces it. Delivery (task 6) fills text and pushedat. */
+	public void remind(WebPageRequest inReq)
+	{
+		User user = requireUser(inReq);
+		if (user == null)
+			return;
+		MediaArchive archive = getMediaArchive(inReq);
+		String topic = param(inReq, "topic");
+		ZoneId zone = zoneOf(userZone(archive, user.getId()), (ZoneId) new LearningEngine(archive).orgZone()[0]);
+		Date at = MissionPlanner.remindAt(param(inReq, "when"), new Date(), zone);
+		if (topic == null || at == null)
+		{
+			fail(inReq, 400, at == null ? "bad_when" : "missing_topic");
+			return;
+		}
+		Searcher ns = archive.getSearcher("learnernotification");
+		synchronized (LearningEngine.WRITE_LOCK)
+		{
+			String id = user.getId() + "_mission_remind";
+			Data n = (Data) ns.searchById(id);
+			if (n == null)
+			{
+				n = ns.createNewData();
+				n.setId(id); // one pending reminder per learner: a new one replaces it
+			}
+			n.setValue("user", user.getId());
+			n.setValue("actor", "tutor");
+			n.setValue("actorname", tutorName(archive));
+			n.setValue("type", "mission");
+			n.setValue("datecreated", new Date());
+			n.setValue("read", false);
+			n.setValue("entitytopic", topic);
+			n.setValue("remindat", at);
+			n.setValue("pushedat", null);
+			n.setValue("text", null); // filled at delivery from the then-current mission
+			ns.saveData(n, null);
+		}
+		JSONObject resp = new JSONObject();
+		resp.put("ok", Boolean.TRUE);
+		resp.put("remindat", LearningEngine.iso(at));
+		reply(inReq, resp);
+	}
+
 	/**
 	 * services/testu/learn/evaluation.json?topicid= -- the learner's evaluation status on the topic (LearningEngine.evaluationStatus), the
 	 * usable blueprint (null when not offered) and the attempt history (attempthistory; attempts stays the finalized count).
