@@ -174,7 +174,15 @@ def state(topic):
 
 
 def today_ymd():
-    return (state_all().get("now") or "0")[:10]
+    # Org-zone date, like the server's date_future check (LearningEngine.orgZone: catalog setting testu_timezone, missing/invalid = UTC).
+    # state.json's "now" is UTC, a day ahead of Lima from 19:00 on.
+    from zoneinfo import ZoneInfo
+    tz = ((es_doc("catalogsettings", "testu_timezone") or {}).get("value") or "").strip()
+    try:
+        zone = ZoneInfo(tz or "UTC")
+    except Exception:
+        zone = ZoneInfo("UTC")
+    return datetime.datetime.now(zone).strftime("%Y-%m-%d")
 
 
 def ev():
