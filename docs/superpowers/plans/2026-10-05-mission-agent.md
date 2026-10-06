@@ -1437,13 +1437,13 @@ Note: per-topic deadlines come from `mission.json` `plans` (Task 3 emits them); 
 - [ ] **Step 1: Failing widget tests:**
   - Today in live mode with a fake `mission.json` `at_risk` → finds "At risk — 3 sessions this week", "Beginner · 52% → Competent", "This week: 1 of 3 sessions", primary button "Start 6-min session".
   - `no_goal` → no `_MissionCard` (find by key `Key('mission-card')` → nothing).
-  - Goal `deadlinesource: certification` → `_CertificationCard` not shown on Today.
+  - Live Today order: Daily Challenge card before the mission card; `_ContinueHero` and the certification card absent while a goal exists; `no_goal` → `_ContinueHero` present.
   - Notification of type `mission` tapped → Today tab selected.
   - Topics with a plan deadline 2026-11-14 → row shows "Due 14 Nov".
 
 - [ ] **Step 2: Run** → FAIL.
 
-- [ ] **Step 3: Implement** per spec §Learner app and the approved prototype. Status labels (en/es): ready "Ready to take the evaluation"/"Listo para evaluar"; on_track "On track"/"En camino"; at_risk "At risk — N sessions this week"/"En riesgo — N sesiones esta semana"; overdue "Overdue"/"Vencido"; pace "At your pace"/"A tu ritmo". Band names reuse the app's existing band label helper. Card first in `_cards` live branch; replaces `_certCard` when `goal.deadlineSource == 'certification'`. Reuse `_CardTitle` / `_CardBody`.
+- [ ] **Step 3: Implement** per spec §Learner app and the approved prototype. Status labels (en/es): ready "Ready to take the evaluation"/"Listo para evaluar"; on_track "On track"/"En camino"; at_risk "At risk — N sessions this week"/"En riesgo — N sesiones esta semana"; overdue "Overdue"/"Vencido"; pace "At your pace"/"A tu ritmo". Band names reuse the app's existing band label helper. Live `_cards` order: Daily Challenge first, then `_MissionCard` in place of `_ContinueHero` and `_certCard`; `no_goal` → `_ContinueHero` as today. Reuse `_CardTitle` / `_CardBody`.
 
 - [ ] **Step 4: Run** `flutter test` → PASS.
 

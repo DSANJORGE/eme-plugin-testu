@@ -42,7 +42,7 @@ Per topic:
   - `on_track` — otherwise with a deadline.
   - `pace` — not met, no deadline.
 
-Goal = first of: overdue (earliest deadline), ready, at_risk / on_track (earliest deadline), pace (`recommend` order). None → `no_goal`. `othergoals` = count of remaining non-done required topics with a deadline.
+Goal topic (decided 2026-10-05): candidates = required topics of the assignment that are not locked (`requiresprevious`) and not `done`. Order: overdue (earliest deadline), ready, at_risk / on_track (earliest deadline), pace (the order `recommend` uses: below required level first, then lowest %, ties by assignment position). None → `no_goal`. Subtopic: `recommend` restricted to the goal topic, unchanged rules (first unanswered unlocked question in sequence → learn on its section; learn complete → improve on the weakest section); ready → no session, the action is book/schedule. With no deadlines anywhere the goal equals today's Continue pick, so behaviour is unchanged. `othergoals` = count of remaining non-done required topics with a deadline.
 
 Week plan: `sessionsneeded` this ISO week (learner zone) = clamp(ceil(gap / expected gain per session) spread over remaining weeks to deadline, 1, 5); expected gain per session = 4 points (ponytail: flat constant; org median from mastery history once pilots have 6+ weeks of data). `sessionsdone` = distinct days this week with ≥ 1 learn/improve/dailychallenge answer on the goal topic. `pace` goals: 3 sessions/week.
 
@@ -97,13 +97,13 @@ App:
 ## Learner app (`app-genailabs/lib/testu/`)
 
 - `testu_client.dart`: `MissionState` model + `mission()`, `remind()`.
-- Today (`testu_shell.dart`): `_MissionCard` first in the list when status ≠ `no_goal`:
+- Today (`testu_shell.dart`), decided 2026-10-05: Daily Challenge stays first. `_MissionCard` takes the place of `_ContinueHero` and the live certification card (`_certCard`) when status ≠ `no_goal`; with `no_goal` the Continue hero renders as today. Card content:
   - Header "Tu objetivo: <Nivel> en <Tema> · antes del <fecha>" (no date for `pace`).
   - Status label: Listo para evaluar / En camino / En riesgo — N sesiones esta semana / Vencido / A tu ritmo.
   - Bar "<Banda> · NN% → <Requerido>"; week dots "Esta semana: X de N sesiones". No streaks, no confetti.
   - Primary button = first non-remind action; text button "Más tarde" → 2h / esta noche / mañana sheet → `remind.json`.
   - "+N objetivos más" → Topics tab.
-  - When the goal comes from a certification, `_MissionCard` replaces `_CertificationCard` on Today (Certifications tab unchanged).
+  - Certification goals render in the same card (eyebrow Certificación, action Programar renovación). The Certifications tab is unchanged; a certification that is not the goal still shows there and in Topics.
 - Topics (`testu_topics.dart`): rows with a deadline show "Vence <fecha>", subtle tag for at_risk/overdue; topic home required line adds "· antes del <fecha>".
 - Notifications: type `mission` routes to Today (`testu_notifications.dart`).
 - Spanish copy in the app; tutor name from org config.
@@ -111,7 +111,7 @@ App:
 ## Admin console (`app-genailabs/lib/admin/`)
 
 - Overview (`admin_overview.dart`): "Sugerencias de <tutor>" card at the top, from `coach.json`. Each suggestion: sentence ("4 personas de Planta en riesgo en Bloqueo · vence 30 oct"), buttons Enviar recordatorio / Cambiar fecha (date picker, applies to the listed users, deselectable) / Ver personas (people list filtered) / Descartar. Result toast reports `skipped`.
-- Profile editor (`admin_profiles.dart`): "Plazo (días)" column per row → `withindays`.
+- Profile editor (`admin_profiles.dart`, console Personas → Perfiles de puesto): new optional "Plazo (días)" column per row → `withindays`, beside the existing required level / validity columns; blank (default) = no deadline. Not on the Certificaciones → Planes screen: that screen configures the evaluation itself, the plazo belongs to the role requirement.
 - Person page: per-topic deadline + source, editable (→ `setdue`).
 - Ask-IRIS (`admin_iris.dart`): answers may carry `[[do nudge …]]` / `[[do setdue …]]`, rendered with the same buttons as the Overview card (confirmation step before executing).
 
