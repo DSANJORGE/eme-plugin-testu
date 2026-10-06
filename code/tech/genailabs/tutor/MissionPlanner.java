@@ -407,6 +407,46 @@ public final class MissionPlanner
 		return out.toString();
 	}
 
+	/**
+	 * The LLM's chosen coach suggestion keys (analytics_ask, task 14), checked against the keys this request actually put in
+	 * facts.coach: at most 2, kept in SERVER order (coachSuggestions' order, not the LLM's pick order), unknown keys dropped.
+	 * Each kept key becomes both the nudge and the setdue `[[do ...]]` line, so Ask-IRIS carries the same two buttons as the
+	 * Overview coach card (spec line 116, admin_coach.dart's CoachCard). Pure; lets check_learning.sh assert the filter
+	 * deterministically, since the live LLM path (check_ask.sh) is flaky by nature and stays a separate, best-effort check.
+	 */
+	public static List<String> coachDoLines(List<?> pickedKeys, List<String> offeredKeys)
+	{
+		java.util.Set<String> picked = new java.util.LinkedHashSet<>();
+		for (Object k : pickedKeys)
+			picked.add(String.valueOf(k));
+		List<String> out = new ArrayList<>();
+		int kept = 0;
+		for (String key : offeredKeys)
+		{
+			if (kept == 2)
+				break;
+			if (!picked.contains(key))
+				continue; // never a key this request did not offer
+			out.add("[[do nudge key=" + key + "]]");
+			out.add("[[do setdue key=" + key + "]]");
+			kept++;
+		}
+		return out;
+	}
+
+	/**
+	 * The Ask-IRIS reply, with every LLM-injected `[[do ...]]` stripped and the server's own coach lines (coachDoLines)
+	 * appended. Mirrors appendDoLines for the mission-action case; askAnalytics calls this once it has the final answer
+	 * text, in a try/catch so a failure here still ships the stripped answer (spec: never let the raw token survive). Pure.
+	 */
+	public static String appendCoachDoLines(String message, List<?> pickedKeys, List<String> offeredKeys)
+	{
+		StringBuilder out = new StringBuilder(stripDoLines(message));
+		for (String line : coachDoLines(pickedKeys, offeredKeys))
+			out.append("\n").append(line);
+		return out.toString();
+	}
+
 	/** The ACCIONES DISPONIBLES prompt text for the offered actions (id: type · topic, one per line); null when there are none,
 	 *  so the template's `#if($offeredactions)` skips the block. Pure. */
 	public static String offerText(List<JSONObject> offered)

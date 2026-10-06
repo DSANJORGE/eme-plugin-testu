@@ -19,3 +19,19 @@ assert any(c['value'] == o['cohort']['active7d'] for c in a1['citations']), a1['
 assert a2['ok'] and not a2['citations'] and not re.search(r'\d', a2['answer']), a2
 print('ok: cited active7d; off-data question answered without figures')
 PY
+# Task 14 (secondary, best-effort): if the LLM picked any coach actions, every [[do (nudge|setdue) key=...]] line it
+# produced must use a key from this request's own facts.coach -- the deterministic gate is MissionPlannerCheck's
+# coachDoLinesCheck (check_learning.sh); the live LLM rarely picks one, so this only asserts when it does.
+curl -s -o /tmp/ask3.json -b "$J" -X POST "$B/services/testu/analytics/ask.json" --data-urlencode 'question=¿Qué debería hacer esta semana con mi equipo?' -d screen=overview
+python3 - <<'PY'
+import json, re
+f = json.load(open('/tmp/facts.json'))['facts']
+coach = next((x['value'] for x in f if 'coach' in x['label'].lower()), [])
+keys = {c.get('key') for c in coach} if isinstance(coach, list) else set()
+a3 = json.load(open('/tmp/ask3.json'))
+if not a3.get('ok'):
+    print('SKIP coach actions: ask3 not ok'); raise SystemExit(0)
+lines = re.findall(r'\[\[do (nudge|setdue) key=([^\]\s]+)\]\]', a3['answer'])
+assert all(k in keys for _, k in lines), (lines, keys)
+print('ok: coach do-lines (if any) use only keys offered in facts.coach:', lines)
+PY

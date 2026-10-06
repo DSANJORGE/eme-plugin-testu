@@ -54,6 +54,7 @@ public class MissionPlannerCheck
 		certExpiryOutsideWindowCheck();
 		renewalReadyCheck();
 		doLinesCheck();
+		coachDoLinesCheck();
 		if (failures > 0) { System.out.println(failures + " FAILED"); System.exit(1); }
 		System.out.println("MissionPlannerCheck: all ok");
 	}
@@ -176,6 +177,38 @@ public class MissionPlannerCheck
 		ok("doLines: a DIFFERENT snapshot for the same id produces a different line (why one snapshot must be reused)",
 			!MissionPlanner.doLines(List.of("a2"), List.of(a1, a2Moved)).equals(MissionPlanner.doLines(List.of("a2"), snapshot)),
 			List.of(MissionPlanner.doLines(List.of("a2"), List.of(a1, a2Moved)), MissionPlanner.doLines(List.of("a2"), snapshot)));
+	}
+
+	// Task 14 (Ask-IRIS action buttons): coachDoLines is the deterministic gate for the coach-key filter, since
+	// askAnalytics' own reply depends on an LLM (check_ask.sh, flaky by nature, a separate best-effort check).
+	static void coachDoLinesCheck()
+	{
+		List<String> offered = List.of("overdue:fatiga:all", "at_risk:bloqueo:all", "cert_expiring:epp:t1");
+		ok("coachDoLines: a picked key kept, nudge then setdue, in SERVER (offered) order",
+			List.of("[[do nudge key=at_risk:bloqueo:all]]", "[[do setdue key=at_risk:bloqueo:all]]")
+				.equals(MissionPlanner.coachDoLines(List.of("at_risk:bloqueo:all"), offered)), MissionPlanner.coachDoLines(List.of("at_risk:bloqueo:all"), offered));
+		ok("coachDoLines: a key the server never offered is dropped, the rest kept",
+			List.of("[[do nudge key=overdue:fatiga:all]]", "[[do setdue key=overdue:fatiga:all]]")
+				.equals(MissionPlanner.coachDoLines(List.of("bogus:key:all", "overdue:fatiga:all"), offered)),
+			MissionPlanner.coachDoLines(List.of("bogus:key:all", "overdue:fatiga:all"), offered));
+		ok("coachDoLines: 3 picked keys, capped at 2, in offered order (not the LLM's pick order)",
+			List.of("[[do nudge key=overdue:fatiga:all]]", "[[do setdue key=overdue:fatiga:all]]",
+				"[[do nudge key=at_risk:bloqueo:all]]", "[[do setdue key=at_risk:bloqueo:all]]")
+				.equals(MissionPlanner.coachDoLines(List.of("cert_expiring:epp:t1", "at_risk:bloqueo:all", "overdue:fatiga:all"), offered)),
+			MissionPlanner.coachDoLines(List.of("cert_expiring:epp:t1", "at_risk:bloqueo:all", "overdue:fatiga:all"), offered));
+		ok("coachDoLines: no picks -> no lines", MissionPlanner.coachDoLines(List.of(), offered).isEmpty(), "");
+		ok("coachDoLines: nothing offered -> no lines even if the LLM picks something",
+			MissionPlanner.coachDoLines(List.of("at_risk:bloqueo:all"), List.of()).isEmpty(), "");
+
+		String injected = "Yo me centraría en el equipo de bloqueo.\n[[do nudge key=bogus:key:all]]\n\n>> ¿Algo más?";
+		ok("appendCoachDoLines: strips an injected line, then appends only the server-offered, server-order lines",
+			("Yo me centraría en el equipo de bloqueo.\n\n>> ¿Algo más?"
+				+ "\n[[do nudge key=at_risk:bloqueo:all]]\n[[do setdue key=at_risk:bloqueo:all]]")
+				.equals(MissionPlanner.appendCoachDoLines(injected, List.of("at_risk:bloqueo:all"), offered)),
+			MissionPlanner.appendCoachDoLines(injected, List.of("at_risk:bloqueo:all"), offered));
+		ok("appendCoachDoLines: no picks -> stripped message, nothing appended",
+			"Yo me centraría en el equipo de bloqueo.\n\n>> ¿Algo más?"
+				.equals(MissionPlanner.appendCoachDoLines(injected, List.of(), offered)), "");
 	}
 
 	static JSONObject action(String id, String type, String topic, String mode, String section)

@@ -2162,6 +2162,31 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			}
 		}
 
+		// A manager's earlier question can echo the tutor's own stray [[do ...]] (fix round 1, task 8's lesson): strip it
+		// from history fed back to the LLM too, the same as from the answer it writes now.
+		if (!history.isEmpty())
+		{
+			List<Object> cleanHistory = new ArrayList<>();
+			for (Object h : history)
+			{
+				if (h instanceof Map)
+				{
+					Map<String, Object> hm = new LinkedHashMap<>((Map<String, Object>) h);
+					Object text = hm.get("text");
+					if (text != null)
+					{
+						hm.put("text", MissionPlanner.stripDoLines(String.valueOf(text)));
+					}
+					cleanHistory.add(hm);
+				}
+				else
+				{
+					cleanHistory.add(h);
+				}
+			}
+			history = cleanHistory;
+		}
+
 		BaseAgentContext ctx = new BaseAgentContext();
 		ctx.putContextValue("personaname", (persona != null && persona.getName() != null) ? persona.getName() : "Iris");
 		ctx.putContextValue("organization", (persona != null && persona.get("organization") != null) ? persona.get("organization") : "");
@@ -2263,6 +2288,29 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 		replaceMatcher.appendTail(sb);
 		answer = sb.toString();
+
+		// Mission agent (task 14): the LLM's picked coach suggestion keys, filtered against this request's own
+		// facts.coach (coachSugg, computed once above and reused here so a key always binds to the suggestion the LLM
+		// was shown) and formatted as [[do nudge key=...]] / [[do setdue key=...]] lines. Never lets a bad answer out
+		// unstripped: any failure here still ships the plain stripDoLines result (spec: "if anything fails, the answer
+		// still goes out, stripped").
+		List<String> offeredKeys = new ArrayList<>();
+		if (coachSugg != null)
+		{
+			for (Map<String, Object> s : coachSugg)
+				offeredKeys.add(String.valueOf(s.get("key")));
+		}
+		try
+		{
+			Object actionsObj = out.get("actions");
+			List<?> pickedKeys = (actionsObj instanceof List) ? (List<?>) actionsObj : Collections.emptyList();
+			answer = MissionPlanner.appendCoachDoLines(answer, pickedKeys, offeredKeys);
+		}
+		catch (Exception e)
+		{
+			log.warn("coach actions unavailable", e);
+			answer = MissionPlanner.stripDoLines(answer);
+		}
 
 		JSONObject auditBefore = new JSONObject();
 		auditBefore.put("question", question);
