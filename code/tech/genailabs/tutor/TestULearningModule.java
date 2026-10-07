@@ -573,19 +573,50 @@ public class TestULearningModule extends TestUBaseModule
 			announce.put("topic", goal.get("topic"));
 		}
 		m.put("announce", announce);
+		// amendment 2026-10-06: the pending "remind me later" (not pushed yet, still ahead), so the card can collapse to one line.
+		Data rem = (Data) archive.getSearcher("learnernotification").searchById(user.getId() + "_mission_remind");
+		Date remAt = rem == null || rem.get("pushedat") != null ? null : (Date) rem.getValue("remindat");
+		JSONObject reminder = null;
+		if (remAt != null && remAt.after(now))
+		{
+			reminder = new JSONObject();
+			reminder.put("remindat", LearningEngine.iso(remAt));
+			reminder.put("topic", rem.get("entitytopic"));
+		}
+		m.put("reminder", reminder);
 		m.put("ok", Boolean.TRUE);
 		m.put("now", LearningEngine.iso(now));
 		reply(inReq, m);
 	}
 
 	/** services/testu/learn/remind.json (POST topic, when -- 2h|tonight|tomorrow) -- "remind me later" for the mission card.
-	 *  One pending reminder per learner: a new one replaces it. Delivery (task 6) fills text and pushedat. */
+	 *  One pending reminder per learner: a new one replaces it. Delivery (task 6) fills text and pushedat. when=cancel (no topic)
+	 *  deletes the pending one unless it was already pushed: {ok, cancelled} (amendment 2026-10-06, the card's Deshacer). */
 	public void remind(WebPageRequest inReq)
 	{
 		User user = requireUser(inReq);
 		if (user == null)
 			return;
 		MediaArchive archive = getMediaArchive(inReq);
+		if ("cancel".equals(param(inReq, "when")))
+		{
+			boolean cancelled = false;
+			Searcher cs = archive.getSearcher("learnernotification");
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				Data n = (Data) cs.searchById(user.getId() + "_mission_remind");
+				if (n != null && n.get("pushedat") == null)
+				{
+					cs.delete(n, null);
+					cancelled = true;
+				}
+			}
+			JSONObject resp = new JSONObject();
+			resp.put("ok", Boolean.TRUE);
+			resp.put("cancelled", cancelled);
+			reply(inReq, resp);
+			return;
+		}
 		String topic = param(inReq, "topic");
 		Date at = MissionPlanner.remindAt(param(inReq, "when"), new Date(), learnerZone(archive, user.getId()));
 		if (topic == null || at == null || archive.getCachedData("entitytopic", topic) == null)

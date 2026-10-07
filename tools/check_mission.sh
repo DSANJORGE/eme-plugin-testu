@@ -336,11 +336,22 @@ try:
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "tomorrow"})
     ok("remind ok", s == 200 and r.get("ok"), r)
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "2h"})
+    ok("remind returns remindat", s == 200 and r.get("remindat"), r)
     refresh()
     pend = es_ids("learnernotification", {"bool": {"must": [{"term": {"user": UID}}, {"term": {"type": "mission"}}, {"exists": {"field": "remindat"}}], "must_not": [{"exists": {"field": "pushedat"}}]}})
     ok("second remind replaces the first", len(pend) == 1, pend)
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "someday"})
     ok("unknown when -> 400", s == 400, r)
+    # amendment 2026-10-06: the pending reminder shows on mission.json and can be undone until it is pushed.
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("mission.json exposes the pending reminder", m.get("reminder") and m["reminder"]["topic"] == TOPIC and m["reminder"]["remindat"], m.get("reminder"))
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"when": "cancel"})
+    ok("when=cancel deletes the pending reminder", s == 200 and r.get("ok") and r.get("cancelled") is True, r)
+    ok("cancelled reminder row gone", es_doc("learnernotification", f"{UID}_mission_remind") is None)
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("no reminder after cancel", m.get("reminder") is None, m.get("reminder"))
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"when": "cancel"})
+    ok("cancel with nothing pending: 200, cancelled false", s == 200 and r.get("cancelled") is False, r)
 
     # --- nudges
     # Nudges are gated by the existing Daily Challenge email mayReceive rule (no dedicated permission): master switch
