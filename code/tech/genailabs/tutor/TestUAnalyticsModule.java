@@ -991,6 +991,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		Set<String> live = new HashSet<>();
 		List<DoneRow> doneEvents = new ArrayList<>();
 		List<DoneRow> dcOpens = new ArrayList<>(); // session_start of a Daily Challenge: type = platform, source = entry
+		List<DoneRow> pushOpens = new ArrayList<>(); // push_open: type = mission push kind (the event's source), source = campaign
+		List<DoneRow> learnAnswers = new ArrayList<>(); // learning-mode answers with their topic, for missionpushes
 		Map<String, Date> placeAt = new HashMap<>();
 		Map<String, String> placeOf = new HashMap<>();
 		Map<String, Set<String>> platforms = new HashMap<>();
@@ -1011,6 +1013,11 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			if (type != null && type.startsWith("dailydone_"))
 			{
 				doneEvents.add(new DoneRow(u, type, e.get("source"), e.get("entitytopic"), d, false));
+				continue;
+			}
+			if ("push_open".equals(type))
+			{
+				pushOpens.add(new DoneRow(u, e.get("source"), e.get("campaign"), e.get("entitytopic"), d, false));
 				continue;
 			}
 			if ("session_start".equals(type))
@@ -1062,6 +1069,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				answeredIn.computeIfAbsent(x.get("learningsession"), k -> new HashSet<>()).add(x.get("entityquestion"));
 			if (!topicFilter.isEmpty() && !perSection.containsKey(x.get("componentsection")))
 				continue;
+			Map<String, Object> sec = perSection.get(x.get("componentsection")); // topic of the answer (tutoranswer has no entitytopic)
+			if (sec != null && LearningEngine.isLearningMode(x.get("mode")))
+				learnAnswers.add(new DoneRow(u, null, null, (String) sec.get("topic"), d, false));
 			String mode = x.get("mode") == null ? "other" : x.get("mode");
 			modeAnswers.merge(mode, 1, Integer::sum);
 			modePeople.computeIfAbsent(mode, k -> new HashSet<>()).add(u);
@@ -1205,6 +1215,22 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		java.time.ZoneId orgzone = (java.time.ZoneId) new LearningEngine(archive).orgZone()[0];
 		resp.put("dailydone", dailyDoneFunnel(doneEvents, doneSessions, orgzone));
 		resp.put("dailyopens", dailyOpens(dcOpens, dcComplete, orgzone));
+		// Mission pushes of the period (amendment 2026-10-06), topic-filtered like the answers. ponytail: taps/answers after `to`
+		// are not loaded, so a push in the period's last 24 h can under-count; widen the event queries if that ever matters.
+		List<DoneRow> pushesSent = new ArrayList<>();
+		HitTracker mh = archive.query("missionpush").after("sentat", from).search();
+		if (mh != null)
+		{
+			mh.enableBulkOperations();
+			for (Object o : mh)
+			{
+				Data r = (Data) o;
+				Date d = dates.parseFromObject(r.getValue("sentat"));
+				if (d != null && d.before(to) && users.contains(r.get("user")) && (topicFilter.isEmpty() || topicFilter.equals(r.get("entitytopic"))))
+					pushesSent.add(new DoneRow(r.get("user"), r.get("kind"), null, r.get("entitytopic"), d, false));
+			}
+		}
+		resp.put("missionpushes", missionPushes(pushesSent, pushOpens, learnAnswers, orgzone));
 		return resp;
 	}
 
@@ -1259,6 +1285,54 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			o.put(e.getKey(), c);
 		}
 		return o;
+	}
+
+	/** Mission push kinds, in display order (amendment 2026-10-06). */
+	static final List<String> PUSH_KINDS = List.of("remind", "unfinished", "ready", "at_risk", "overdue", "coach");
+
+	/**
+	 * Mission push effectiveness per kind (engagement.json missionpushes, amendment 2026-10-06): sent = missionpush rows; within 24 h
+	 * after each: tapped = a push_open of the same user and kind; practised = at least one learning answer on the push's topic;
+	 * counted = MissionPlanner.DAY_MIN_ANSWERS or more of those answers on one inZone day. Rates over sent, null with none sent.
+	 * inSent/inOpens: type = kind; inAnswers: learning-mode answers with their topic. Pure; counts only, no names.
+	 * ponytail: O(sent x events), fine at pilot volume; index opens/answers by user if engagement.json gets slow.
+	 */
+	public static JSONObject missionPushes(List<DoneRow> inSent, List<DoneRow> inOpens, List<DoneRow> inAnswers, java.time.ZoneId inZone)
+	{
+		Map<String, int[]> counts = new LinkedHashMap<>();
+		for (String k : PUSH_KINDS)
+			counts.put(k, new int[4]);
+		for (DoneRow s : inSent)
+		{
+			int[] c = counts.get(s.type);
+			if (c == null)
+				continue;
+			long from = s.at.getTime(), until = from + 86400000L;
+			boolean tapped = false;
+			for (DoneRow o : inOpens)
+				tapped |= s.user.equals(o.user) && s.type.equals(o.type) && o.at.getTime() >= from && o.at.getTime() <= until;
+			Map<java.time.LocalDate, Integer> perDay = new HashMap<>();
+			for (DoneRow a : inAnswers)
+				if (s.user.equals(a.user) && s.topic != null && s.topic.equals(a.topic) && a.at.getTime() >= from && a.at.getTime() <= until)
+					perDay.merge(a.at.toInstant().atZone(inZone).toLocalDate(), 1, Integer::sum);
+			c[0]++;
+			c[1] += tapped ? 1 : 0;
+			c[2] += perDay.isEmpty() ? 0 : 1;
+			c[3] += perDay.values().stream().anyMatch(n -> n >= MissionPlanner.DAY_MIN_ANSWERS) ? 1 : 0;
+		}
+		String[] names = {"sent", "tapped", "practised", "counted"};
+		JSONObject out = new JSONObject();
+		for (Map.Entry<String, int[]> e : counts.entrySet())
+		{
+			int[] c = e.getValue();
+			JSONObject k = new JSONObject();
+			for (int i = 0; i < 4; i++)
+				k.put(names[i], c[i]);
+			for (int i = 1; i < 4; i++)
+				k.put(names[i] + "rate", c[0] == 0 ? null : Math.round(1000.0 * c[i] / c[0]) / 1000.0);
+			out.put(e.getKey(), k);
+		}
+		return out;
 	}
 
 	/** A dailydone_* usage event (type, source = email|app, topic = the recommended one) or a learn/improve session (type = mode,

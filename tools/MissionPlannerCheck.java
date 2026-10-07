@@ -6,6 +6,7 @@ import org.json.simple.JSONObject;
 import tech.genailabs.tutor.LearningEngine;
 import tech.genailabs.tutor.LearningEngine.*;
 import tech.genailabs.tutor.MissionPlanner;
+import tech.genailabs.tutor.TestUAnalyticsModule;
 
 /** Pure checks of MissionPlanner (spec 2026-10-05). Run by tools/check_learning.sh. */
 public class MissionPlannerCheck
@@ -52,6 +53,7 @@ public class MissionPlannerCheck
 		missionChecks();
 		weekChecks();
 		unfinishedChecks();
+		missionPushChecks();
 		paceOrderCheck();
 		certExpiryOutsideWindowCheck();
 		renewalReadyCheck();
@@ -294,6 +296,41 @@ public class MissionPlannerCheck
 		JSONObject e = new JSONObject(); e.put("canstart", canstart); s.put("evaluation", e);
 		return s;
 	}
+	// Amendment 2026-10-06: push effectiveness per kind (engagement.json missionpushes), Lima day 2026-09-21.
+	static void missionPushChecks()
+	{
+		List<TestUAnalyticsModule.DoneRow> sent = new ArrayList<>(), opens = new ArrayList<>(), answers = new ArrayList<>();
+		sent.add(row("a", "remind", "t1", "2026-09-21T14:00:00Z"));
+		sent.add(row("b", "remind", "t1", "2026-09-21T14:00:00Z"));
+		sent.add(row("a", "unfinished", "t1", "2026-09-21T23:00:00Z"));
+		sent.add(row("c", "coach", "t2", "2026-09-21T15:00:00Z"));
+		opens.add(row("a", "remind", "t1", "2026-09-21T14:10:00Z"));
+		opens.add(row("b", "unfinished", "t1", "2026-09-21T14:10:00Z")); // another kind's tap: not this push
+		opens.add(row("c", "coach", "t2", "2026-09-23T15:00:00Z"));      // after 24 h
+		for (int i = 0; i < 5; i++)
+			answers.add(row("a", null, "t1", "2026-09-21T15:0" + i + ":00Z"));
+		for (int i = 0; i < 2; i++)
+			answers.add(row("a", null, "t1", "2026-09-22T01:0" + i + ":00Z")); // 20:0x Lima, still the 21st
+		answers.add(row("b", null, "t2", "2026-09-21T15:00:00Z")); // another topic
+		JSONObject p = TestUAnalyticsModule.missionPushes(sent, opens, answers, LIMA);
+		ok("pushes: remind", "sent=2 tapped=1 practised=1 counted=1".equals(pushOf(p, "remind")), pushOf(p, "remind"));
+		ok("pushes: unfinished counts only answers inside its own 24 h", "sent=1 tapped=0 practised=1 counted=0".equals(pushOf(p, "unfinished")), pushOf(p, "unfinished"));
+		ok("pushes: coach, a tap after 24 h is ignored", "sent=1 tapped=0 practised=0 counted=0".equals(pushOf(p, "coach")), pushOf(p, "coach"));
+		ok("pushes: remind tapped rate 0.5", Double.valueOf(0.5).equals(((JSONObject) p.get("remind")).get("tappedrate")), p.get("remind"));
+		ok("pushes: nothing sent -> rates null", ((JSONObject) p.get("ready")).get("tappedrate") == null, p.get("ready"));
+	}
+
+	static TestUAnalyticsModule.DoneRow row(String user, String kind, String topic, String iso)
+	{
+		return new TestUAnalyticsModule.DoneRow(user, kind, null, topic, Date.from(java.time.Instant.parse(iso)), false);
+	}
+
+	static String pushOf(JSONObject p, String kind)
+	{
+		JSONObject k = (JSONObject) p.get(kind);
+		return "sent=" + k.get("sent") + " tapped=" + k.get("tapped") + " practised=" + k.get("practised") + " counted=" + k.get("counted");
+	}
+
 	static void ok(String name, boolean cond, Object detail)
 	{
 		System.out.println((cond ? "ok: " : "FAIL: ") + name + (cond ? "" : " -> " + detail));

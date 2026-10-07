@@ -199,6 +199,7 @@ def cleanup():
     delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID}}))
     delete_rows("missionpush", es_ids("missionpush", {"term": {"user": UID}}))
     delete_rows("missionpush", es_ids("missionpush", {"term": {"user": UID2}}))
+    delete_rows("usageevent", es_ids("usageevent", {"term": {"user": UID}}))
     usersave("lastmissionstatus", "", UID)  # so a rerun sees announce on its first mission.json read again
     wipe_user_rows(UID)
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID2}}))
@@ -390,6 +391,15 @@ try:
     s, r3 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
     refresh()
     ok("unfinished push not repeated the same day", len([i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i]) == 1 and r3.get("sent", 0) == 0, r3)
+    # amendment 2026-10-06: a push tap is a push_open usage event; engagement.json counts sent/tapped per kind.
+    ev = [{"type": "push_open", "at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sessionid": "mcheck",
+           "campaign": "mission", "source": "remind", "entitytopic": TOPIC, "notification": f"{UID}_mission_remind"}]
+    s, r = call(me, "POST", "/services/testu/usage/track.json", form={"events": json.dumps(ev)})
+    ok("push_open accepted", s == 200 and r.get("ok"), r)
+    refresh()
+    s, e = call(admin, "GET", "/services/testu/analytics/engagement.json")
+    mp = ((e.get("missionpushes") or {}) if s == 200 else {}).get("remind") or {}
+    ok("engagement.json missionpushes: remind sent and tapped", mp.get("sent", 0) >= 1 and mp.get("tapped", 0) >= 1, e.get("missionpushes") if s == 200 else e)
 
     # --- coach (task 7, spec 2026-10-05): manager suggestions over the team's missions, and approve-to-act actions
     make_user(UID2, PASSWORD2, role="users")
