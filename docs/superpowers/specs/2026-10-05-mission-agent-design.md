@@ -153,6 +153,12 @@ Calendar export; agent auto-booking; LLM tool-calling agent; content/gap agent a
 - Finder main commits (`dc75ed19c`, `1c95143e7`, `bfb084602` — offered-id filtered `[[do]]` action lines) must be pushed and deployed along with the rest; without them the app shows no chat action buttons (degrades gracefully).
 - Rebuild and commit learner + console web bundles (deferred to task 15b).
 
+- Weekly objective (amendment 2026-10-06):
+  - Field XML: `learnernotification.kind` and `usageevent.notification` (existing tables; catalog plugin `html/data/fields/` and the site mirror `webapp/WEB-INF/data/site/catalog/fields/`, kept identical). Per server, right after the deploy restart and before the first 15-minute sweep: datamanager restore of `learnernotification` and `usageevent` (a restart alone does not add fields to an existing mapping). The restore deletes the two site mirror XML files from the working tree: `git checkout -- webapp/WEB-INF/data/site/catalog/fields/{learnernotification,usageevent}.xml` afterwards. Rows survive (no reindex needed for added fields). New table `missionpush` gets its mapping on first use.
+  - No new list values, permissions, endpoints or events: `remind.json when=cancel`, the 18:00 unfinished push (inside the existing 15-minute `missionNudges`) and `engagement.json missionpushes` ride on existing files; `bin/sync-testu.sh --check` clean.
+  - `push_open` taps need the new app build; older apps send none (tapped stays 0). `missionpush` rows are written even when FCM is off, so "sent" = issued by the server. On staging, open Actividad once with no `missionpush` rows yet to confirm `engagement.json` loads.
+  - Learner and console web bundles: rebuilt in site `3977cc31` (from app `b322add`, which includes this feature).
+
 ## Amendment 2026-10-06: weekly objective
 
 Approved by Diego from the clickable prototype (artifact "Objetivo de la semana", v1) on 2026-10-06. Supersedes the card bullets under *Learner app* and the `sessionsdone` rule under *Planner → Week plan* where they differ.
