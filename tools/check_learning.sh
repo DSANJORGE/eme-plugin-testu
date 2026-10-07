@@ -14,6 +14,7 @@ CP="$ROOT/build:$(find "$ROOT/plugins/system/lib" "$ROOT/plugins/finder/lib" "$R
 java -cp "$CP" "$ROOT/plugins/testu/tools/LearningEngineCheck.java"
 java -cp "$CP" "$ROOT/plugins/testu/tools/MissionPlannerCheck.java"
 java -cp "$CP" "$ROOT/plugins/testu/tools/DailyChallengeEmailCheck.java"
+java -cp "$CP" "$ROOT/plugins/testu/tools/WeeklySummaryEmailCheck.java"
 TESTU_TOOLS="$ROOT/plugins/testu/tools" exec python3 - "$@" <<'PY'
 import datetime, json, math, os, secrets, sys, urllib.error, urllib.request
 from zoneinfo import ZoneInfo

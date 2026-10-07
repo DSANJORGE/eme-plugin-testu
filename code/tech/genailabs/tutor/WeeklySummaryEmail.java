@@ -241,6 +241,9 @@ public class WeeklySummaryEmail
 		public List<String[]> forecasts = new ArrayList<>(); // {topic, level, yyyy-MM-dd}
 		public List<String[]> certs = new ArrayList<>(); // {topic, status expired|renewal_due|available, yyyy-MM-dd or null}
 		public String[] focus; // {mode learn|improve, subtopic or null, topic}
+		// Weekly objective (amendment 2026-10-06), from mission.json's goal/week; goalTopic null = no goal, no block.
+		public String goalStatus, goalTopic, goalLevel, goalDeadline, goalBand;
+		public int goalPercent, goalDone, goalNeeded;
 	}
 
 	public static class TopicMove
@@ -383,6 +386,28 @@ public class WeeklySummaryEmail
 		{
 			w.focus = new String[] {(String) rec.get("mode"), (String) rec.get("sectiontitle"), (String) rec.get("topictitle")};
 		}
+		// Weekly objective (amendment 2026-10-06): the same mission.json the app shows (missionOf, the one server-side mission path).
+		try
+		{
+			org.json.simple.JSONObject m = (org.json.simple.JSONObject) module.missionOf(archive, u, new Date())[0];
+			org.json.simple.JSONObject g = (org.json.simple.JSONObject) m.get("goal");
+			org.json.simple.JSONObject wk = (org.json.simple.JSONObject) m.get("week");
+			if (g != null && wk != null)
+			{
+				w.goalStatus = String.valueOf(m.get("status"));
+				w.goalTopic = (String) g.get("topictitle");
+				w.goalLevel = (String) g.get("requiredlevel");
+				w.goalDeadline = (String) g.get("deadline");
+				w.goalBand = (String) g.get("band");
+				w.goalPercent = LearningEngine.intOr(g.get("masterypercent"), 0);
+				w.goalDone = LearningEngine.intOr(wk.get("sessionsdone"), 0);
+				w.goalNeeded = LearningEngine.intOr(wk.get("sessionsneeded"), 0);
+			}
+		}
+		catch (Exception e)
+		{
+			log.error("testu weeklysummaryemail: objective for " + uid, e); // the summary must still go out
+		}
 		return w;
 	}
 
@@ -464,6 +489,21 @@ public class WeeklySummaryEmail
 			}
 			in.append(legend(new String[][] {{BAR_BEFORE, en ? "Before this week" : "Antes de esta semana"}, {BAR_GAIN, en ? "This week" : "Esta semana"}}));
 		}
+		if (w.goalTopic != null)
+		{
+			in.append(section(en ? "YOUR GOAL THIS WEEK" : "TU OBJETIVO DE LA SEMANA"));
+			String title = "pace".equals(w.goalStatus) || w.goalLevel == null ? (en ? "Practise " : "Practicar ") + w.goalTopic
+					: band(en, w.goalLevel) + (en ? " in " : " en ") + w.goalTopic;
+			if (w.goalDeadline != null)
+			{
+				title += (en ? " · by " : " · antes del ") + date(en, w.goalDeadline);
+			}
+			in.append(iconRow("🎯", title));
+			String sessions = w.goalNeeded == 1 ? (en ? " session" : " sesión") : (en ? " sessions" : " sesiones");
+			in.append(p(w.goalDone + (en ? " of " : " de ") + w.goalNeeded + sessions + (en ? " this week · " : " esta semana · ")
+					+ (w.goalBand == null ? (en ? "Not started" : "Sin empezar") : band(en, w.goalBand)) + " · " + w.goalPercent + "%"));
+			in.append(p(goalAdvice(en, w)));
+		}
 		List<String[]> next = new ArrayList<>(); // {icon, text}
 		for (String[] f : w.forecasts.size() > 2 ? w.forecasts.subList(0, 2) : w.forecasts)
 		{
@@ -514,6 +554,7 @@ public class WeeklySummaryEmail
 		public int tutorQuestions, tutorPeople;
 		public List<String[]> tutorTopics = new ArrayList<>(); // {label, count}
 		public List<String[]> gaps = new ArrayList<>(); // {subtopic, topic, beginners, people}
+		public List<String[]> deadlines = new ArrayList<>(); // {topic, at risk, overdue, ready not booked} (amendment 2026-10-06)
 	}
 
 	/** {subject, html, link, fromname, inline image or null} of u's admin summary for inScope (empty = the whole org). */
@@ -648,6 +689,16 @@ public class WeeklySummaryEmail
 				w.gaps.add(new String[] {String.valueOf(g.get("name")), String.valueOf(g.get("topic")), String.valueOf(g.get("beginners")), String.valueOf(g.get("people"))});
 			}
 		}
+		// Goals with a deadline (amendment 2026-10-06): the Coach card's own suggestions over this scope, counts only.
+		try
+		{
+			TestUAnalyticsModule analyticsModule = (TestUAnalyticsModule) module.getModuleManager().getBean("TestUAnalyticsModule");
+			w.deadlines = deadlineRows(analyticsModule.coachSuggestionsFor(archive, scope));
+		}
+		catch (Exception e)
+		{
+			log.error("testu weeklysummaryemail: goal counts", e); // the summary must still go out
+		}
 		return w;
 	}
 
@@ -696,6 +747,15 @@ public class WeeklySummaryEmail
 					{w.neverStarted.size(), en ? "Haven’t started" : "Aún no empiezan", w.neverStarted},
 					{w.noTour.size(), en ? "No welcome tour" : "Sin recorrido inicial", w.noTour},
 					{w.certs.size(), en ? "Certifications due" : "Certificaciones por vencer", certNames}}, en));
+		}
+		if (!w.deadlines.isEmpty())
+		{
+			in.append(section(en ? "GOALS WITH A DEADLINE" : "OBJETIVOS CON PLAZO"));
+			for (String[] d : w.deadlines)
+			{
+				in.append(iconRow("🎯", deadlineCounts(en, d)));
+			}
+			in.append(p(en ? "Send a reminder or change a date from the Coach card in the console." : "Envía un recordatorio o cambia una fecha desde la tarjeta Coach de la consola."));
 		}
 		if (!w.teams.isEmpty())
 		{
@@ -903,6 +963,69 @@ public class WeeklySummaryEmail
 			lang = inPersona == null ? null : inPersona.get("tutorlanguage");
 		}
 		return lang != null && lang.startsWith("en");
+	}
+
+	/** The objective block's status plus one plain suggestion line (amendment 2026-10-06). Pure. */
+	static String goalAdvice(boolean en, LearnerWeek w)
+	{
+		if ("ready".equals(w.goalStatus))
+		{
+			return en ? "Ready for the evaluation · it’s open in the app." : "Listo para evaluar · la evaluación está abierta en la app.";
+		}
+		if (w.goalNeeded > 0 && w.goalDone >= w.goalNeeded && !"overdue".equals(w.goalStatus))
+		{
+			return en ? "Week done. Extra practice still counts toward your level." : "Semana cumplida. Lo que practiques de más suma para tu nivel.";
+		}
+		String status = switch (String.valueOf(w.goalStatus))
+		{
+			case "at_risk" -> en ? "At risk" : "En riesgo";
+			case "on_track" -> en ? "On track" : "Vas a tiempo";
+			case "overdue" -> en ? "Deadline passed" : "Plazo vencido";
+			default -> en ? "At your pace" : "A tu ritmo";
+		};
+		String tip = w.goalNeeded - w.goalDone == 1 ? (en ? "One session this weekend completes your week." : "Una sesión este fin de semana completa tu semana.")
+				: (en ? "A session on Saturday and another on Sunday get you closer." : "Una sesión el sábado y otra el domingo te acercan a tu meta.");
+		return status + " · " + tip;
+	}
+
+	/** {topic, at risk, overdue, ready not booked} per topic from the Coach card's suggestions, in their order. cert_expiring is
+	 *  left out: the NEED ATTENTION certifications count already covers it. Counts only. Pure. */
+	public static List<String[]> deadlineRows(List<Map<String, Object>> inSuggestions)
+	{
+		Map<String, int[]> byTopic = new java.util.LinkedHashMap<>();
+		for (Map<String, Object> s : inSuggestions)
+		{
+			int i = switch (String.valueOf(s.get("kind")))
+			{
+				case "at_risk" -> 0;
+				case "overdue" -> 1;
+				case "ready_not_booked" -> 2;
+				default -> -1;
+			};
+			if (i >= 0)
+			{
+				byTopic.computeIfAbsent(String.valueOf(s.get("topictitle")), k -> new int[3])[i] += num(s.get("count"));
+			}
+		}
+		List<String[]> out = new ArrayList<>();
+		for (Map.Entry<String, int[]> e : byTopic.entrySet())
+		{
+			out.add(new String[] {e.getKey(), String.valueOf(e.getValue()[0]), String.valueOf(e.getValue()[1]), String.valueOf(e.getValue()[2])});
+		}
+		return out;
+	}
+
+	/** "Ciberseguridad · 3 en riesgo · 1 con plazo vencido" (zero counts left out). Pure. */
+	static String deadlineCounts(boolean en, String[] inRow)
+	{
+		List<String> parts = new ArrayList<>();
+		if (num(inRow[1]) > 0)
+			parts.add(inRow[1] + (en ? " at risk" : " en riesgo"));
+		if (num(inRow[2]) > 0)
+			parts.add(inRow[2] + (en ? " overdue" : " con plazo vencido"));
+		if (num(inRow[3]) > 0)
+			parts.add(inRow[3] + (en ? " ready, not booked" : num(inRow[3]) == 1 ? " listo para evaluar" : " listos para evaluar"));
+		return inRow[0] + " · " + String.join(" · ", parts);
 	}
 
 	static String band(boolean en, String inBand)

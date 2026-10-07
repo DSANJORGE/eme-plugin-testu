@@ -413,6 +413,13 @@ try:
     ok("coach ok", s == 200 and c.get("ok"), c)
     sug = next((x for x in c["suggestions"] if x["kind"] == "overdue" and x["topic"] == TOPIC), None)
     ok("overdue suggestion lists the learner", sug and any(u["id"] == UID2 for u in sug["users"]), c)
+    # amendment 2026-10-06: the Friday summaries carry the objective (learner) and the deadline counts (admin).
+    s, wk = call(admin, "GET", f"/services/testu/learn/weeklysummaryemail.json?user={quote(UID)}&as=learner")
+    h = (wk.get("html") or "") if s == 200 else ""
+    ok("weekly summary: learner objective block", "TU OBJETIVO DE LA SEMANA" in h or "YOUR GOAL THIS WEEK" in h, str(wk)[:300])
+    s, wk = call(admin, "GET", "/services/testu/learn/weeklysummaryemail.json?as=admin")
+    h = (wk.get("html") or "") if s == 200 else ""
+    ok("weekly summary: admin deadline counts", "OBJETIVOS CON PLAZO" in h or "GOALS WITH A DEADLINE" in h, str(wk)[:300])
 
     s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
     ok("nudge sent", r.get("done") == 1, r)

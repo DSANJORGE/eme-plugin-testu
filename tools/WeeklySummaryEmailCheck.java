@@ -79,6 +79,22 @@ public class WeeklySummaryEmailCheck
 		String[] en = WeeklySummaryEmail.learnerContent(true, busy, "IRIS", null, "L");
 		ok("english subject", "Diego, here’s your week in TestU".equals(en[0]), en[0]);
 
+		// Weekly objective (amendment 2026-10-06): learner block after the progress section; absent without a goal.
+		busy.goalStatus = "at_risk"; busy.goalTopic = "Ciberseguridad"; busy.goalLevel = "competent"; busy.goalDeadline = "2026-10-11";
+		busy.goalBand = "beginner"; busy.goalPercent = 4; busy.goalDone = 1; busy.goalNeeded = 5;
+		String[] g = WeeklySummaryEmail.learnerContent(false, busy, "IRIS", null, "L");
+		ok("goal section", g[1].contains("TU OBJETIVO DE LA SEMANA"), "");
+		ok("goal title + deadline", g[1].contains("Competente en Ciberseguridad · antes del 11 de octubre"), "");
+		ok("goal week + level", g[1].contains("1 de 5 sesiones esta semana · Principiante · 4%"), "");
+		ok("goal status + suggestion", g[1].contains("En riesgo · Una sesión el sábado y otra el domingo te acercan a tu meta."), "");
+		ok("goal block after the progress section", g[1].indexOf("TU OBJETIVO DE LA SEMANA") > g[1].indexOf("TU AVANCE"), "");
+		ok("no goal, no block", !q[1].contains("TU OBJETIVO DE LA SEMANA"), "");
+		busy.goalDone = 5;
+		ok("week done line", WeeklySummaryEmail.learnerContent(false, busy, "IRIS", null, "L")[1].contains("Semana cumplida. Lo que practiques de más suma para tu nivel."), "");
+		busy.goalStatus = "pace"; busy.goalDeadline = null; busy.goalDone = 1; busy.goalNeeded = 3;
+		ok("pace goal title", WeeklySummaryEmail.learnerContent(false, busy, "IRIS", null, "L")[1].contains("Practicar Ciberseguridad"), "");
+		busy.goalTopic = null;
+
 		AdminWeek a = new AdminWeek();
 		a.name = "Diego";
 		a.total = 42; a.active = 27; a.prevActive = 21; a.answers = 1240; a.prevAnswers = 980; a.minutes = 610; a.prevMinutes = 540;
@@ -113,6 +129,17 @@ public class WeeklySummaryEmailCheck
 		ok("calm week", c[1].contains("Nadie requiere atención especial") && !c[1].contains("POR EQUIPO") && !c[1].contains("PREGUNTAS A"), "");
 		ok("team scope foot", c[1].contains("administras Oficina Lima"), "");
 
+		// Admin: OBJETIVOS CON PLAZO from the Coach card's suggestions (counts per topic, cert_expiring left out).
+		List<java.util.Map<String, Object>> sugg = List.of(sugg("at_risk", "Ciberseguridad", 3), sugg("overdue", "Ciberseguridad", 1),
+			sugg("ready_not_booked", "Derechos Humanos", 2), sugg("cert_expiring", "Fatiga", 4));
+		a.deadlines = WeeklySummaryEmail.deadlineRows(sugg);
+		ok("deadline rows: one per topic, cert_expiring left out", a.deadlines.size() == 2 && "Ciberseguridad".equals(a.deadlines.get(0)[0]), "" + a.deadlines.size());
+		String[] ad2 = WeeklySummaryEmail.adminContent(false, a, "IRIS", null, "L");
+		ok("admin goals section", ad2[1].contains("OBJETIVOS CON PLAZO") && ad2[1].contains("Ciberseguridad · 3 en riesgo · 1 con plazo vencido")
+			&& ad2[1].contains("Derechos Humanos · 2 listos para evaluar"), "");
+		ok("admin goals: Coach pointer", ad2[1].contains("desde la tarjeta Coach de la consola"), "");
+		ok("no deadlines, no section", !c[1].contains("OBJETIVOS CON PLAZO"), "");
+
 		if (args.length > 0)
 		{
 			java.nio.file.Path dir = java.nio.file.Paths.get(args[0]);
@@ -125,6 +152,13 @@ public class WeeklySummaryEmailCheck
 		}
 		System.out.println(failures == 0 ? "ALL OK" : failures + " FAILED");
 		System.exit(failures == 0 ? 0 : 1);
+	}
+
+	static java.util.Map<String, Object> sugg(String inKind, String inTopic, int inCount)
+	{
+		java.util.Map<String, Object> m = new java.util.HashMap<>();
+		m.put("kind", inKind); m.put("topictitle", inTopic); m.put("count", inCount);
+		return m;
 	}
 
 	static TopicMove move(String inTitle, int inPct, String inBand, int inBefore, String inBandBefore, String inRequired, Boolean inMeets)

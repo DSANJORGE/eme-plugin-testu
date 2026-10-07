@@ -2913,20 +2913,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		// miss still costs one fresh Content load per in-scope learner; upgrade path is a Content deep copy in LearningEngine
 		// (load once, applyProfiles per copy) when misses show up in profiling. Dismissals are per manager, so they are
 		// filtered after the cache, never inside it.
-		String cacheKey = archive.getCatalogId() + "|" + (scope == null ? "*" : new java.util.TreeSet<>(scope)) + "|" + teamKey;
-		Object[] hit = COACH_CACHE.get(cacheKey);
-		List<Map<String, Object>> all;
-		if (hit != null && System.currentTimeMillis() - (Long) hit[0] < COACH_TTL_MS)
-		{
-			all = (List<Map<String, Object>>) hit[1];
-		}
-		else
-		{
-			long started = System.currentTimeMillis();
-			all = computeCoachSuggestions(archive, scope, teamFilter, teamKey);
-			log.info("coach suggestions computed in " + (System.currentTimeMillis() - started) + " ms (cache miss)");
-			COACH_CACHE.put(cacheKey, new Object[] {System.currentTimeMillis(), all});
-		}
+		List<Map<String, Object>> all = cachedCoachSuggestions(archive, scope, teamFilter, teamKey);
 		List<Map<String, Object>> out = new ArrayList<>();
 		for (Map<String, Object> b : all)
 		{
@@ -2940,6 +2927,29 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 	static final long COACH_TTL_MS = 5L * 60 * 1000;
 	static final Map<String, Object[]> COACH_CACHE = new ConcurrentHashMap<>();
+
+	/** computeCoachSuggestions behind the per-JVM TTL cache (see the ponytail note in coachSuggestions). */
+	private List<Map<String, Object>> cachedCoachSuggestions(MediaArchive archive, Set<String> scope, String teamFilter, String teamKey)
+	{
+		String cacheKey = archive.getCatalogId() + "|" + (scope == null ? "*" : new java.util.TreeSet<>(scope)) + "|" + teamKey;
+		Object[] hit = COACH_CACHE.get(cacheKey);
+		if (hit != null && System.currentTimeMillis() - (Long) hit[0] < COACH_TTL_MS)
+		{
+			return (List<Map<String, Object>>) hit[1];
+		}
+		long started = System.currentTimeMillis();
+		List<Map<String, Object>> all = computeCoachSuggestions(archive, scope, teamFilter, teamKey);
+		log.info("coach suggestions computed in " + (System.currentTimeMillis() - started) + " ms (cache miss)");
+		COACH_CACHE.put(cacheKey, new Object[] {System.currentTimeMillis(), all});
+		return all;
+	}
+
+	/** The Coach card's suggestions for a team scope (null = the whole org), with no team filter and no per-manager dismissals:
+	 *  the Friday admin email's OBJETIVOS CON PLAZO counts (amendment 2026-10-06). Callers read counts and topic titles only. */
+	List<Map<String, Object>> coachSuggestionsFor(MediaArchive archive, Set<String> scope)
+	{
+		return cachedCoachSuggestions(archive, scope, "", "all");
+	}
 
 	/** Every in-scope learner's mission bucketed into suggestions, before dismissals (see coachSuggestions()). */
 	private List<Map<String, Object>> computeCoachSuggestions(MediaArchive archive, Set<String> scope, String teamFilter, String teamKey)
