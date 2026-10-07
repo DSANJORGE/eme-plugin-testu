@@ -219,12 +219,24 @@ public class MissionPlannerCheck
 	// Amendment 2026-10-06: the 18:00 unfinished-session push and the missionpush row id.
 	static void unfinishedChecks()
 	{
-		ok("unfinished: 3 answers, no reminder, 18:00 -> due", MissionPlanner.unfinishedDue(3, false, 18, true), "");
-		ok("unfinished: before 18:00 the sweep waits", !MissionPlanner.unfinishedDue(3, false, 17, true), "");
-		ok("unfinished: the on-demand run ignores the clock", MissionPlanner.unfinishedDue(3, false, 9, false), "");
-		ok("unfinished: 0 answers is not a session", !MissionPlanner.unfinishedDue(0, false, 18, true), "");
-		ok("unfinished: 5 answers already counted", !MissionPlanner.unfinishedDue(5, false, 18, true), "");
-		ok("unfinished: a pending reminder wins", !MissionPlanner.unfinishedDue(3, true, 18, true), "");
+		ok("unfinished: 3 answers, no reminder, 18:00 -> due", MissionPlanner.unfinishedDue(3, false, true, 18, true), "");
+		ok("unfinished: before 18:00 the sweep waits", !MissionPlanner.unfinishedDue(3, false, true, 17, true), "");
+		ok("unfinished: the on-demand run ignores the clock", MissionPlanner.unfinishedDue(3, false, true, 9, false), "");
+		ok("unfinished: 0 answers is not a session", !MissionPlanner.unfinishedDue(0, false, true, 18, true), "");
+		ok("unfinished: 5 answers already counted", !MissionPlanner.unfinishedDue(5, false, true, 18, true), "");
+		ok("unfinished: a pending reminder wins", !MissionPlanner.unfinishedDue(3, true, true, 18, true), "");
+		ok("unfinished: week done or goal ready -> no push (card says done)", !MissionPlanner.unfinishedDue(3, false, false, 18, true), "");
+		ok("unfinished: week closed also stops the on-demand run", !MissionPlanner.unfinishedDue(3, false, false, 9, false), "");
+		// T = 2026-10-05T00:30Z = 19:30 Oct 4 in Lima (off midnight UTC: ymd reads midnight-UTC dates as day values)
+		Date t = new Date(NOW.getTime() + 1800000L);
+		ok("reminder: none -> not pending", !MissionPlanner.reminderPending(false, null, t, LIMA), "");
+		ok("reminder: not pushed yet -> pending", MissionPlanner.reminderPending(true, null, t, LIMA), "");
+		ok("reminder: pushed earlier today (Lima) -> still holds the unfinished push",
+			MissionPlanner.reminderPending(true, new Date(t.getTime() - 3600000L), t, LIMA), "");
+		ok("reminder: pushed yesterday (Lima) -> released",
+			!MissionPlanner.reminderPending(true, new Date(t.getTime() - 86400000L), t, LIMA), "");
+		ok("reminder: pushed 19:30 Oct 4 Lima, now 01:30 Oct 5 Lima (same UTC day) -> released",
+			!MissionPlanner.reminderPending(true, t, new Date(t.getTime() + 6 * 3600000L), LIMA), "");
 		ok("unfinished text, plural", "Te faltan 2 preguntas para que hoy cuente en tu objetivo de Fatiga.".equals(MissionPlanner.unfinishedText(3, "Fatiga")), MissionPlanner.unfinishedText(3, "Fatiga"));
 		ok("unfinished text, singular", "Te falta 1 pregunta para que hoy cuente en tu objetivo de Fatiga.".equals(MissionPlanner.unfinishedText(4, "Fatiga")), MissionPlanner.unfinishedText(4, "Fatiga"));
 		ok("missionpush id = <notification>_<yyyyMMddHHmm> UTC", "u_mission_remind_202610050000".equals(MissionPlanner.pushRowId("u_mission_remind", NOW)), MissionPlanner.pushRowId("u_mission_remind", NOW));

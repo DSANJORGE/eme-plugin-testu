@@ -91,6 +91,9 @@ public class WeeklySummaryEmailCheck
 		ok("no goal, no block", !q[1].contains("TU OBJETIVO DE LA SEMANA"), "");
 		busy.goalDone = 5;
 		ok("week done line", WeeklySummaryEmail.learnerContent(false, busy, "IRIS", null, "L")[1].contains("Semana cumplida. Lo que practiques de más suma para tu nivel."), "");
+		busy.goalStatus = "overdue"; busy.goalDone = 1;
+		ok("overdue goal title", WeeklySummaryEmail.learnerContent(false, busy, "IRIS", null, "L")[1].contains("Competente en Ciberseguridad · venció el 11 de octubre"), "");
+		ok("overdue goal title, english", WeeklySummaryEmail.learnerContent(true, busy, "IRIS", null, "L")[1].contains(" · was due "), "");
 		busy.goalStatus = "pace"; busy.goalDeadline = null; busy.goalDone = 1; busy.goalNeeded = 3;
 		ok("pace goal title", WeeklySummaryEmail.learnerContent(false, busy, "IRIS", null, "L")[1].contains("Practicar Ciberseguridad"), "");
 		busy.goalTopic = null;

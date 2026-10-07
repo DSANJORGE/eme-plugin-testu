@@ -2114,6 +2114,7 @@ public class TestULearningModule extends TestUBaseModule
 				String status = String.valueOf(m.get("status"));
 				synchronized (LearningEngine.WRITE_LOCK)
 				{
+					boolean pushed = false; // at most one push per learner per sweep (final review m3): the status push waits a sweep
 					Data remind = (Data) ns.searchById(u.getId() + "_mission_remind");
 					if (remind != null && remind.get("pushedat") == null && remind.getValue("remindat") != null && !((Date) remind.getValue("remindat")).after(now))
 					{
@@ -2124,12 +2125,17 @@ public class TestULearningModule extends TestUBaseModule
 						ns.saveData(remind, null);
 						pushMission(archive, social, remind, now);
 						sent++;
+						pushed = true;
 					}
 					// amendment 2026-10-06: today's session started but not counted yet -> one push per learner per day from 18:00.
 					JSONObject week = (JSONObject) m.get("week");
 					int todayAnswers = week == null ? 0 : LearningEngine.intOr(week.get("todayanswers"), 0);
-					boolean reminderPending = remind != null && remind.get("pushedat") == null;
-					if (goal != null && MissionPlanner.unfinishedDue(todayAnswers, reminderPending, hour, inHonorQuietHours))
+					// a reminder pushed earlier today still counts as pending (final review I1): no unfinished push the same day
+					boolean reminderPending = MissionPlanner.reminderPending(remind != null, remind == null ? null : (Date) remind.getValue("pushedat"), now, zone);
+					// the card says "Semana cumplida" / "Nivel alcanzado" otherwise (final review I2)
+					boolean weekOpen = !"ready".equals(status) && week != null
+						&& LearningEngine.intOr(week.get("sessionsdone"), 0) < LearningEngine.intOr(week.get("sessionsneeded"), 0);
+					if (goal != null && MissionPlanner.unfinishedDue(todayAnswers, reminderPending, weekOpen, hour, inHonorQuietHours))
 					{
 						String unfinishedId = u.getId() + "_mission_unfinished_" + LearningEngine.ymd(now, zone).replace("-", "");
 						if (ns.searchById(unfinishedId) == null)
@@ -2143,9 +2149,10 @@ public class TestULearningModule extends TestUBaseModule
 							ns.saveData(n, null);
 							pushMission(archive, social, n, now);
 							sent++;
+							pushed = true;
 						}
 					}
-					if (goal != null && Set.of("ready", "at_risk", "overdue").contains(status))
+					if (goal != null && !pushed && Set.of("ready", "at_risk", "overdue").contains(status))
 					{
 						String id = u.getId() + "_mission_" + goal.get("topic") + "_" + status;
 						Data prev = (Data) ns.searchById(id);
@@ -2209,15 +2216,23 @@ public class TestULearningModule extends TestUBaseModule
 	void pushMission(MediaArchive archive, TestUSocialModule social, Data n, Date now)
 	{
 		social.push(archive, n);
-		Searcher ps = archive.getSearcher("missionpush");
-		Data r = ps.createNewData();
-		r.setId(MissionPlanner.pushRowId(n.getId(), now));
-		r.setValue("user", n.get("user"));
-		r.setValue("kind", n.get("kind"));
-		r.setValue("entitytopic", n.get("entitytopic"));
-		r.setValue("sentat", now);
-		r.setValue("notification", n.getId());
-		ps.saveData(r, null);
+		try
+		{
+			Searcher ps = archive.getSearcher("missionpush");
+			Data r = ps.createNewData();
+			r.setId(MissionPlanner.pushRowId(n.getId(), now));
+			r.setValue("user", n.get("user"));
+			r.setValue("kind", n.get("kind"));
+			r.setValue("entitytopic", n.get("entitytopic"));
+			r.setValue("sentat", now);
+			r.setValue("notification", n.getId());
+			ps.saveData(r, null);
+		}
+		catch (Exception e)
+		{
+			// the push is the product, the row is analytics: a lost row must not abort a nudge loop or its audit (final review I3)
+			log.error("missionpush log " + n.getId(), e);
+		}
 	}
 
 	/**

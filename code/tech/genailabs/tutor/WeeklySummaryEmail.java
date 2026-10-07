@@ -496,7 +496,8 @@ public class WeeklySummaryEmail
 					: band(en, w.goalLevel) + (en ? " in " : " en ") + w.goalTopic;
 			if (w.goalDeadline != null)
 			{
-				title += (en ? " · by " : " · antes del ") + date(en, w.goalDeadline);
+				title += ("overdue".equals(w.goalStatus) ? (en ? " · was due " : " · venció el ") : (en ? " · by " : " · antes del "))
+						+ date(en, w.goalDeadline);
 			}
 			in.append(iconRow("🎯", title));
 			String sessions = w.goalNeeded == 1 ? (en ? " session" : " sesión") : (en ? " sessions" : " sesiones");

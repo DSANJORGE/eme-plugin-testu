@@ -483,11 +483,20 @@ public final class MissionPlanner
 	}
 
 	/** The unfinished-session push (amendment 2026-10-06): today 1..DAY_MIN_ANSWERS-1 answers on the goal topic, no pending
-	 *  reminder, and -- for the automatic sweep (honorClock) -- the learner's clock at or past UNFINISHED_HOUR (quiet hours stop it
-	 *  at 20:00). The admin's on-demand run ignores the clock, like it ignores quiet hours. Pure. */
-	public static boolean unfinishedDue(int todayAnswers, boolean reminderPending, int hour, boolean honorClock)
+	 *  reminder, the week still open (weekOpen: goal not ready and sessionsdone < sessionsneeded -- else the card says "Semana
+	 *  cumplida" / "Nivel alcanzado" and the push would contradict it), and -- for the automatic sweep (honorClock) -- the
+	 *  learner's clock at or past UNFINISHED_HOUR (quiet hours stop it at 20:00). The admin's on-demand run ignores the clock,
+	 *  like it ignores quiet hours. Pure. */
+	public static boolean unfinishedDue(int todayAnswers, boolean reminderPending, boolean weekOpen, int hour, boolean honorClock)
 	{
-		return todayAnswers > 0 && todayAnswers < DAY_MIN_ANSWERS && !reminderPending && (!honorClock || hour >= UNFINISHED_HOUR);
+		return todayAnswers > 0 && todayAnswers < DAY_MIN_ANSWERS && !reminderPending && weekOpen && (!honorClock || hour >= UNFINISHED_HOUR);
+	}
+
+	/** Does the learner's "remind me later" row hold back the unfinished push? Yes while it is pending (not pushed yet) and on
+	 *  the day it was pushed (learner zone): a reminder push and an unfinished push minutes apart is one nudge too many. Pure. */
+	public static boolean reminderPending(boolean reminderExists, Date pushedAt, Date now, ZoneId zone)
+	{
+		return reminderExists && (pushedAt == null || LearningEngine.ymd(pushedAt, zone).equals(LearningEngine.ymd(now, zone)));
 	}
 
 	/** "Te faltan N preguntas para que hoy cuente en tu objetivo de <Tema>." (Spanish, like missionText). Pure. */
