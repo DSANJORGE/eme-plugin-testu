@@ -381,6 +381,12 @@ try:
     refresh()
     s, m = call(me, "GET", "/services/testu/learn/mission.json")
     ok("week.todayanswers counts today's learning answers", m["week"]["todayanswers"] == 2 and m["week"]["todaycounted"] is False, m.get("week"))
+    # final review I1: the reminder pushed above, earlier today, still holds the unfinished push (MissionPlanner.reminderPending).
+    call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    refresh()
+    ok("reminder pushed today holds the unfinished push", not [i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i])
+    delete_rows("learnernotification", [f"{UID}_mission_remind"])  # no reminder row -> nothing holds it (its missionpush row stays for engagement)
+    refresh()
     call(admin, "GET", "/services/testu/learn/missionnudges.json")
     refresh()
     unf = [i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i]
