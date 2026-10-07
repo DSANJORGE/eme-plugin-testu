@@ -50,6 +50,7 @@ public class MissionPlannerCheck
 		JSONObject todayPlan = MissionPlanner.topicPlan(t, st, todayDue, NOW, LIMA);
 		ok("a duedate of the local Lima today is not overdue", !"overdue".equals(todayPlan.get("status")), todayPlan);
 		missionChecks();
+		weekChecks();
 		paceOrderCheck();
 		certExpiryOutsideWindowCheck();
 		renewalReadyCheck();
@@ -209,6 +210,41 @@ public class MissionPlannerCheck
 		ok("appendCoachDoLines: no picks -> stripped message, nothing appended",
 			"Yo me centraría en el equipo de bloqueo.\n\n>> ¿Algo más?"
 				.equals(MissionPlanner.appendCoachDoLines(injected, List.of(), offered)), "");
+	}
+
+	// Amendment 2026-10-06: a day counts only from DAY_MIN_ANSWERS learning answers on the goal topic; week.todayanswers/todaycounted.
+	// NOW = 19:00 Sun 4 Oct Lima, so this week runs Mon 28 Sep .. Sun 4 Oct.
+	static void weekChecks()
+	{
+		Content c = new Content();
+		Topic a = topic("a", 60, 85);
+		c.topics.put("a", a);
+		Learner l = learner(); target(l, "a", "2026-10-20");
+		attempts(l, "a-q1", "learn", "2026-09-29T15:00:00Z", 5);       // Tue: 5 -> counts
+		attempts(l, "a-q1", "improve", "2026-09-30T15:00:00Z", 4);     // Wed: 4 -> does not
+		attempts(l, "a-q1", "learn", "2026-09-27T15:00:00Z", 5);       // Sun 27 Sep: last week
+		attempts(l, "a-q1", "learn", "2026-10-04T20:00:00Z", 3);       // today, 15:00 Lima: 3
+		attempts(l, "a-q1", "evaluation", "2026-10-04T21:00:00Z", 2);  // not a learning mode
+		Map<String, JSONObject> states = new LinkedHashMap<>();
+		states.put("a", state("a", "competent", false, 30, "beginner", false));
+		JSONObject m = MissionPlanner.mission(c, l, states, tid -> null, NOW, LIMA);
+		JSONObject w = (JSONObject) m.get("week");
+		ok("week: only the 5-answer day counts", Integer.valueOf(1).equals(w.get("sessionsdone")), w);
+		ok("week: todayanswers = today's learning answers on the goal topic", Integer.valueOf(3).equals(w.get("todayanswers")), w);
+		ok("week: todaycounted false below 5", Boolean.FALSE.equals(w.get("todaycounted")), w);
+		ok("goal carries requiredmin", Integer.valueOf(60).equals(((JSONObject) m.get("goal")).get("requiredmin")), m.get("goal"));
+		attempts(l, "a-q1", "dailychallenge", "2026-10-04T22:00:00Z", 2);
+		w = (JSONObject) MissionPlanner.mission(c, l, states, tid -> null, NOW, LIMA).get("week");
+		ok("week: today reaches 5 -> counted", Integer.valueOf(2).equals(w.get("sessionsdone")) && Boolean.TRUE.equals(w.get("todaycounted")), w);
+	}
+
+	static void attempts(Learner l, String q, String mode, String iso, int n)
+	{
+		for (int i = 0; i < n; i++)
+		{
+			Attempt at = new Attempt(); at.questionid = q; at.mode = mode; at.at = Date.from(java.time.Instant.parse(iso).plusSeconds(60L * i));
+			l.attempts.add(at);
+		}
 	}
 
 	static JSONObject action(String id, String type, String topic, String mode, String section)
