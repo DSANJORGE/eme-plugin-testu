@@ -6,6 +6,7 @@ import org.json.simple.JSONObject;
 import tech.genailabs.tutor.LearningEngine;
 import tech.genailabs.tutor.LearningEngine.*;
 import tech.genailabs.tutor.MissionPlanner;
+import tech.genailabs.tutor.TestUAnalyticsModule;
 
 /** Pure checks of MissionPlanner (spec 2026-10-05). Run by tools/check_learning.sh. */
 public class MissionPlannerCheck
@@ -50,6 +51,9 @@ public class MissionPlannerCheck
 		JSONObject todayPlan = MissionPlanner.topicPlan(t, st, todayDue, NOW, LIMA);
 		ok("a duedate of the local Lima today is not overdue", !"overdue".equals(todayPlan.get("status")), todayPlan);
 		missionChecks();
+		weekChecks();
+		unfinishedChecks();
+		missionPushChecks();
 		paceOrderCheck();
 		certExpiryOutsideWindowCheck();
 		renewalReadyCheck();
@@ -211,6 +215,67 @@ public class MissionPlannerCheck
 				.equals(MissionPlanner.appendCoachDoLines(injected, List.of(), offered)), "");
 	}
 
+	// Amendment 2026-10-06: a day counts only from DAY_MIN_ANSWERS learning answers on the goal topic; week.todayanswers/todaycounted.
+	// Amendment 2026-10-06: the 18:00 unfinished-session push and the missionpush row id.
+	static void unfinishedChecks()
+	{
+		ok("unfinished: 3 answers, no reminder, 18:00 -> due", MissionPlanner.unfinishedDue(3, false, true, 18, true), "");
+		ok("unfinished: before 18:00 the sweep waits", !MissionPlanner.unfinishedDue(3, false, true, 17, true), "");
+		ok("unfinished: the on-demand run ignores the clock", MissionPlanner.unfinishedDue(3, false, true, 9, false), "");
+		ok("unfinished: 0 answers is not a session", !MissionPlanner.unfinishedDue(0, false, true, 18, true), "");
+		ok("unfinished: 5 answers already counted", !MissionPlanner.unfinishedDue(5, false, true, 18, true), "");
+		ok("unfinished: a pending reminder wins", !MissionPlanner.unfinishedDue(3, true, true, 18, true), "");
+		ok("unfinished: week done or goal ready -> no push (card says done)", !MissionPlanner.unfinishedDue(3, false, false, 18, true), "");
+		ok("unfinished: week closed also stops the on-demand run", !MissionPlanner.unfinishedDue(3, false, false, 9, false), "");
+		// T = 2026-10-05T00:30Z = 19:30 Oct 4 in Lima (off midnight UTC: ymd reads midnight-UTC dates as day values)
+		Date t = new Date(NOW.getTime() + 1800000L);
+		ok("reminder: none -> not pending", !MissionPlanner.reminderPending(false, null, t, LIMA), "");
+		ok("reminder: not pushed yet -> pending", MissionPlanner.reminderPending(true, null, t, LIMA), "");
+		ok("reminder: pushed earlier today (Lima) -> still holds the unfinished push",
+			MissionPlanner.reminderPending(true, new Date(t.getTime() - 3600000L), t, LIMA), "");
+		ok("reminder: pushed yesterday (Lima) -> released",
+			!MissionPlanner.reminderPending(true, new Date(t.getTime() - 86400000L), t, LIMA), "");
+		ok("reminder: pushed 19:30 Oct 4 Lima, now 01:30 Oct 5 Lima (same UTC day) -> released",
+			!MissionPlanner.reminderPending(true, t, new Date(t.getTime() + 6 * 3600000L), LIMA), "");
+		ok("unfinished text, plural", "Te faltan 2 preguntas para que hoy cuente en tu objetivo de Fatiga.".equals(MissionPlanner.unfinishedText(3, "Fatiga")), MissionPlanner.unfinishedText(3, "Fatiga"));
+		ok("unfinished text, singular", "Te falta 1 pregunta para que hoy cuente en tu objetivo de Fatiga.".equals(MissionPlanner.unfinishedText(4, "Fatiga")), MissionPlanner.unfinishedText(4, "Fatiga"));
+		ok("missionpush id = <notification>_<yyyyMMddHHmm> UTC", "u_mission_remind_202610050000".equals(MissionPlanner.pushRowId("u_mission_remind", NOW)), MissionPlanner.pushRowId("u_mission_remind", NOW));
+	}
+
+	// NOW = 19:00 Sun 4 Oct Lima, so this week runs Mon 28 Sep .. Sun 4 Oct.
+	static void weekChecks()
+	{
+		Content c = new Content();
+		Topic a = topic("a", 60, 85);
+		c.topics.put("a", a);
+		Learner l = learner(); target(l, "a", "2026-10-20");
+		attempts(l, "a-q1", "learn", "2026-09-29T15:00:00Z", 5);       // Tue: 5 -> counts
+		attempts(l, "a-q1", "improve", "2026-09-30T15:00:00Z", 4);     // Wed: 4 -> does not
+		attempts(l, "a-q1", "learn", "2026-09-27T15:00:00Z", 5);       // Sun 27 Sep: last week
+		attempts(l, "a-q1", "learn", "2026-10-04T20:00:00Z", 3);       // today, 15:00 Lima: 3
+		attempts(l, "a-q1", "evaluation", "2026-10-04T21:00:00Z", 2);  // not a learning mode
+		Map<String, JSONObject> states = new LinkedHashMap<>();
+		states.put("a", state("a", "competent", false, 30, "beginner", false));
+		JSONObject m = MissionPlanner.mission(c, l, states, tid -> null, NOW, LIMA);
+		JSONObject w = (JSONObject) m.get("week");
+		ok("week: only the 5-answer day counts", Integer.valueOf(1).equals(w.get("sessionsdone")), w);
+		ok("week: todayanswers = today's learning answers on the goal topic", Integer.valueOf(3).equals(w.get("todayanswers")), w);
+		ok("week: todaycounted false below 5", Boolean.FALSE.equals(w.get("todaycounted")), w);
+		ok("goal carries requiredmin", Integer.valueOf(60).equals(((JSONObject) m.get("goal")).get("requiredmin")), m.get("goal"));
+		attempts(l, "a-q1", "dailychallenge", "2026-10-04T22:00:00Z", 2);
+		w = (JSONObject) MissionPlanner.mission(c, l, states, tid -> null, NOW, LIMA).get("week");
+		ok("week: today reaches 5 -> counted", Integer.valueOf(2).equals(w.get("sessionsdone")) && Boolean.TRUE.equals(w.get("todaycounted")), w);
+	}
+
+	static void attempts(Learner l, String q, String mode, String iso, int n)
+	{
+		for (int i = 0; i < n; i++)
+		{
+			Attempt at = new Attempt(); at.questionid = q; at.mode = mode; at.at = Date.from(java.time.Instant.parse(iso).plusSeconds(60L * i));
+			l.attempts.add(at);
+		}
+	}
+
 	static JSONObject action(String id, String type, String topic, String mode, String section)
 	{
 		JSONObject a = new JSONObject();
@@ -243,6 +308,41 @@ public class MissionPlannerCheck
 		JSONObject e = new JSONObject(); e.put("canstart", canstart); s.put("evaluation", e);
 		return s;
 	}
+	// Amendment 2026-10-06: push effectiveness per kind (engagement.json missionpushes), Lima day 2026-09-21.
+	static void missionPushChecks()
+	{
+		List<TestUAnalyticsModule.DoneRow> sent = new ArrayList<>(), opens = new ArrayList<>(), answers = new ArrayList<>();
+		sent.add(row("a", "remind", "t1", "2026-09-21T14:00:00Z"));
+		sent.add(row("b", "remind", "t1", "2026-09-21T14:00:00Z"));
+		sent.add(row("a", "unfinished", "t1", "2026-09-21T23:00:00Z"));
+		sent.add(row("c", "coach", "t2", "2026-09-21T15:00:00Z"));
+		opens.add(row("a", "remind", "t1", "2026-09-21T14:10:00Z"));
+		opens.add(row("b", "unfinished", "t1", "2026-09-21T14:10:00Z")); // another kind's tap: not this push
+		opens.add(row("c", "coach", "t2", "2026-09-23T15:00:00Z"));      // after 24 h
+		for (int i = 0; i < 5; i++)
+			answers.add(row("a", null, "t1", "2026-09-21T15:0" + i + ":00Z"));
+		for (int i = 0; i < 2; i++)
+			answers.add(row("a", null, "t1", "2026-09-22T01:0" + i + ":00Z")); // 20:0x Lima, still the 21st
+		answers.add(row("b", null, "t2", "2026-09-21T15:00:00Z")); // another topic
+		JSONObject p = TestUAnalyticsModule.missionPushes(sent, opens, answers, LIMA);
+		ok("pushes: remind", "sent=2 tapped=1 practised=1 counted=1".equals(pushOf(p, "remind")), pushOf(p, "remind"));
+		ok("pushes: unfinished counts only answers inside its own 24 h", "sent=1 tapped=0 practised=1 counted=0".equals(pushOf(p, "unfinished")), pushOf(p, "unfinished"));
+		ok("pushes: coach, a tap after 24 h is ignored", "sent=1 tapped=0 practised=0 counted=0".equals(pushOf(p, "coach")), pushOf(p, "coach"));
+		ok("pushes: remind tapped rate 0.5", Double.valueOf(0.5).equals(((JSONObject) p.get("remind")).get("tappedrate")), p.get("remind"));
+		ok("pushes: nothing sent -> rates null", ((JSONObject) p.get("ready")).get("tappedrate") == null, p.get("ready"));
+	}
+
+	static TestUAnalyticsModule.DoneRow row(String user, String kind, String topic, String iso)
+	{
+		return new TestUAnalyticsModule.DoneRow(user, kind, null, topic, Date.from(java.time.Instant.parse(iso)), false);
+	}
+
+	static String pushOf(JSONObject p, String kind)
+	{
+		JSONObject k = (JSONObject) p.get(kind);
+		return "sent=" + k.get("sent") + " tapped=" + k.get("tapped") + " practised=" + k.get("practised") + " counted=" + k.get("counted");
+	}
+
 	static void ok(String name, boolean cond, Object detail)
 	{
 		System.out.println((cond ? "ok: " : "FAIL: ") + name + (cond ? "" : " -> " + detail));

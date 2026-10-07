@@ -1538,7 +1538,7 @@ public class TestUSocialModule extends TestUBaseModule
 		if (tokens.isEmpty())
 			return;
 		final JSONObject data = new JSONObject();
-		for (String k : new String[] { "type", "channel", "messageid", "entitytopic", "entityquestion", "entitytutorial", "actorname", "text" })
+		for (String k : new String[] { "type", "kind", "channel", "messageid", "entitytopic", "entityquestion", "entitytutorial", "actorname", "text" })
 		{
 			String v = n.get(k);
 			data.put(k, v == null ? "" : v);

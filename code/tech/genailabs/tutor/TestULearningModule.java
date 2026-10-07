@@ -573,19 +573,50 @@ public class TestULearningModule extends TestUBaseModule
 			announce.put("topic", goal.get("topic"));
 		}
 		m.put("announce", announce);
+		// amendment 2026-10-06: the pending "remind me later" (not pushed yet, still ahead), so the card can collapse to one line.
+		Data rem = (Data) archive.getSearcher("learnernotification").searchById(user.getId() + "_mission_remind");
+		Date remAt = rem == null || rem.get("pushedat") != null ? null : (Date) rem.getValue("remindat");
+		JSONObject reminder = null;
+		if (remAt != null && remAt.after(now))
+		{
+			reminder = new JSONObject();
+			reminder.put("remindat", LearningEngine.iso(remAt));
+			reminder.put("topic", rem.get("entitytopic"));
+		}
+		m.put("reminder", reminder);
 		m.put("ok", Boolean.TRUE);
 		m.put("now", LearningEngine.iso(now));
 		reply(inReq, m);
 	}
 
 	/** services/testu/learn/remind.json (POST topic, when -- 2h|tonight|tomorrow) -- "remind me later" for the mission card.
-	 *  One pending reminder per learner: a new one replaces it. Delivery (task 6) fills text and pushedat. */
+	 *  One pending reminder per learner: a new one replaces it. Delivery (task 6) fills text and pushedat. when=cancel (no topic)
+	 *  deletes the pending one unless it was already pushed: {ok, cancelled} (amendment 2026-10-06, the card's Deshacer). */
 	public void remind(WebPageRequest inReq)
 	{
 		User user = requireUser(inReq);
 		if (user == null)
 			return;
 		MediaArchive archive = getMediaArchive(inReq);
+		if ("cancel".equals(param(inReq, "when")))
+		{
+			boolean cancelled = false;
+			Searcher cs = archive.getSearcher("learnernotification");
+			synchronized (LearningEngine.WRITE_LOCK)
+			{
+				Data n = (Data) cs.searchById(user.getId() + "_mission_remind");
+				if (n != null && n.get("pushedat") == null)
+				{
+					cs.delete(n, null);
+					cancelled = true;
+				}
+			}
+			JSONObject resp = new JSONObject();
+			resp.put("ok", Boolean.TRUE);
+			resp.put("cancelled", cancelled);
+			reply(inReq, resp);
+			return;
+		}
 		String topic = param(inReq, "topic");
 		Date at = MissionPlanner.remindAt(param(inReq, "when"), new Date(), learnerZone(archive, user.getId()));
 		if (topic == null || at == null || archive.getCachedData("entitytopic", topic) == null)
@@ -2072,7 +2103,8 @@ public class TestULearningModule extends TestUBaseModule
 			{
 				if ("false".equals(String.valueOf(u.get("enabled"))) || !mayReceive(archive, u))
 					continue;
-				int hour = now.toInstant().atZone(learnerZone(archive, u.getId())).getHour();
+				ZoneId zone = learnerZone(archive, u.getId());
+				int hour = now.toInstant().atZone(zone).getHour();
 				if (inHonorQuietHours && (hour < 8 || hour >= 20))
 					continue; // quiet hours: the next run inside the window delivers
 				// missionOf loads Content fresh per user (not hoisted): applyProfiles mutates its Topics/sections/questions per
@@ -2082,17 +2114,45 @@ public class TestULearningModule extends TestUBaseModule
 				String status = String.valueOf(m.get("status"));
 				synchronized (LearningEngine.WRITE_LOCK)
 				{
+					boolean pushed = false; // at most one push per learner per sweep (final review m3): the status push waits a sweep
 					Data remind = (Data) ns.searchById(u.getId() + "_mission_remind");
 					if (remind != null && remind.get("pushedat") == null && remind.getValue("remindat") != null && !((Date) remind.getValue("remindat")).after(now))
 					{
 						remind.setValue("text", missionText(goal == null ? "pace" : "remind", goal));
+						remind.setValue("kind", "remind");
 						remind.setValue("pushedat", now);
 						remind.setValue("datecreated", now);
 						ns.saveData(remind, null);
-						social.push(archive, remind);
+						pushMission(archive, social, remind, now);
 						sent++;
+						pushed = true;
 					}
-					if (goal != null && Set.of("ready", "at_risk", "overdue").contains(status))
+					// amendment 2026-10-06: today's session started but not counted yet -> one push per learner per day from 18:00.
+					JSONObject week = (JSONObject) m.get("week");
+					int todayAnswers = week == null ? 0 : LearningEngine.intOr(week.get("todayanswers"), 0);
+					// a reminder pushed earlier today still counts as pending (final review I1): no unfinished push the same day
+					boolean reminderPending = MissionPlanner.reminderPending(remind != null, remind == null ? null : (Date) remind.getValue("pushedat"), now, zone);
+					// the card says "Semana cumplida" / "Nivel alcanzado" otherwise (final review I2)
+					boolean weekOpen = !"ready".equals(status) && week != null
+						&& LearningEngine.intOr(week.get("sessionsdone"), 0) < LearningEngine.intOr(week.get("sessionsneeded"), 0);
+					if (goal != null && MissionPlanner.unfinishedDue(todayAnswers, reminderPending, weekOpen, hour, inHonorQuietHours))
+					{
+						String unfinishedId = u.getId() + "_mission_unfinished_" + LearningEngine.ymd(now, zone).replace("-", "");
+						if (ns.searchById(unfinishedId) == null)
+						{
+							Data n = ns.createNewData();
+							n.setId(unfinishedId);
+							n.setValue("user", u.getId()); n.setValue("actor", "tutor"); n.setValue("actorname", tutorName(archive));
+							n.setValue("type", "mission"); n.setValue("datecreated", now); n.setValue("read", false);
+							n.setValue("entitytopic", goal.get("topic")); n.setValue("kind", "unfinished"); n.setValue("pushedat", now);
+							n.setValue("text", MissionPlanner.unfinishedText(todayAnswers, String.valueOf(goal.get("topictitle"))));
+							ns.saveData(n, null);
+							pushMission(archive, social, n, now);
+							sent++;
+							pushed = true;
+						}
+					}
+					if (goal != null && !pushed && Set.of("ready", "at_risk", "overdue").contains(status))
 					{
 						String id = u.getId() + "_mission_" + goal.get("topic") + "_" + status;
 						Data prev = (Data) ns.searchById(id);
@@ -2107,8 +2167,9 @@ public class TestULearningModule extends TestUBaseModule
 							n.setValue("type", "mission"); n.setValue("datecreated", now); n.setValue("read", false);
 							n.setValue("entitytopic", goal.get("topic")); n.setValue("status", status); n.setValue("pushedat", now);
 							n.setValue("text", missionText(status, goal));
+							n.setValue("kind", status); // ready | at_risk | overdue
 							ns.saveData(n, null);
-							social.push(archive, n);
+							pushMission(archive, social, n, now);
 							sent++;
 						}
 					}
@@ -2146,6 +2207,32 @@ public class TestULearningModule extends TestUBaseModule
 			case "remind" -> "Te lo recuerdo: " + topic + ", una sesión de 6 minutos.";
 			default -> "Una sesión corta hoy para seguir avanzando.";
 		};
+	}
+
+	/** Every mission push (amendment 2026-10-06): the FCM push of the saved row n, plus one missionpush row (user, kind,
+	 *  entitytopic, sentat, notification) so push history survives the reused notification rows. The row is written even when FCM
+	 *  is off or the learner has no device: sent = issued by the server (the bell has it), not confirmed by a phone. Package-visible:
+	 *  the coach nudge (TestUAnalyticsModule) goes through it too. */
+	void pushMission(MediaArchive archive, TestUSocialModule social, Data n, Date now)
+	{
+		social.push(archive, n);
+		try
+		{
+			Searcher ps = archive.getSearcher("missionpush");
+			Data r = ps.createNewData();
+			r.setId(MissionPlanner.pushRowId(n.getId(), now));
+			r.setValue("user", n.get("user"));
+			r.setValue("kind", n.get("kind"));
+			r.setValue("entitytopic", n.get("entitytopic"));
+			r.setValue("sentat", now);
+			r.setValue("notification", n.getId());
+			ps.saveData(r, null);
+		}
+		catch (Exception e)
+		{
+			// the push is the product, the row is analytics: a lost row must not abort a nudge loop or its audit (final review I3)
+			log.error("missionpush log " + n.getId(), e);
+		}
 	}
 
 	/**

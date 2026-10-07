@@ -197,6 +197,9 @@ def cleanup():
         delete_rows("jobrole", [PROFILE[0]])
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID}}))
     delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID}}))
+    delete_rows("missionpush", es_ids("missionpush", {"term": {"user": UID}}))
+    delete_rows("missionpush", es_ids("missionpush", {"term": {"user": UID2}}))
+    delete_rows("usageevent", es_ids("usageevent", {"term": {"user": UID}}))
     usersave("lastmissionstatus", "", UID)  # so a rerun sees announce on its first mission.json read again
     wipe_user_rows(UID)
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID2}}))
@@ -336,11 +339,22 @@ try:
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "tomorrow"})
     ok("remind ok", s == 200 and r.get("ok"), r)
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "2h"})
+    ok("remind returns remindat", s == 200 and r.get("remindat"), r)
     refresh()
     pend = es_ids("learnernotification", {"bool": {"must": [{"term": {"user": UID}}, {"term": {"type": "mission"}}, {"exists": {"field": "remindat"}}], "must_not": [{"exists": {"field": "pushedat"}}]}})
     ok("second remind replaces the first", len(pend) == 1, pend)
     s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"topic": TOPIC, "when": "someday"})
     ok("unknown when -> 400", s == 400, r)
+    # amendment 2026-10-06: the pending reminder shows on mission.json and can be undone until it is pushed.
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("mission.json exposes the pending reminder", m.get("reminder") and m["reminder"]["topic"] == TOPIC and m["reminder"]["remindat"], m.get("reminder"))
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"when": "cancel"})
+    ok("when=cancel deletes the pending reminder", s == 200 and r.get("ok") and r.get("cancelled") is True, r)
+    ok("cancelled reminder row gone", es_doc("learnernotification", f"{UID}_mission_remind") is None)
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("no reminder after cancel", m.get("reminder") is None, m.get("reminder"))
+    s, r = call(me, "POST", "/services/testu/learn/remind.json", form={"when": "cancel"})
+    ok("cancel with nothing pending: 200, cancelled false", s == 200 and r.get("cancelled") is False, r)
 
     # --- nudges
     # Nudges are gated by the existing Daily Challenge email mayReceive rule (no dedicated permission): master switch
@@ -357,6 +371,35 @@ try:
     ok("due reminder delivered (pushedat + text set)", es_doc("learnernotification", f"{UID}_mission_remind").get("pushedat") and es_doc("learnernotification", f"{UID}_mission_remind").get("text"))
     s, r2 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
     ok("status push not repeated on a second run", r2.get("sent", 0) == 0, r2)
+    ok("delivered reminder carries kind=remind", es_doc("learnernotification", f"{UID}_mission_remind").get("kind") == "remind")
+    ok("delivered reminder logged in missionpush", any(i.startswith(f"{UID}_mission_remind_") for i in es_ids("missionpush", {"term": {"user": UID}})))
+    # amendment 2026-10-06: 2 learning answers today on the goal topic -> week.todayanswers 2; the on-demand sweep (no clock gate)
+    # pushes "Te faltan 3 preguntas…" once, and not again the same day.
+    for i in range(2):
+        put_row("tutoranswer", f"mcheck-a-{i}", {"user": UID, "entityquestion": item0["questionid"], "iscorrect": "true", "answerconfidence": "confident",
+                "mode": "learn", "hintlevel": "0", "datecreated": iso(datetime.datetime.utcnow()), "componentsection": item0["sectionid"]})
+    refresh()
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("week.todayanswers counts today's learning answers", m["week"]["todayanswers"] == 2 and m["week"]["todaycounted"] is False, m.get("week"))
+    call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    refresh()
+    unf = [i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i]
+    ok("unfinished push: one row today", len(unf) == 1, unf)
+    urow = es_doc("learnernotification", unf[0]) if unf else {}
+    ok("unfinished row: kind + text", urow.get("kind") == "unfinished" and "Te faltan 3 preguntas" in (urow.get("text") or ""), urow)
+    ok("unfinished push logged in missionpush", any(i.startswith(f"{UID}_mission_unfinished_") for i in es_ids("missionpush", {"term": {"user": UID}})))
+    s, r3 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    refresh()
+    ok("unfinished push not repeated the same day", len([i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i]) == 1 and r3.get("sent", 0) == 0, r3)
+    # amendment 2026-10-06: a push tap is a push_open usage event; engagement.json counts sent/tapped per kind.
+    ev = [{"type": "push_open", "at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sessionid": "mcheck",
+           "campaign": "mission", "source": "remind", "entitytopic": TOPIC, "notification": f"{UID}_mission_remind"}]
+    s, r = call(me, "POST", "/services/testu/usage/track.json", form={"events": json.dumps(ev)})
+    ok("push_open accepted", s == 200 and r.get("ok"), r)
+    refresh()
+    s, e = call(admin, "GET", "/services/testu/analytics/engagement.json")
+    mp = ((e.get("missionpushes") or {}) if s == 200 else {}).get("remind") or {}
+    ok("engagement.json missionpushes: remind sent and tapped", mp.get("sent", 0) >= 1 and mp.get("tapped", 0) >= 1, e.get("missionpushes") if s == 200 else e)
 
     # --- coach (task 7, spec 2026-10-05): manager suggestions over the team's missions, and approve-to-act actions
     make_user(UID2, PASSWORD2, role="users")
@@ -370,9 +413,19 @@ try:
     ok("coach ok", s == 200 and c.get("ok"), c)
     sug = next((x for x in c["suggestions"] if x["kind"] == "overdue" and x["topic"] == TOPIC), None)
     ok("overdue suggestion lists the learner", sug and any(u["id"] == UID2 for u in sug["users"]), c)
+    # amendment 2026-10-06: the Friday summaries carry the objective (learner) and the deadline counts (admin).
+    s, wk = call(admin, "GET", f"/services/testu/learn/weeklysummaryemail.json?user={quote(UID)}&as=learner")
+    h = (wk.get("html") or "") if s == 200 else ""
+    ok("weekly summary: learner objective block", "TU OBJETIVO DE LA SEMANA" in h or "YOUR GOAL THIS WEEK" in h, str(wk)[:300])
+    s, wk = call(admin, "GET", "/services/testu/learn/weeklysummaryemail.json?as=admin")
+    h = (wk.get("html") or "") if s == 200 else ""
+    ok("weekly summary: admin deadline counts", "OBJETIVOS CON PLAZO" in h or "GOALS WITH A DEADLINE" in h, str(wk)[:300])
 
     s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
     ok("nudge sent", r.get("done") == 1, r)
+    refresh()
+    ok("coach nudge carries kind=coach", (es_doc("learnernotification", f"{UID2}_coach_{TOPIC}") or {}).get("kind") == "coach")
+    ok("coach nudge logged in missionpush", any(i.startswith(f"{UID2}_coach_{TOPIC}_") for i in es_ids("missionpush", {"term": {"user": UID2}})))
     s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
     ok("second nudge within 3 days skipped", r.get("skipped") == 1, r)
 

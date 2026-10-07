@@ -24,6 +24,9 @@ import tech.genailabs.tutor.LearningEngine.Topic;
 public final class MissionPlanner
 {
 	public static final int GAIN_PER_SESSION = 4, PACE_SESSIONS = 3, MAX_SESSIONS = 5, HISTORY_DAYS = 28;
+	/** Amendment 2026-10-06: a day counts toward the week from this many learning answers on the goal topic; the unfinished-session
+	 *  push goes out from this learner-local hour. */
+	public static final int DAY_MIN_ANSWERS = 5, UNFINISHED_HOUR = 18;
 
 	private MissionPlanner()
 	{
@@ -103,6 +106,7 @@ public final class MissionPlanner
 		o.put("deadlinesource", dl == null ? null : deadlineSource(t, l, now, z, dl));
 		o.put("daysleft", daysleft);
 		o.put("canstart", canstart);
+		o.put("requiredmin", requiredMin(s)); // the card's level-bar marker (amendment 2026-10-06); gap alone is clamped at 0
 		return o;
 	}
 
@@ -300,21 +304,29 @@ public final class MissionPlanner
 			long weeks = Math.max(1, (((Number) dl).longValue() + 6) / 7);
 			needed = (int) Math.max(1, Math.min(MAX_SESSIONS, Math.ceil(Math.ceil(gap / (double) GAIN_PER_SESSION) / weeks)));
 		}
-		LocalDate monday = now.toInstant().atZone(z).toLocalDate().with(java.time.DayOfWeek.MONDAY);
+		LocalDate today = now.toInstant().atZone(z).toLocalDate();
+		LocalDate monday = today.with(java.time.DayOfWeek.MONDAY);
 		java.util.Set<String> ids = LearningEngine.ids(t.questions);
-		java.util.Set<LocalDate> days = new java.util.HashSet<>();
+		Map<LocalDate, Integer> perDay = new java.util.HashMap<>();
 		for (Attempt a : l.attempts)
 		{
 			if (a.at != null && ids.contains(a.questionid) && LearningEngine.isLearningMode(a.mode))
 			{
 				LocalDate d = a.at.toInstant().atZone(z).toLocalDate();
 				if (!d.isBefore(monday))
-					days.add(d);
+					perDay.merge(d, 1, Integer::sum);
 			}
 		}
+		int counted = 0;
+		for (int n : perDay.values())
+			if (n >= DAY_MIN_ANSWERS)
+				counted++;
+		int todayAnswers = perDay.getOrDefault(today, 0);
 		JSONObject w = new JSONObject();
 		w.put("sessionsneeded", needed);
-		w.put("sessionsdone", Math.min(days.size(), needed));
+		w.put("sessionsdone", Math.min(counted, needed)); // amendment 2026-10-06: a day counts from DAY_MIN_ANSWERS answers
+		w.put("todayanswers", todayAnswers);
+		w.put("todaycounted", todayAnswers >= DAY_MIN_ANSWERS);
 		return w;
 	}
 
@@ -468,5 +480,35 @@ public final class MissionPlanner
 			case "tomorrow" -> Date.from(n.plusDays(1).withHour(9).withMinute(0).withSecond(0).withNano(0).toInstant());
 			default -> null;
 		};
+	}
+
+	/** The unfinished-session push (amendment 2026-10-06): today 1..DAY_MIN_ANSWERS-1 answers on the goal topic, no pending
+	 *  reminder, the week still open (weekOpen: goal not ready and sessionsdone < sessionsneeded -- else the card says "Semana
+	 *  cumplida" / "Nivel alcanzado" and the push would contradict it), and -- for the automatic sweep (honorClock) -- the
+	 *  learner's clock at or past UNFINISHED_HOUR (quiet hours stop it at 20:00). The admin's on-demand run ignores the clock,
+	 *  like it ignores quiet hours. Pure. */
+	public static boolean unfinishedDue(int todayAnswers, boolean reminderPending, boolean weekOpen, int hour, boolean honorClock)
+	{
+		return todayAnswers > 0 && todayAnswers < DAY_MIN_ANSWERS && !reminderPending && weekOpen && (!honorClock || hour >= UNFINISHED_HOUR);
+	}
+
+	/** Does the learner's "remind me later" row hold back the unfinished push? Yes while it is pending (not pushed yet) and on
+	 *  the day it was pushed (learner zone): a reminder push and an unfinished push minutes apart is one nudge too many. Pure. */
+	public static boolean reminderPending(boolean reminderExists, Date pushedAt, Date now, ZoneId zone)
+	{
+		return reminderExists && (pushedAt == null || LearningEngine.ymd(pushedAt, zone).equals(LearningEngine.ymd(now, zone)));
+	}
+
+	/** "Te faltan N preguntas para que hoy cuente en tu objetivo de <Tema>." (Spanish, like missionText). Pure. */
+	public static String unfinishedText(int todayAnswers, String topicTitle)
+	{
+		int left = DAY_MIN_ANSWERS - todayAnswers;
+		return (left == 1 ? "Te falta 1 pregunta" : "Te faltan " + left + " preguntas") + " para que hoy cuente en tu objetivo de " + topicTitle + ".";
+	}
+
+	/** missionpush row id: <notification id>_<yyyyMMddHHmm> in UTC -- one row per push even when the notification row is reused. Pure. */
+	public static String pushRowId(String notificationId, Date sentAt)
+	{
+		return notificationId + "_" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(java.time.ZoneOffset.UTC).format(sentAt.toInstant());
 	}
 }
