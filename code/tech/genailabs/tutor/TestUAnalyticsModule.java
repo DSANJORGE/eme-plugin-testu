@@ -2913,7 +2913,20 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		// miss still costs one fresh Content load per in-scope learner; upgrade path is a Content deep copy in LearningEngine
 		// (load once, applyProfiles per copy) when misses show up in profiling. Dismissals are per manager, so they are
 		// filtered after the cache, never inside it.
-		List<Map<String, Object>> all = cachedCoachSuggestions(archive, scope, teamFilter, teamKey);
+		String cacheKey = archive.getCatalogId() + "|" + (scope == null ? "*" : new java.util.TreeSet<>(scope)) + "|" + teamKey;
+		Object[] hit = COACH_CACHE.get(cacheKey);
+		List<Map<String, Object>> all;
+		if (hit != null && System.currentTimeMillis() - (Long) hit[0] < COACH_TTL_MS)
+		{
+			all = (List<Map<String, Object>>) hit[1];
+		}
+		else
+		{
+			long started = System.currentTimeMillis();
+			all = computeCoachSuggestions(archive, scope, teamFilter, teamKey);
+			log.info("coach suggestions computed in " + (System.currentTimeMillis() - started) + " ms (cache miss)");
+			COACH_CACHE.put(cacheKey, new Object[] {System.currentTimeMillis(), all});
+		}
 		List<Map<String, Object>> out = new ArrayList<>();
 		for (Map<String, Object> b : all)
 		{
@@ -2928,6 +2941,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	static final long COACH_TTL_MS = 5L * 60 * 1000;
 	static final Map<String, Object[]> COACH_CACHE = new ConcurrentHashMap<>();
 
+	// ponytail: duplicates coachSuggestions' inline cache (same key format, same COACH_CACHE) to keep that block byte-identical with a pending peer edit; fold coachSuggestions onto this once that lands.
 	/** computeCoachSuggestions behind the per-JVM TTL cache (see the ponytail note in coachSuggestions). */
 	private List<Map<String, Object>> cachedCoachSuggestions(MediaArchive archive, Set<String> scope, String teamFilter, String teamKey)
 	{
