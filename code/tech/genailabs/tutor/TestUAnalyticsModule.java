@@ -2667,6 +2667,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 					n.setValue("read", Boolean.FALSE);
 					n.setValue("entitytopic", topic);
 					n.setValue("status", textStatus);
+					n.setValue("kind", "coach");
 					n.setValue("text", TestULearningModule.missionText(textStatus, topicPlan));
 					n.setValue("pushedat", now);
 					ns.saveData(n, null); // claims the row
@@ -2677,7 +2678,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				skipped++;
 				continue;
 			}
-			social.push(archive, n);
+			learningModule.pushMission(archive, social, n, now);
 			done++;
 			nudged.add(id);
 		}

@@ -481,4 +481,25 @@ public final class MissionPlanner
 			default -> null;
 		};
 	}
+
+	/** The unfinished-session push (amendment 2026-10-06): today 1..DAY_MIN_ANSWERS-1 answers on the goal topic, no pending
+	 *  reminder, and -- for the automatic sweep (honorClock) -- the learner's clock at or past UNFINISHED_HOUR (quiet hours stop it
+	 *  at 20:00). The admin's on-demand run ignores the clock, like it ignores quiet hours. Pure. */
+	public static boolean unfinishedDue(int todayAnswers, boolean reminderPending, int hour, boolean honorClock)
+	{
+		return todayAnswers > 0 && todayAnswers < DAY_MIN_ANSWERS && !reminderPending && (!honorClock || hour >= UNFINISHED_HOUR);
+	}
+
+	/** "Te faltan N preguntas para que hoy cuente en tu objetivo de <Tema>." (Spanish, like missionText). Pure. */
+	public static String unfinishedText(int todayAnswers, String topicTitle)
+	{
+		int left = DAY_MIN_ANSWERS - todayAnswers;
+		return (left == 1 ? "Te falta 1 pregunta" : "Te faltan " + left + " preguntas") + " para que hoy cuente en tu objetivo de " + topicTitle + ".";
+	}
+
+	/** missionpush row id: <notification id>_<yyyyMMddHHmm> in UTC -- one row per push even when the notification row is reused. Pure. */
+	public static String pushRowId(String notificationId, Date sentAt)
+	{
+		return notificationId + "_" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(java.time.ZoneOffset.UTC).format(sentAt.toInstant());
+	}
 }

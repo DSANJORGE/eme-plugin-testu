@@ -197,6 +197,8 @@ def cleanup():
         delete_rows("jobrole", [PROFILE[0]])
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID}}))
     delete_rows("learnernotification", es_ids("learnernotification", {"term": {"user": UID}}))
+    delete_rows("missionpush", es_ids("missionpush", {"term": {"user": UID}}))
+    delete_rows("missionpush", es_ids("missionpush", {"term": {"user": UID2}}))
     usersave("lastmissionstatus", "", UID)  # so a rerun sees announce on its first mission.json read again
     wipe_user_rows(UID)
     delete_rows("learnertarget", es_ids("learnertarget", {"term": {"user": UID2}}))
@@ -368,6 +370,26 @@ try:
     ok("due reminder delivered (pushedat + text set)", es_doc("learnernotification", f"{UID}_mission_remind").get("pushedat") and es_doc("learnernotification", f"{UID}_mission_remind").get("text"))
     s, r2 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
     ok("status push not repeated on a second run", r2.get("sent", 0) == 0, r2)
+    ok("delivered reminder carries kind=remind", es_doc("learnernotification", f"{UID}_mission_remind").get("kind") == "remind")
+    ok("delivered reminder logged in missionpush", any(i.startswith(f"{UID}_mission_remind_") for i in es_ids("missionpush", {"term": {"user": UID}})))
+    # amendment 2026-10-06: 2 learning answers today on the goal topic -> week.todayanswers 2; the on-demand sweep (no clock gate)
+    # pushes "Te faltan 3 preguntas…" once, and not again the same day.
+    for i in range(2):
+        put_row("tutoranswer", f"mcheck-a-{i}", {"user": UID, "entityquestion": item0["questionid"], "iscorrect": "true", "answerconfidence": "confident",
+                "mode": "learn", "hintlevel": "0", "datecreated": iso(datetime.datetime.utcnow()), "componentsection": item0["sectionid"]})
+    refresh()
+    s, m = call(me, "GET", "/services/testu/learn/mission.json")
+    ok("week.todayanswers counts today's learning answers", m["week"]["todayanswers"] == 2 and m["week"]["todaycounted"] is False, m.get("week"))
+    call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    refresh()
+    unf = [i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i]
+    ok("unfinished push: one row today", len(unf) == 1, unf)
+    urow = es_doc("learnernotification", unf[0]) if unf else {}
+    ok("unfinished row: kind + text", urow.get("kind") == "unfinished" and "Te faltan 3 preguntas" in (urow.get("text") or ""), urow)
+    ok("unfinished push logged in missionpush", any(i.startswith(f"{UID}_mission_unfinished_") for i in es_ids("missionpush", {"term": {"user": UID}})))
+    s, r3 = call(admin, "GET", "/services/testu/learn/missionnudges.json")
+    refresh()
+    ok("unfinished push not repeated the same day", len([i for i in es_ids("learnernotification", {"term": {"user": UID}}) if "_mission_unfinished_" in i]) == 1 and r3.get("sent", 0) == 0, r3)
 
     # --- coach (task 7, spec 2026-10-05): manager suggestions over the team's missions, and approve-to-act actions
     make_user(UID2, PASSWORD2, role="users")
@@ -384,6 +406,9 @@ try:
 
     s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
     ok("nudge sent", r.get("done") == 1, r)
+    refresh()
+    ok("coach nudge carries kind=coach", (es_doc("learnernotification", f"{UID2}_coach_{TOPIC}") or {}).get("kind") == "coach")
+    ok("coach nudge logged in missionpush", any(i.startswith(f"{UID2}_coach_{TOPIC}_") for i in es_ids("missionpush", {"term": {"user": UID2}})))
     s, r = call(admin, "POST", "/services/testu/analytics/coachaction.json", form={"action": "nudge", "topic": TOPIC, "users": json.dumps([UID2])})
     ok("second nudge within 3 days skipped", r.get("skipped") == 1, r)
 

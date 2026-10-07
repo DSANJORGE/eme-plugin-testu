@@ -2103,7 +2103,8 @@ public class TestULearningModule extends TestUBaseModule
 			{
 				if ("false".equals(String.valueOf(u.get("enabled"))) || !mayReceive(archive, u))
 					continue;
-				int hour = now.toInstant().atZone(learnerZone(archive, u.getId())).getHour();
+				ZoneId zone = learnerZone(archive, u.getId());
+				int hour = now.toInstant().atZone(zone).getHour();
 				if (inHonorQuietHours && (hour < 8 || hour >= 20))
 					continue; // quiet hours: the next run inside the window delivers
 				// missionOf loads Content fresh per user (not hoisted): applyProfiles mutates its Topics/sections/questions per
@@ -2117,11 +2118,32 @@ public class TestULearningModule extends TestUBaseModule
 					if (remind != null && remind.get("pushedat") == null && remind.getValue("remindat") != null && !((Date) remind.getValue("remindat")).after(now))
 					{
 						remind.setValue("text", missionText(goal == null ? "pace" : "remind", goal));
+						remind.setValue("kind", "remind");
 						remind.setValue("pushedat", now);
 						remind.setValue("datecreated", now);
 						ns.saveData(remind, null);
-						social.push(archive, remind);
+						pushMission(archive, social, remind, now);
 						sent++;
+					}
+					// amendment 2026-10-06: today's session started but not counted yet -> one push per learner per day from 18:00.
+					JSONObject week = (JSONObject) m.get("week");
+					int todayAnswers = week == null ? 0 : LearningEngine.intOr(week.get("todayanswers"), 0);
+					boolean reminderPending = remind != null && remind.get("pushedat") == null;
+					if (goal != null && MissionPlanner.unfinishedDue(todayAnswers, reminderPending, hour, inHonorQuietHours))
+					{
+						String unfinishedId = u.getId() + "_mission_unfinished_" + LearningEngine.ymd(now, zone).replace("-", "");
+						if (ns.searchById(unfinishedId) == null)
+						{
+							Data n = ns.createNewData();
+							n.setId(unfinishedId);
+							n.setValue("user", u.getId()); n.setValue("actor", "tutor"); n.setValue("actorname", tutorName(archive));
+							n.setValue("type", "mission"); n.setValue("datecreated", now); n.setValue("read", false);
+							n.setValue("entitytopic", goal.get("topic")); n.setValue("kind", "unfinished"); n.setValue("pushedat", now);
+							n.setValue("text", MissionPlanner.unfinishedText(todayAnswers, String.valueOf(goal.get("topictitle"))));
+							ns.saveData(n, null);
+							pushMission(archive, social, n, now);
+							sent++;
+						}
 					}
 					if (goal != null && Set.of("ready", "at_risk", "overdue").contains(status))
 					{
@@ -2138,8 +2160,9 @@ public class TestULearningModule extends TestUBaseModule
 							n.setValue("type", "mission"); n.setValue("datecreated", now); n.setValue("read", false);
 							n.setValue("entitytopic", goal.get("topic")); n.setValue("status", status); n.setValue("pushedat", now);
 							n.setValue("text", missionText(status, goal));
+							n.setValue("kind", status); // ready | at_risk | overdue
 							ns.saveData(n, null);
-							social.push(archive, n);
+							pushMission(archive, social, n, now);
 							sent++;
 						}
 					}
@@ -2177,6 +2200,24 @@ public class TestULearningModule extends TestUBaseModule
 			case "remind" -> "Te lo recuerdo: " + topic + ", una sesión de 6 minutos.";
 			default -> "Una sesión corta hoy para seguir avanzando.";
 		};
+	}
+
+	/** Every mission push (amendment 2026-10-06): the FCM push of the saved row n, plus one missionpush row (user, kind,
+	 *  entitytopic, sentat, notification) so push history survives the reused notification rows. The row is written even when FCM
+	 *  is off or the learner has no device: sent = issued by the server (the bell has it), not confirmed by a phone. Package-visible:
+	 *  the coach nudge (TestUAnalyticsModule) goes through it too. */
+	void pushMission(MediaArchive archive, TestUSocialModule social, Data n, Date now)
+	{
+		social.push(archive, n);
+		Searcher ps = archive.getSearcher("missionpush");
+		Data r = ps.createNewData();
+		r.setId(MissionPlanner.pushRowId(n.getId(), now));
+		r.setValue("user", n.get("user"));
+		r.setValue("kind", n.get("kind"));
+		r.setValue("entitytopic", n.get("entitytopic"));
+		r.setValue("sentat", now);
+		r.setValue("notification", n.getId());
+		ps.saveData(r, null);
 	}
 
 	/**

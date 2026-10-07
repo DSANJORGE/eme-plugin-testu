@@ -51,6 +51,7 @@ public class MissionPlannerCheck
 		ok("a duedate of the local Lima today is not overdue", !"overdue".equals(todayPlan.get("status")), todayPlan);
 		missionChecks();
 		weekChecks();
+		unfinishedChecks();
 		paceOrderCheck();
 		certExpiryOutsideWindowCheck();
 		renewalReadyCheck();
@@ -213,6 +214,20 @@ public class MissionPlannerCheck
 	}
 
 	// Amendment 2026-10-06: a day counts only from DAY_MIN_ANSWERS learning answers on the goal topic; week.todayanswers/todaycounted.
+	// Amendment 2026-10-06: the 18:00 unfinished-session push and the missionpush row id.
+	static void unfinishedChecks()
+	{
+		ok("unfinished: 3 answers, no reminder, 18:00 -> due", MissionPlanner.unfinishedDue(3, false, 18, true), "");
+		ok("unfinished: before 18:00 the sweep waits", !MissionPlanner.unfinishedDue(3, false, 17, true), "");
+		ok("unfinished: the on-demand run ignores the clock", MissionPlanner.unfinishedDue(3, false, 9, false), "");
+		ok("unfinished: 0 answers is not a session", !MissionPlanner.unfinishedDue(0, false, 18, true), "");
+		ok("unfinished: 5 answers already counted", !MissionPlanner.unfinishedDue(5, false, 18, true), "");
+		ok("unfinished: a pending reminder wins", !MissionPlanner.unfinishedDue(3, true, 18, true), "");
+		ok("unfinished text, plural", "Te faltan 2 preguntas para que hoy cuente en tu objetivo de Fatiga.".equals(MissionPlanner.unfinishedText(3, "Fatiga")), MissionPlanner.unfinishedText(3, "Fatiga"));
+		ok("unfinished text, singular", "Te falta 1 pregunta para que hoy cuente en tu objetivo de Fatiga.".equals(MissionPlanner.unfinishedText(4, "Fatiga")), MissionPlanner.unfinishedText(4, "Fatiga"));
+		ok("missionpush id = <notification>_<yyyyMMddHHmm> UTC", "u_mission_remind_202610050000".equals(MissionPlanner.pushRowId("u_mission_remind", NOW)), MissionPlanner.pushRowId("u_mission_remind", NOW));
+	}
+
 	// NOW = 19:00 Sun 4 Oct Lima, so this week runs Mon 28 Sep .. Sun 4 Oct.
 	static void weekChecks()
 	{
