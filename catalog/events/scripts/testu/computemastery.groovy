@@ -36,9 +36,12 @@ TimeZone tz = (tzid && TimeZone.getTimeZone(tzid).getID() == tzid) ? TimeZone.ge
 def dayOf = { Date d -> d.format("yyyyMMdd", tz) }
 Map days = [:]   // "<user>_<yyyyMMdd>" -> map
 def dayFor = { String user, Date at ->
-  String k = user + "_" + dayOf(at)
+  String dk = dayOf(at), k = user + "_" + dk
   Map d = days[k]
-  if (d == null) { d = [user: user, day: Date.parse("yyyyMMdd", dayOf(at)), answers: 0, correct: 0, certainwrong: 0, questions: 0, helpful: 0, nothelpful: 0, minutes: 0.0d, first: at, last: at, iv: []]; days[k] = d }
+  // dk (org-zone yyyyMMdd) is the row's identity; `day` is that date at JVM midnight, which is how the console's
+  // readers format it back (JVM-zone SimpleDateFormat). Never re-derive the id from `day`: dayOf(day) shifts it a
+  // day whenever the JVM zone is east of tz, and the keep-set below then deleted every run's first day.
+  if (d == null) { d = [user: user, dk: dk, day: Date.parse("yyyyMMdd", dk), answers: 0, correct: 0, certainwrong: 0, questions: 0, helpful: 0, nothelpful: 0, minutes: 0.0d, first: at, last: at, iv: []]; days[k] = d }
   if (at < d.first) d.first = at
   if (at > d.last) d.last = at
   return d
@@ -131,8 +134,9 @@ try {
 def daily = archive.getSearcher("tutordaily")
 List dsave = []
 for (Map d in days.values()) {
-  Data row = daily.searchById(d.user + "_" + dayOf(d.day)) ?: daily.createNewData()
-  row.setId(d.user + "_" + dayOf(d.day))
+  String id = d.user + "_" + d.dk
+  Data row = daily.searchById(id) ?: daily.createNewData()
+  row.setId(id)
   row.setValue("user", d.user); row.setValue("day", d.day)
   ["answers", "correct", "certainwrong", "questions", "helpful", "nothelpful"].each { row.setValue(it, d[it]) }
   // sessions: runs of activity (foreground spans, answers, questions, usage events) with no gap over 30 min.

@@ -104,7 +104,7 @@ public class TestUTeamModule extends TestUBaseModule
 			{
 				Data u = (Data) hit;
 				String t = u.get("team");
-				if (t != null && !t.isEmpty())
+				if (t != null && !t.isEmpty() && TestUAnalyticsModule.countsAsPerson(u.getId(), u)) // same population as analytics
 				{
 					Integer count = members.get(t);
 					members.put(t, count == null ? 1 : count + 1);

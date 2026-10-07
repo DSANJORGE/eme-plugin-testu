@@ -195,13 +195,14 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		Map<String, Data> users = new HashMap<>();
 		int internalCount = 0; // in-scope support accounts left out, so the console can say so instead of showing a silent gap
+		Set<String> teamTree = teamSubtree(allteams, teamFilter);
 		for (Map.Entry<String, Data> entry : allUsers.entrySet())
 		{
 			Data u = entry.getValue();
 			String id = entry.getKey();
 			boolean isLearner = countsAsPerson(id, u);
 			String t = u.get("team");
-			boolean inScope = (scope == null || (t != null && scope.contains(t))) && (teamFilter.isEmpty() || (t != null && teamFilter.equals(t)));
+			boolean inScope = (scope == null || (t != null && scope.contains(t))) && (teamTree == null || (t != null && teamTree.contains(t)));
 			if (isLearner && inScope)
 			{
 				users.put(id, u);
@@ -224,6 +225,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 
 		Map<String, String> sections = new HashMap<>();
+		Map<String, Integer> sectionOrdering = new HashMap<>(); // stable tie-break for "weakest subtopic"
 		HitTracker sh = archive.query("componentsection").exact("playbackentitymoduleid", "entitytutorial").search();
 		if (sh != null)
 		{
@@ -231,6 +233,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			{
 				Data s = (Data) o;
 				sections.put(s.getId(), s.getName());
+				sectionOrdering.put(s.getId(), s.get("ordering") != null ? getInt(s, "ordering") : Integer.MAX_VALUE);
 			}
 		}
 
@@ -360,8 +363,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		Map<String, String> levelByUser = new HashMap<>();
 		for (String u : users.keySet())
 		{
-			Map<String, Object> pu = perUser.get(u);
-			levelByUser.put(u, overallBand(pctByUserTopic.get(u), topicWeight, orgThresholds));
+			// Under a topic filter the level is that topic's stored band (its own competentmin/expertmin), not the org thresholds.
+			levelByUser.put(u, topicFilter.isEmpty() ? overallBand(pctByUserTopic.get(u), topicWeight, orgThresholds) : bandOf(bandByUserTopic, u, topicFilter));
 		}
 
 		List<Data> allDaily = new ArrayList<>();
@@ -473,7 +476,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 						if ("beginner".equals(l))
 							countB++;
 					}
-					if (countB > maxBeginners)
+					// Ties go to the subtopic first in course order (ordering, then name), not to HashMap order.
+					if (countB > maxBeginners || (countB > 0 && countB == maxBeginners && sectionOrder(sectionOrdering, sections).compare(sEntry.getKey(), (String) weakest.get("section")) < 0))
 					{
 						maxBeginners = countB;
 						weakest = new HashMap<>();
@@ -603,7 +607,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		Map<String, List<Data>> byTeam = new HashMap<>();
 		for (Data u : users.values())
 		{
-			String t = u.get("team");
+			// A team filter covers the team and its sub-teams: one row for the whole tree, so teams[] agrees with cohort.
+			String t = teamTree != null ? teamFilter : u.get("team");
 			byTeam.computeIfAbsent(t != null ? t : "", k -> new ArrayList<>()).add(u);
 		}
 
@@ -726,29 +731,37 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			median.put("expertShare", expertCount / (double) orgUsers.size());
 		}
 
-		Calendar inactCal = Calendar.getInstance();
-		inactCal.setTime(now);
-		inactCal.add(Calendar.DAY_OF_MONTH, -7);
-		Date inactiveCutoff = inactCal.getTime();
+		// "Sin actividad" = the complement of Active 7 d (same tutordaily rows, same 7 days to `to`), so active7d + inactive = total.
+		// Last answer = latest tutordaily day with answers before `to`, all topics: the source active7dUsers counts from.
+		Map<String, Date> lastAnswerDay = new HashMap<>();
+		for (Data r : dailyAll)
+		{
+			Date d = DateStorageUtil.getStorageUtil().parseFromObject(r.getValue("day"));
+			if (d != null && d.before(to) && getInt(r, "answers") > 0)
+				lastAnswerDay.merge(r.get("user"), d, (x, y) -> x.after(y) ? x : y);
+		}
 
 		SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX");
 
 		List<Map<String, Object>> inactive = new ArrayList<>();
 		for (Data u : users.values())
 		{
-			Map<String, Object> pu = perUser.get(u.getId());
-			Date lastDate = (pu != null) ? (Date) pu.get("last") : null;
-			if (lastDate == null || lastDate.before(inactiveCutoff))
+			Date lastDate = lastAnswerDay.get(u.getId());
+			if (!active7dUsers.contains(u.getId()))
 			{
 				Map<String, Object> inactObj = new HashMap<>();
 				inactObj.put("user", u.getId());
 				inactObj.put("name", formatUserName(u));
 				inactObj.put("team", u.get("team"));
 				inactObj.put("lastactivity", lastDate != null ? isoFormat.format(lastDate) : null);
+				// Same rule as the funnel's "signed in", so "never answered" is not read as "never entered"
+				inactObj.put("signedin", u.get("lastlogin") != null || activatedIds.contains(u.getId()));
 				inactive.add(inactObj);
 			}
 		}
-		inactive.sort(Comparator.comparing(a -> (String) a.get("lastactivity"), Comparator.nullsFirst(Comparator.naturalOrder())));
+		// Never signed in, then signed in without answering, then oldest answer first
+		inactive.sort(Comparator.comparing((Map<String, Object> a) -> Boolean.TRUE.equals(a.get("signedin")))
+				.thenComparing(a -> (String) a.get("lastactivity"), Comparator.nullsFirst(Comparator.naturalOrder())));
 
 		Map<String, Object> iris = buildIrisAggregates(tq, sections);
 
@@ -772,8 +785,12 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		analytics.put("perUser", perUser);
 		analytics.put("perUserTopic", perUserTopic);
 		analytics.put("bandByUserTopic", bandByUserTopic);
+		analytics.put("pctByUserTopic", pctByUserTopic);
 		analytics.put("perSection", perSection);
 		analytics.put("levelByUser", levelByUser);
+		analytics.put("topicWeight", topicWeight);
+		analytics.put("orgThresholds", orgThresholds);
+		analytics.put("active7dUsers", active7dUsers);
 		analytics.put("dailyAll", dailyAll);
 		analytics.put("daily", daily);
 		analytics.put("series", series);
@@ -816,6 +833,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		resp.put("topics", a.get("topicStats"));
 		resp.put("calibration", a.get("calibration"));
 		resp.put("teams", a.get("teamStats"));
+		// Who counts in cohort.active7d (ids only, same scope/team filter), so a roster can mark "active" by the same rule.
+		resp.put("active7dusers", new ArrayList<>((Set<String>) a.get("active7dUsers")));
 		resp.put("median", a.get("median"));
 		resp.put("previous", a.get("previous"));
 		resp.put("gaps", a.get("gaps"));
@@ -829,7 +848,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 	/**
 	 * Mastery forecast (admin Previsión): per topic in scope, the daily share of in-scope people at Competent+ (from
-	 * tutormasteryday) and its linear trend to FORECAST_TARGET (see Forecast). Overall = mean of the topic shares.
+	 * tutormasteryday) and its linear trend to FORECAST_TARGET (see Forecast). Overall = share of people whose overall level is Competent+.
 	 * Cumulative like Dominio: ignores the period, honours team and topic.
 	 */
 	public void loadForecast(WebPageRequest inReq)
@@ -852,9 +871,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		if (topicFilter != null && !topicFilter.isEmpty())
 			topics.keySet().retainAll(Set.of(topicFilter));
 
-		// user|topic -> day(yyyyMMdd) -> band, days ascending
+		// user|topic -> day(yyyyMMdd) -> tutormasteryday row (level, masterypercent), days ascending
 		SimpleDateFormat key = new SimpleDateFormat("yyyyMMdd");
-		Map<String, java.util.TreeMap<String, String>> bands = new HashMap<>();
+		Map<String, java.util.TreeMap<String, Data>> bands = new HashMap<>();
 		String first = null;
 		HitTracker hits = archive.query("tutormasteryday").all().search();
 		hits.enableBulkOperations();
@@ -865,7 +884,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			if (day == null || !users.contains(r.get("user")) || !topics.containsKey(r.get("entitytopic")))
 				continue;
 			String d = key.format(day);
-			bands.computeIfAbsent(r.get("user") + "|" + r.get("entitytopic"), k -> new java.util.TreeMap<>()).put(d, r.get("level"));
+			bands.computeIfAbsent(r.get("user") + "|" + r.get("entitytopic"), k -> new java.util.TreeMap<>()).put(d, r);
 			if (first == null || d.compareTo(first) < 0)
 				first = d;
 		}
@@ -883,7 +902,6 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		}
 
 		JSONArray topicOut = new JSONArray();
-		double[] overall = new double[days.size()];
 		for (Map.Entry<String, String> t : topics.entrySet())
 		{
 			List<Double> shares = new ArrayList<>();
@@ -892,23 +910,51 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				int at = 0;
 				for (String u : users)
 				{
-					java.util.TreeMap<String, String> h = bands.get(u + "|" + t.getKey());
-					Map.Entry<String, String> e = h == null ? null : h.floorEntry(days.get(i));
-					if (e != null && ("competent".equals(e.getValue()) || "expert".equals(e.getValue())))
+					java.util.TreeMap<String, Data> h = bands.get(u + "|" + t.getKey());
+					Map.Entry<String, Data> e = h == null ? null : h.floorEntry(days.get(i));
+					String b = e == null ? null : e.getValue().get("level");
+					if ("competent".equals(b) || "expert".equals(b))
 						at++;
 				}
-				double s = users.isEmpty() ? 0 : at / (double) users.size();
-				shares.add(s);
-				overall[i] += s / topics.size();
+				shares.add(users.isEmpty() ? 0 : at / (double) users.size());
 			}
 			JSONObject f = forecastJson(shares, days);
 			f.put("id", t.getKey());
 			f.put("name", t.getValue());
 			topicOut.add(f);
 		}
+
+		// Overall = share of PEOPLE whose overall level (overallBand, as Resumen's levels) is Competent+ that day. The history
+		// stores each topic's masterypercent; rows written before it existed fall back to the band's mid-range % under the org
+		// thresholds. One topic in scope = that topic's band, as its own series.
+		// ponytail: midpoint fallback goes inexact only for days before the first recompute that stored masterypercent.
+		Map<String, Integer> topicWeight = (Map<String, Integer>) a.get("topicWeight");
+		int[] th = (int[]) a.get("orgThresholds");
 		List<Double> overallShares = new ArrayList<>();
-		for (double s : overall)
-			overallShares.add(s);
+		for (int i = 0; i < days.size(); i++)
+		{
+			int at = 0;
+			for (String u : users)
+			{
+				Map<String, Integer> pct = new HashMap<>();
+				String b = null;
+				for (String tid : topics.keySet())
+				{
+					java.util.TreeMap<String, Data> h = bands.get(u + "|" + tid);
+					Map.Entry<String, Data> e = h == null ? null : h.floorEntry(days.get(i));
+					b = e == null ? null : e.getValue().get("level");
+					if (b == null)
+						continue;
+					String p = e.getValue().get("masterypercent");
+					pct.put(tid, p != null && !p.isEmpty() ? (int) Math.round(Double.parseDouble(p))
+						: "expert".equals(b) ? (th[1] + 100) / 2 : "competent".equals(b) ? (th[0] + th[1]) / 2 : th[0] / 2);
+				}
+				String ob = topics.size() == 1 ? b : overallBand(pct, topicWeight, th);
+				if ("competent".equals(ob) || "expert".equals(ob))
+					at++;
+			}
+			overallShares.add(users.isEmpty() ? 0 : at / (double) users.size());
+		}
 
 		JSONObject resp = new JSONObject();
 		resp.put("ok", Boolean.TRUE);
@@ -1636,6 +1682,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			tObj.put("id", tid);
 			tObj.put("name", tname);
 			tObj.put("level", bandOf((Map<String, Map<String, String>>) a.get("bandByUserTopic"), uid, tid));
+			Integer tPct = ((Map<String, Map<String, Integer>>) a.get("pctByUserTopic")).getOrDefault(uid, Collections.emptyMap()).get(tid);
+			tObj.put("masterypercent", tPct); // stored topic %, what the app shows beside the band
 			tObj.put("mastered", pt.get("mastered"));
 			tObj.put("answered", pt.get("answered"));
 			tObj.put("weakest", weakestSection);
@@ -1889,9 +1937,9 @@ public class TestUAnalyticsModule extends TestUBaseModule
 
 		addFactHelper(addFact, base, "Personas en el alcance", cohort.get("total"), "overview", Collections.emptyMap(), "stat");
 		addFactHelper(addFact, base, "Personas que han respondido alguna vez", cohort.get("activated"), "overview", Collections.emptyMap(), "stat");
-		addFactHelper(addFact, base, "Personas activas en los últimos 7 días", cohort.get("active7d"), "overview", Collections.emptyMap(), "stat");
-		addFactHelper(addFact, base, "Personas activas en los últimos 30 días", cohort.get("active30d"), "overview", Collections.emptyMap(), "stat");
-		addFactHelper(addFact, base, "Activas 7 días en el periodo anterior", previous.get("active7d"), "overview", Collections.emptyMap(), "stat");
+		addFactHelper(addFact, base, "Personas activas (con respuestas) en los 7 días hasta el fin del periodo", cohort.get("active7d"), "overview", Collections.emptyMap(), "stat");
+		addFactHelper(addFact, base, "Personas activas (con respuestas) en los 30 días hasta el fin del periodo", cohort.get("active30d"), "overview", Collections.emptyMap(), "stat");
+		addFactHelper(addFact, base, "Activas 7 días en la semana anterior", previous.get("active7d"), "overview", Collections.emptyMap(), "stat");
 
 		int sumAnswers = 0, sumMinutes = 0, sumCertainWrong = 0;
 		for (Map<String, Object> s : series)
@@ -1958,7 +2006,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			Map<String, Object> medVal = new HashMap<>();
 			medVal.put("active", pct((Double) median.get("activeShare")));
 			medVal.put("expert", pct((Double) median.get("expertShare")));
-			addFactHelper(addFact, base, "Mediana de la organización: cuota de activas 7 días y de expertos (anónima)", medVal, "overview", Collections.emptyMap(), "stat");
+			addFactHelper(addFact, base, "Cuota de la organización (toda, sin filtros): personas activas 7 días y personas expertas (anónima)", medVal, "overview", Collections.emptyMap(), "stat");
 		}
 
 		for (int k = 0; k < inactive.size(); k++)
@@ -1968,8 +2016,8 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			Data tData = (pTeam != null) ? allteams.get(pTeam) : null;
 			String tName = (tData != null && tData.getName() != null) ? tData.getName() : "sin equipo";
 			String lastAct = (String) p.get("lastactivity");
-			String actDesc = (lastAct != null && !lastAct.isEmpty()) ? "última actividad " + lastAct.substring(0, Math.min(10, lastAct.length())) : "nunca ha respondido";
-			addFactHelper(addFact, base, "Sin actividad: " + p.get("name") + " (" + tName + ")", actDesc, "person", Collections.singletonMap("user", p.get("user")), "inactive");
+			String actDesc = (lastAct != null && !lastAct.isEmpty()) ? "última respuesta " + lastAct.substring(0, Math.min(10, lastAct.length())) : Boolean.TRUE.equals(p.get("signedin")) ? "entró, nunca ha respondido" : "nunca entró";
+			addFactHelper(addFact, base, "Sin actividad en los 7 días hasta el fin del periodo: " + p.get("name") + " (" + tName + ")", actDesc, "person", Collections.singletonMap("user", p.get("user")), "inactive");
 		}
 
 		List<Map<String, Object>> atRisk = new ArrayList<>();
@@ -2036,11 +2084,17 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		List<Data> recentQs = new ArrayList<>(tq);
 		recentQs.sort((x, y) -> String.valueOf(y.get("datecreated")).compareTo(String.valueOf(x.get("datecreated"))));
 		Map<String, String> sectionNames = (Map<String, String>) a.get("sections");
-		for (int k = 0; k < Math.min(40, recentQs.size()); k++)
+		recentQs = recentQs.subList(0, Math.min(40, recentQs.size()));
+		// k-anonymity: question text only when 3+ different people asked the questions listed (like the topic labels' floor).
+		Set<String> askers = new HashSet<>();
+		for (Data r : recentQs)
+			askers.add(r.get("user"));
+		boolean showText = askers.size() >= 3;
+		for (int k = 0; k < recentQs.size(); k++)
 		{
 			Data r = recentQs.get(k);
 			String when = String.valueOf(r.get("datecreated"));
-			String q = r.get("query") != null ? r.get("query") : "";
+			String q = !showText ? "(texto oculto: menos de 3 personas)" : r.get("query") != null ? r.get("query") : "";
 			addFactHelper(addFact, base, "Pregunta anónima al tutor el " + when.substring(0, Math.min(10, when.length())) + " sobre «"
 				+ sectionNames.getOrDefault(r.get("componentsection"), "sin subtema") + "»", (q.length() > 200 ? q.substring(0, 200) + "…" : q) + " (respondida: " + r.get("replied") + ", con fuente: " + r.get("cited")
 					+ (r.get("rating") != null ? ", valoración: " + r.get("rating") : "") + ")", "activity", Collections.emptyMap(), "iris");
@@ -2432,6 +2486,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			fail(inReq, 400, "out of scope");
 			return;
 		}
+		Set<String> teamTree = teamSubtree((Map<String, Data>) inReq.getPageValue("allteams"), teamFilter);
 
 		Map<String, Data> users = new HashMap<>();
 		HitTracker uh = archive.query("user").all().search();
@@ -2509,7 +2564,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				String team = u.get("team");
 				if (scope != null && (team == null || !scope.contains(team)))
 					continue;
-				if (!teamFilter.isEmpty() && !teamFilter.equals(team))
+				if (teamTree != null && !teamTree.contains(team))
 					continue;
 				if (!topicFilter.isEmpty() && !topicFilter.equals(r.get("entitytopic")))
 					continue;
@@ -2563,7 +2618,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 				if (u != null)
 				{
 					String team = u.get("team");
-					if ((scope == null || (team != null && scope.contains(team))) && (teamFilter.isEmpty() || teamFilter.equals(team)))
+					if ((scope == null || (team != null && scope.contains(team))) && (teamTree == null || teamTree.contains(team)))
 					{
 						answers7d++;
 					}
@@ -2923,7 +2978,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 		else
 		{
 			long started = System.currentTimeMillis();
-			all = computeCoachSuggestions(archive, scope, teamFilter, teamKey);
+			all = computeCoachSuggestions(archive, scope, teamSubtree((Map<String, Data>) inReq.getPageValue("allteams"), teamFilter), teamKey);
 			log.info("coach suggestions computed in " + (System.currentTimeMillis() - started) + " ms (cache miss)");
 			COACH_CACHE.put(cacheKey, new Object[] {System.currentTimeMillis(), all});
 		}
@@ -2952,7 +3007,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 			return (List<Map<String, Object>>) hit[1];
 		}
 		long started = System.currentTimeMillis();
-		List<Map<String, Object>> all = computeCoachSuggestions(archive, scope, teamFilter, teamKey);
+		List<Map<String, Object>> all = computeCoachSuggestions(archive, scope, teamSubtree(null, teamFilter), teamKey); // no allteams here: only called with teamFilter "" (null = no filter)
 		log.info("coach suggestions computed in " + (System.currentTimeMillis() - started) + " ms (cache miss)");
 		COACH_CACHE.put(cacheKey, new Object[] {System.currentTimeMillis(), all});
 		return all;
@@ -2966,7 +3021,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	}
 
 	/** Every in-scope learner's mission bucketed into suggestions, before dismissals (see coachSuggestions()). */
-	private List<Map<String, Object>> computeCoachSuggestions(MediaArchive archive, Set<String> scope, String teamFilter, String teamKey)
+	private List<Map<String, Object>> computeCoachSuggestions(MediaArchive archive, Set<String> scope, Set<String> teamTree, String teamKey)
 	{
 		Date now = new Date();
 		TestULearningModule learningModule = (TestULearningModule) getModuleManager().getBean("TestULearningModule");
@@ -2984,7 +3039,7 @@ public class TestUAnalyticsModule extends TestUBaseModule
 					continue;
 				}
 				String t = u.get("team");
-				boolean inScope = (scope == null || (t != null && scope.contains(t))) && (teamFilter.isEmpty() || (t != null && teamFilter.equals(t)));
+				boolean inScope = (scope == null || (t != null && scope.contains(t))) && (teamTree == null || (t != null && teamTree.contains(t)));
 				if (!inScope)
 				{
 					continue;
@@ -3187,6 +3242,36 @@ public class TestUAnalyticsModule extends TestUBaseModule
 	{
 		Map<String, String> byTopic = bands != null ? bands.get(user) : null;
 		return byTopic != null ? byTopic.get(topic) : null;
+	}
+
+	/**
+	 * A team filter's teams: the team and every team below it (team.parent), as Personas shows it; null = no filter.
+	 * Bounded like TestUTeamModule.managedTeams: the set only grows, so a parent cycle still terminates.
+	 */
+	static Set<String> teamSubtree(Map<String, Data> allteams, String teamId)
+	{
+		if (teamId == null || teamId.isEmpty())
+			return null;
+		Set<String> tree = new HashSet<>(Set.of(teamId));
+		boolean grew = allteams != null;
+		while (grew)
+		{
+			grew = false;
+			for (Data t : allteams.values())
+			{
+				if (t.get("parent") != null && tree.contains(t.get("parent")) && tree.add(t.getId()))
+					grew = true;
+			}
+		}
+		return tree;
+	}
+
+	/** Course order of subtopics: ordering, then name, then id. */
+	private static Comparator<String> sectionOrder(Map<String, Integer> ordering, Map<String, String> names)
+	{
+		return Comparator.comparing((String s) -> ordering.getOrDefault(s, Integer.MAX_VALUE))
+			.thenComparing(s -> names.getOrDefault(s, ""), Comparator.nullsLast(Comparator.naturalOrder()))
+			.thenComparing(Comparator.naturalOrder());
 	}
 
 	/** Overall band of a person from their topic rows (see loadAnalytics); null when no topic started. */

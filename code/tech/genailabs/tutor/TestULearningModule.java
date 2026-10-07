@@ -72,8 +72,67 @@ public class TestULearningModule extends TestUBaseModule
 		}
 		certs.sort(java.util.Comparator.comparing((Object o) -> certRank(((JSONObject) o).get("status"))).thenComparing(o -> String.valueOf(((JSONObject) o).get("expiry"))));
 		resp.put("certifications", certs);
+		resp.put("stats", learnerStats(getMediaArchive(inReq), user.getId(), zone));
 		resp.put("now", LearningEngine.iso(now));
 		reply(inReq, resp);
+	}
+
+	/**
+	 * The dashboard's calibration and week chart, from the same rows the console and the weekly email read (so the three agree):
+	 * {cc, cu, ic, iu} summed over the learner's tutormastery section rows (topic rows repeat them), with TestUAnalyticsModule's
+	 * mapping (ic = unsure wrong, iu = certain wrong); week = the last 7 org-zone days of tutordaily (id <user>_<yyyyMMdd>,
+	 * the day computemastery files it under), oldest first, [{day: yyyy-MM-dd, answers, correct}]. Both are as fresh as the
+	 * last computemastery run.
+	 */
+	static JSONObject learnerStats(MediaArchive archive, String inUserid, ZoneId inZone)
+	{
+		int cc = 0, cu = 0, ic = 0, iu = 0;
+		for (Object o : archive.query("tutormastery").exact("user", inUserid).search())
+		{
+			Data r = (Data) o;
+			if (r.get("componentsection") == null || r.get("componentsection").isEmpty())
+			{
+				continue;
+			}
+			cc += LearningEngine.intOr(r.get("certaincorrect"), 0);
+			cu += LearningEngine.intOr(r.get("unsurecorrect"), 0);
+			ic += LearningEngine.intOr(r.get("unsurewrong"), 0);
+			iu += LearningEngine.intOr(r.get("certainwrong"), 0);
+		}
+		java.time.LocalDate today = java.time.LocalDate.now(inZone);
+		int[][] counts = new int[7][2];
+		for (Object o : archive.query("tutordaily").exact("user", inUserid).search())
+		{
+			Data d = (Data) o;
+			String id = d.getId();
+			long ago;
+			try
+			{
+				ago = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(id.substring(id.length() - 8), java.time.format.DateTimeFormatter.BASIC_ISO_DATE), today);
+			}
+			catch (Exception e)
+			{
+				continue;
+			}
+			if (ago >= 0 && ago < 7)
+			{
+				counts[6 - (int) ago][0] += LearningEngine.intOr(d.get("answers"), 0);
+				counts[6 - (int) ago][1] += LearningEngine.intOr(d.get("correct"), 0);
+			}
+		}
+		JSONArray week = new JSONArray();
+		for (int i = 0; i < 7; i++)
+		{
+			JSONObject day = new JSONObject();
+			day.put("day", today.minusDays(6 - i).toString());
+			day.put("answers", counts[i][0]);
+			day.put("correct", counts[i][1]);
+			week.add(day);
+		}
+		JSONObject stats = new JSONObject();
+		stats.put("cc", cc); stats.put("cu", cu); stats.put("ic", ic); stats.put("iu", iu);
+		stats.put("week", week);
+		return stats;
 	}
 
 	private static int certRank(Object s)
@@ -951,14 +1010,20 @@ public class TestULearningModule extends TestUBaseModule
 		JSONArray rows = new JSONArray();
 		java.util.Map<String, Integer> counts = new java.util.TreeMap<>(java.util.Map.of("certified", 0, "renewal_due", 0, "expired", 0, "not_certified", 0));
 		java.util.Set<String> hidden = new java.util.HashSet<>(); // certification topics dropped by manageevaluations -- distinct topics, the check is per topic, not per learner
+		if (inReq.getPageValue("allteams") == null) // certifications.xconf runs no loadScope: compute it here (as TestUTeamModule.loadTeams does)
+		{
+			((TestUTeamModule) getModuleManager().getBean("TestUTeamModule")).loadScope(inReq);
+		}
+		Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams"); // null = every team
+		Set<String> teamTree = TestUAnalyticsModule.teamSubtree((java.util.Map<String, Data>) inReq.getPageValue("allteams"), fteam);
 		for (Object o : archive.query("user").all().search())
 		{
 			Data u = (Data) o;
-			if ("agent".equals(u.get("role")) || "false".equals(String.valueOf(u.get("enabled"))))
+			if ("agent".equals(u.get("role")) || !TestUAnalyticsModule.countsAsPerson(u.getId(), u))
 			{
 				continue;
 			}
-			if (fteam != null && !fteam.equals(u.get("team")))
+			if (!inTeams(u, scope, teamTree))
 			{
 				continue;
 			}
@@ -1712,6 +1777,11 @@ public class TestULearningModule extends TestUBaseModule
 		for (Object o : hits)
 		{
 			Data d = (Data) o;
+			Data u = inArchive.getCachedData("user", d.get("user"));
+			if (u == null || !TestUAnalyticsModule.countsAsPerson(u.getId(), u))
+			{
+				continue; // support/disabled accounts' attempts never reach the org's numbers
+			}
 			int[] s = out.computeIfAbsent(d.get("entitytopic"), k -> new int[3]);
 			String status = d.get("status");
 			if (status == null || "inprogress".equals(status))
@@ -1903,6 +1973,16 @@ public class TestULearningModule extends TestUBaseModule
 	}
 
 	/**
+	 * inUser's team is in inScope (null = every team) and in inTeamTree (TestUAnalyticsModule.teamSubtree; null = no team filter)
+	 * -- the in-scope test analytics() applies.
+	 */
+	private static boolean inTeams(Data inUser, Set<String> inScope, Set<String> inTeamTree)
+	{
+		String t = inUser.get("team");
+		return (inScope == null || (t != null && inScope.contains(t))) && (inTeamTree == null || (t != null && inTeamTree.contains(t)));
+	}
+
+	/**
 	 * services/testu/learn/onboarding.json -- the learner's first-run onboarding row (learneronboarding, id = user id).
 	 * GET: {ok, started, finished, skipped, goals, whenlearn, sessiontotal, sessioncorrect} (all null before the first POST).
 	 * POST any of started=true | finished=true | skipped=true | goals=a,b | whenlearn=x | sessiontotal=n&sessioncorrect=n: upserts.
@@ -1925,6 +2005,13 @@ public class TestULearningModule extends TestUBaseModule
 				return;
 			}
 			Set<String> scope = (Set<String>) inReq.getPageValue("scopeteams");
+			String team = param(inReq, "team"); // same semantics as analytics' team filter
+			if (scope != null && team != null && !scope.contains(team))
+			{
+				fail(inReq, 400, "out of scope");
+				return;
+			}
+			Set<String> teamTree = TestUAnalyticsModule.teamSubtree((java.util.Map<String, Data>) inReq.getPageValue("allteams"), team);
 			JSONArray rows = new JSONArray();
 			HitTracker hits = s.query().all().search();
 			if (hits != null)
@@ -1933,12 +2020,9 @@ public class TestULearningModule extends TestUBaseModule
 				for (Object hit : hits)
 				{
 					Data r = (Data) hit;
-					if (scope != null)
-					{
-						Data u = archive.getCachedData("user", r.get("user"));
-						if (u == null || !scope.contains(u.get("team")))
-							continue;
-					}
+					Data u = archive.getCachedData("user", r.get("user"));
+					if (u == null || !TestUAnalyticsModule.countsAsPerson(u.getId(), u) || !inTeams(u, scope, teamTree))
+						continue;
 					rows.add(onboardingJson(r));
 				}
 			}

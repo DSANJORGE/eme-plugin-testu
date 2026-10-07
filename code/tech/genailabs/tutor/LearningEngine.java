@@ -4045,9 +4045,9 @@ public class LearningEngine
 	}
 
 	/**
-	 * Full rebuild of tutormasteryday: the topic band history, one row per user x topic x day the band changed
-	 * (id user_topicid_yyyyMMdd, server timezone). Replayed from the attempts, so history reaches back to the first
-	 * answer. The band on a day is the latest row on or before it. Forecasts read this.
+	 * Full rebuild of tutormasteryday: the topic band + masterypercent history, one row per user x topic x day either
+	 * changed (id user_topicid_yyyyMMdd, server timezone). Replayed from the attempts, so history reaches back to the first
+	 * answer. The value on a day is the latest row on or before it. Forecasts read this.
 	 * ponytail: replays every active day each run; go incremental when answers reach the 100k range.
 	 */
 	public int saveMasteryHistory(Content c, Map<String, List<Attempt>> byUser)
@@ -4094,7 +4094,8 @@ public class LearningEngine
 					{
 						continue;
 					}
-					String now = mastery(t.questions, upto, t.competentmin, t.expertmin).band;
+					Mastery m = mastery(t.questions, upto, t.competentmin, t.expertmin);
+					String now = m.band == null ? null : m.band + "|" + m.percent;
 					if (now == null || now.equals(band.get(topicid)))
 					{
 						continue;
@@ -4110,7 +4111,8 @@ public class LearningEngine
 					row.setValue("user", e.getKey());
 					row.setValue("entitytopic", topicid);
 					row.setValue("day", a.at);
-					row.setValue("level", now);
+					row.setValue("level", m.band);
+					row.setValue("masterypercent", m.percent);
 					tosave.add(row);
 					keep.add(id);
 				}
