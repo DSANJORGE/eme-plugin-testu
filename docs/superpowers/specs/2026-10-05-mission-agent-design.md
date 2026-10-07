@@ -152,3 +152,44 @@ Calendar export; agent auto-booking; LLM tool-calling agent; content/gap agent a
 - The `ai/default/calls` templates (`analytics_ask.json`, `chat_tutor_usercomment.json`) must be deployed along with the rest — they are plain data files, not code, so a server misses the new coach-action/offer prompt rules until `bin/sync-testu.sh` runs there.
 - Finder main commits (`dc75ed19c`, `1c95143e7`, `bfb084602` — offered-id filtered `[[do]]` action lines) must be pushed and deployed along with the rest; without them the app shows no chat action buttons (degrades gracefully).
 - Rebuild and commit learner + console web bundles (deferred to task 15b).
+
+## Amendment 2026-10-06: weekly objective
+
+Approved by Diego from the clickable prototype (artifact "Objetivo de la semana", v1) on 2026-10-06. Supersedes the card bullets under *Learner app* and the `sessionsdone` rule under *Planner → Week plan* where they differ.
+
+### Card ("Tu objetivo de la semana")
+
+- Eyebrow `TU OBJETIVO DE LA SEMANA` (certification goals keep `CERTIFICACIÓN`), status pill on the right. Title is only the goal: `<Nivel> en <Tema>` (`pace`: `Practicar <Tema>`); the word "objetivo" is never repeated in the title. Line under it: `Antes del <d MMM> · quedan N días` / `Venció el <d MMM>` / `Sin fecha límite`.
+- Layout follows `_ContinueHero`: the goal topic's cover (`_liveCoverUrl`, looked up from the topics list the app already loads; brand block when none), a level bar from the current percent with a marker at the required minimum (`<Banda> · NN%` … `<Requerido> · MM%`), one dot per needed session this week (filled = counted, ring = today in progress), then the actions.
+- Pills: En riesgo (amber) · Vas a tiempo (green) · Plazo vencido (red) · Listo para evaluar (green) · A tu ritmo (neutral) · Semana cumplida (green, see below).
+- **Week done**: when `sessionsdone >= sessionsneeded` and status is not `ready`/`overdue`, the card goes quiet until Monday: pill Semana cumplida, line `N de N · nos vemos el lunes`, single quiet button "Practicar igual" (the `start_session` action). Practice still counts toward the level.
+- **Reminder set**: when `mission.json` has a pending `reminder`, the card collapses to one line (cover thumb, "Te lo recuerdo: <cuándo>", goal + date) with **Deshacer** (cancels it) and **Ver** (expands for this view only). It comes back in full when the reminder fires (the row is then pushed, no longer pending).
+- **Unfinished session**: when `week.todayanswers` is between 1 and 4 and today is not yet counted, the card shows "Sesión de hoy a medias: N de 5 preguntas. Con 5 ya cuenta para la semana." and the primary button reads "Retomar sesión" (same `start_session` action).
+
+### Planner
+
+- `DAY_MIN_ANSWERS = 5`: a day counts toward `sessionsdone` only when it has ≥ 5 learning-mode answers (learn / improve / dailychallenge) on the goal topic's questions. Weeks stay Monday–Sunday in the learner zone.
+- `week` gains `todayanswers` (learning-mode answers on the goal topic today, learner zone) and `todaycounted` (todayanswers ≥ 5).
+
+### Endpoints
+
+- `mission.json` adds `reminder: {remindat, topic}` when the learner has a pending mission reminder (`pushedat` null, `remindat` in the future), else null.
+- `remind.json` accepts `when=cancel`: deletes the pending reminder if not yet pushed (200 `{ok, cancelled}`); `postRemind` returns `remindat` so the app can show the time at once.
+
+### Nudges
+
+- **Unfinished-session push**, decided 2026-10-06: at 18:00 learner zone (first sweep at or after 18:00, still inside quiet hours), once per learner per day, when the goal's `todayanswers` is 1–4, no mission reminder is pending, and `mayReceive`. Text: "Te faltan N preguntas para que hoy cuente en tu objetivo de <Tema>." Row id `<uid>_mission_unfinished_<yyyyMMdd>`.
+- Every mission push carries a `kind`: `remind` · `unfinished` · `ready` · `at_risk` · `overdue` · `coach` (manager nudge). `kind` is a new `learnernotification` field and is added to the push `data` payload.
+
+### Push effectiveness (new)
+
+- Each mission push also writes one row to a new table `missionpush` (`user`, `kind`, `entitytopic`, `sentat`, `notification`), id `<notification id>_<yyyyMMddHHmm>`, so history survives the reused notification rows.
+- The app records a tap: a new usage type `push_open` (`campaign` = notification type, `source` = kind, `entitytopic`, plus the notification id) sent when a push is opened (`testu_push.dart` `_openPush`).
+- Analytics (`engagement.json`, new `missionpushes`): per kind over the selected period — `sent`, `tapped` (a `push_open` for that user and kind within 24 h after `sentat`), `practised` (≥ 1 learning answer on that topic within 24 h after `sentat`), `counted` (≥ 5 such answers on one local day within that window); rates over `sent`. Counts only, no names, no chat content.
+- Console, Actividad: card "Recordatorios del objetivo" next to "Where the Daily Challenge is opened": one row per kind, Sent · Tapped % · Practised within 24 h % · Day counted %.
+
+### Weekly summary email (existing Friday 18:00 emails, no new email)
+
+- Learner: a section `TU OBJETIVO DE LA SEMANA` after "Tu progreso" when the learner has a goal: cover-less row with goal, `X de N sesiones esta semana`, `<Banda> · NN%`, status and deadline, plus one plain suggestion line. Absent for `no_goal`.
+- Manager (admin summary): a section `OBJETIVOS CON PLAZO` within the manager's scope: per topic, counts of at risk / overdue / ready not booked (same data as `coach.json`), and a line pointing to the Coach card. Counts only; names stay in the console. Absent when there is nothing to report.
+- Same switches, allowlist and once-per-Friday rule as today.
